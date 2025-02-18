@@ -238,7 +238,8 @@ export function aem2doc(html, ydoc) {
           if (name === 'colspan') {
             // when `tree` is created using `fromHtml` in hast-util-from-html
             // that then calls fromParse5 in hast-util-from-parse5
-            // which converts the `colspan` attribute to `colSpan`            // eslint-disable-next-line no-param-reassign
+            // which converts the `colspan` attribute to `colSpan`
+            // eslint-disable-next-line no-param-reassign
             name = 'colSpan';
           }
           return target.properties ? target.properties[name] : undefined;
