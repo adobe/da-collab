@@ -375,25 +375,28 @@ export const persistence = {
 
     // TODO combine the following 2 into one and let the storestate return whether
     // this is a new doc or not
+    const debounceFunc = debounce(async () => {
+      // If we receive an update on the document, store it in da-admin, but debounce it
+      // to avoid excessive da-admin calls.
+      if (ydoc === docs.get(docName)) {
+        console.log('### Debounce Executing');
+        current = await persistence.update(ydoc, current);
+      }
+    }, 2000, { maxWait: 10000 });
     ydoc.on('update', async () => {
       if (ydoc === docs.get(docName)) { // make sure this ydoc is still active
         const skipNewDoc = await storeState(docName, ydoc, storage);
         console.log('Stored doc state');
         if (skipNewDoc) {
           console.log('*** Stored and skipping as its a new doc');
+          debounceFunc.cancel(); // TODO can we avoid it in the first place?
           return;
         }
 
-        debounce(async () => {
-          if (skipNewDoc) {
-            return;
-          }
-
-          console.log('### Debounce executing');
-          current = await persistence.update(ydoc, current);
-        }, 2000, { maxWait: 10000 })();
+        debounceFunc();
       }
     });
+
 
     // ydoc.on('update', async () => {
     //   // Whenever we receive an update on the document store it in the local storage
