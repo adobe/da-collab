@@ -120,13 +120,29 @@ export const readState = async (docName, storage) => {
  *    ...
  *    serialized.chunk_n = last chunk, where n = chunks - 1
  * @param {string} docName - The document name
- * @param {Uint8Array} state - The Yjs document state, as produced by Y.encodeStateAsUpdate()
+ * @param {Y.Doc} ydoc - The Ydoc
  * @param {TransactionalStorage} storage - The worker transactional storage
  * @param {number} chunkSize - The chunk size
  */
-export const storeState = async (docName, state, storage, chunkSize = MAX_STORAGE_VALUE_SIZE) => {
+export const storeState = async (docName, ydoc, storage, chunkSize = MAX_STORAGE_VALUE_SIZE) => {
+  const docNameFromStg = await storage.get('doc');
+  console.log('### docNameFromStg', docNameFromStg);
+  console.log('### HTML doc', doc2aem(ydoc).replaceAll(' ', '').replaceAll('\n', ''));
+
+  if (docNameFromStg === undefined) {
+    // this document was never stored before
+
+    // Check if it's still empty
+    const html = doc2aem(ydoc).replaceAll(' ', '').replaceAll('\n', '');
+    // If it is, don't do anything yet
+    if (html === '<body><header></header><main><div></div></main><footer></footer></body>') {
+      return true;
+    }
+  }
+
   await storage.deleteAll();
 
+  const state = Y.encodeStateAsUpdate(ydoc);
   let serialized;
   if (state.byteLength < chunkSize) {
     serialized = { docstore: state };
@@ -146,6 +162,7 @@ export const storeState = async (docName, state, storage, chunkSize = MAX_STORAG
   serialized.doc = docName;
 
   await storage.put(serialized);
+  return false;
 };
 
 export const showError = (ydoc, err) => {
@@ -240,6 +257,10 @@ export const persistence = {
     try {
       const content = doc2aem(ydoc);
       if (current !== content) {
+        // if content === empty doc and await storage.get('doc') is
+        // undefined (so it's a new doc that does not have any content yet)
+        // then don't persist but set ok to true
+
         // Only store the document if it was actually changed.
         const { ok, status, statusText } = await persistence.put(ydoc, content);
 
@@ -337,6 +358,8 @@ export const persistence = {
               rootType.delete(0, rootType.length);
               // restore from da-admin
               aem2doc(current, ydoc);
+              // delete local storage as it's overridden from da-admin
+              storage.deleteAll();
 
               // eslint-disable-next-line no-console
               console.log('Restored from da-admin', docName);
@@ -350,20 +373,42 @@ export const persistence = {
       }, 1000);
     }
 
+    // TODO combine the following 2 into one and let the storestate return whether
+    // this is a new doc or not
     ydoc.on('update', async () => {
-      // Whenever we receive an update on the document store it in the local storage
       if (ydoc === docs.get(docName)) { // make sure this ydoc is still active
-        storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
+        const skipNewDoc = await storeState(docName, ydoc, storage);
+        console.log('Stored doc state');
+        if (skipNewDoc) {
+          console.log('*** Stored and skipping as its a new doc');
+          return;
+        }
+
+        debounce(async () => {
+          if (skipNewDoc) {
+            return;
+          }
+
+          console.log('### Debounce executing');
+          current = await persistence.update(ydoc, current);
+        }, 2000, { maxWait: 10000 })();
       }
     });
 
-    ydoc.on('update', debounce(async () => {
-      // If we receive an update on the document, store it in da-admin, but debounce it
-      // to avoid excessive da-admin calls.
-      if (ydoc === docs.get(docName)) {
-        current = await persistence.update(ydoc, current);
-      }
-    }, 2000, { maxWait: 10000 }));
+    // ydoc.on('update', async () => {
+    //   // Whenever we receive an update on the document store it in the local storage
+    //   if (ydoc === docs.get(docName)) { // make sure this ydoc is still active
+    //     storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
+    //   }
+    // });
+
+    // ydoc.on('update', debounce(async () => {
+    //   // If we receive an update on the document, store it in da-admin, but debounce it
+    //   // to avoid excessive da-admin calls.
+    //   if (ydoc === docs.get(docName)) {
+    //     current = await persistence.update(ydoc, current);
+    //   }
+    // }, 2000, { maxWait: 10000 }));
 
     const timingMap = new Map();
     timingMap.set('timingReadStateDuration', timingReadStateDuration);
@@ -520,11 +565,14 @@ export const messageListener = (conn, doc, message) => {
  * @param {string} docName - The name of the document
  * @returns true if the document was found and invalidated, false otherwise.
  */
-export const invalidateFromAdmin = async (docName) => {
+export const invalidateFromAdmin = async (docName, storage) => {
   // eslint-disable-next-line no-console
   console.log('Invalidate from Admin received', docName);
   const ydoc = docs.get(docName);
   if (ydoc) {
+    // await storage.deleteAll();
+    // console.log('Deleted durable object storage');
+
     // As we are closing all connections, the ydoc will be removed from the docs map
     ydoc.conns.forEach((_, c) => closeConn(ydoc, c));
 
