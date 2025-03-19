@@ -397,7 +397,6 @@ export const persistence = {
       }
     });
 
-
     // ydoc.on('update', async () => {
     //   // Whenever we receive an update on the document store it in the local storage
     //   if (ydoc === docs.get(docName)) { // make sure this ydoc is still active
@@ -568,14 +567,11 @@ export const messageListener = (conn, doc, message) => {
  * @param {string} docName - The name of the document
  * @returns true if the document was found and invalidated, false otherwise.
  */
-export const invalidateFromAdmin = async (docName, storage) => {
+export const invalidateFromAdmin = async (docName) => {
   // eslint-disable-next-line no-console
   console.log('Invalidate from Admin received', docName);
   const ydoc = docs.get(docName);
   if (ydoc) {
-    // await storage.deleteAll();
-    // console.log('Deleted durable object storage');
-
     // As we are closing all connections, the ydoc will be removed from the docs map
     ydoc.conns.forEach((_, c) => closeConn(ydoc, c));
 

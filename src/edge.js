@@ -217,13 +217,13 @@ export class DocRoom {
     const api = url.searchParams.get('api');
     switch (api) {
       case 'deleteAdmin':
-        if (await invalidateFromAdmin(baseURL, this.storage)) {
+        if (await invalidateFromAdmin(baseURL)) {
           return new Response(null, { status: 204 });
         } else {
           return new Response('Not Found', { status: 404 });
         }
       case 'syncAdmin':
-        if (await invalidateFromAdmin(baseURL, this.storage)) {
+        if (await invalidateFromAdmin(baseURL)) {
           return new Response('OK', { status: 200 });
         } else {
           return new Response('Not Found', { status: 404 });
