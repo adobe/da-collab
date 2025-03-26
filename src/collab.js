@@ -10,9 +10,9 @@
  * governing permissions and limitations under the License.
  */
 import {
-  prosemirrorToYXmlFragment, yDocToProsemirror,
+  prosemirrorToYXmlFragment, yDocToProsemirrorJSON,
 } from 'y-prosemirror';
-import { DOMParser, DOMSerializer } from 'prosemirror-model';
+import { DOMParser, DOMSerializer, Node } from 'prosemirror-model';
 import { fromHtml } from 'hast-util-from-html';
 import { matches } from 'hast-util-select';
 import { getSchema } from './schema.js';
@@ -132,7 +132,7 @@ function fixImageLinks(node) {
   return node;
 }
 
-export function aem2doc(html, ydoc) {
+export function aem2doc(html, ydoc, guid) {
   const tree = fromHtml(html, { fragment: true });
   const main = tree.children.find((child) => child.tagName === 'main');
   fixImageLinks(main);
@@ -259,7 +259,7 @@ export function aem2doc(html, ydoc) {
   };
 
   const json = DOMParser.fromSchema(getSchema()).parse(new Proxy(main, handler2));
-  prosemirrorToYXmlFragment(json, ydoc.getXmlFragment('prosemirror'));
+  prosemirrorToYXmlFragment(json, ydoc.getXmlFragment(`prosemirror-${guid}`));
 }
 
 const getAttrString = (attributes) => Object.entries(attributes).map(([key, value]) => ` ${key}="${value}"`).join('');
@@ -345,9 +345,25 @@ export function tableToBlock(child, fragment) {
   });
 }
 
-export function doc2aem(ydoc) {
+function getAEMHtml(text) {
+  return `
+<body>
+  <header></header>
+  <main>${text}</main>
+  <footer></footer>
+</body>
+`;
+}
+
+export function doc2aem(ydoc, guid) {
+  if (!guid) {
+    // this is a brand new document
+    return getAEMHtml('<div></div>');
+  }
+
   const schema = getSchema();
-  const json = yDocToProsemirror(schema, ydoc);
+  const state = yDocToProsemirrorJSON(ydoc, `prosemirror-${guid}`);
+  const json = Node.fromJSON(schema, state);
 
   const fragment = { type: 'div', children: [], attributes: {} };
   const handler3 = {
@@ -414,11 +430,5 @@ export function doc2aem(ydoc) {
   }, [section]);
 
   const text = sections.map((s) => tohtml(s)).join('');
-  return `
-<body>
-  <header></header>
-  <main>${text}</main>
-  <footer></footer>
-</body>
-`;
+  return getAEMHtml(text);
 }
