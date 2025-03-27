@@ -195,11 +195,12 @@ export const persistence = {
    * @param {string} content - The content to store
    * @returns {object} The response from da-admin.
    */
-  put: async (ydoc, content) => {
+  put: async (ydoc, content, guid) => {
     const blob = new Blob([content], { type: 'text/html' });
 
     const formData = new FormData();
     formData.append('data', blob);
+    formData.append('guid', guid);
 
     const opts = { method: 'PUT', body: formData };
     const keys = Array.from(ydoc.conns.keys());
@@ -221,14 +222,13 @@ export const persistence = {
     }
 
     const {
-      ok, status, statusText, headers,
+      ok, status, statusText,
     } = await ydoc.daadmin.fetch(ydoc.name, opts);
 
     return {
       ok,
       status,
       statusText,
-      newGuid: headers.get('X-da-id'),
     };
   },
 
@@ -237,17 +237,36 @@ export const persistence = {
    * @param {WSSharedDoc} ydoc - the ydoc that has been updated.
    * @param {string} current - the current content of the document previously
    * obtained from da-admin
+   * @param {object} guidHolder - an object containing the guid of the document.
+   * If the document exists, it will hold its guid. If the document does not yet
+   * exists, it will be modified to set its guid in this method so that its known
+   * for subsequent calls.
    * @returns {string} - the new content of the document in da-admin.
    */
-  update: async (ydoc, current, guid) => {
+  update: async (ydoc, current, guidHolder) => {
     let closeAll = false;
     try {
-      const guidMap = ydoc.getMap('prosemirror-latestguid');
-      const curGuid = guidMap.get('guid');
-      if (curGuid && !curGuid.startsWith('new-') && guid !== curGuid) {
+      const { guid } = guidHolder;
+
+      // The guid array contains the known guids. We sort it by timestamp so that we
+      // know to find the latest. Any other guids are considered stale.
+      // Objects on the guid array may also contain a newDoc flag, which is set to true
+      // when the document is just opened in the browser.
+      const guidArray = ydoc.getArray('prosemirror-guids');
+      const copy = [...guidArray];
+      console.log('guidArray', copy);
+      if (copy.length === 0) {
+        // eslint-disable-next-line no-console
+        console.log('No guid array found in update. Ignoring.');
+        return current;
+      }
+      copy.sort((a, b) => a.ts - b.ts);
+      const { newDoc, guid: curGuid, ts: createdTS } = copy.pop();
+
+      if (!newDoc && !guid) {
         // Someone is still editing a document in the browser that has since been deleted
         console.log('Document GUID mismatch, da-admin guid:', guid, 'edited guid:', curGuid);
-        guidMap.set('mismatch', curGuid);
+        showError(ydoc, { message: 'This document has since been deleted, your edits are not persisted' });
         return current;
       }
 
@@ -256,14 +275,18 @@ export const persistence = {
         // Only store the document if it was actually changed.
 
         const {
-          ok, status, statusText, newGuid,
-        } = await persistence.put(ydoc, content);
-        if (newGuid !== curGuid) {
-          console.log('setting new guid', newGuid, 'from', curGuid);
-          // The GUID in da-admin is different from what the browser has. This happens
-          // when the browser is editing a brand new doc and curGuid is null.
-          // Update the guid in the ydoc
-          guidMap.set('guid', newGuid);
+          ok, status, statusText,
+        } = await persistence.put(ydoc, content, curGuid);
+        if (newDoc) {
+          // Update the guid in the guidHolder so that in subsequent calls we know what it is
+          // eslint-disable-next-line no-param-reassign
+          guidHolder.guid = curGuid;
+
+          // Remove the stale guids, and set the array to the current
+          ydoc.transact(() => {
+            guidArray.delete(0, guidArray.length); // Delete the entire array
+            guidArray.push([{ guid: curGuid, ts: createdTS }]);
+          });
         }
 
         if (!ok) {
@@ -388,11 +411,15 @@ export const persistence = {
       }
     });
 
+    // Use a holder for the guid. This is needed in case the guid is not known yet
+    // for a new document so that it can be updated later once its known.
+    const guidHolder = { guid };
+
     ydoc.on('update', debounce(async () => {
       // If we receive an update on the document, store it in da-admin, but debounce it
       // to avoid excessive da-admin calls.
       if (ydoc === docs.get(docName)) {
-        current = await persistence.update(ydoc, current, guid);
+        current = await persistence.update(ydoc, current, guidHolder);
       }
     }, 2000, { maxWait: 10000 }));
 
@@ -541,6 +568,29 @@ export const messageListener = (conn, doc, message) => {
     console.error(err);
     showError(doc, err);
   }
+};
+
+export const deleteFromAdmin = async (docName) => {
+  // eslint-disable-next-line no-console
+  console.log('Delete from Admin received', docName);
+  const ydoc = docs.get(docName);
+  if (ydoc) {
+    // empty out all known docs, should normally just be one
+    for (const { guid } of ydoc.getArray('prosemirror-guids')) {
+      ydoc.transact(() => {
+        const rootType = ydoc.getXmlFragment(`prosemirror-${guid}`);
+        rootType.delete(0, rootType.length);
+      });
+    }
+
+    // Reset the connections to flush the guids
+    ydoc.conns.forEach((_, c) => closeConn(ydoc, c));
+    return true;
+  } else {
+    // eslint-disable-next-line no-console
+    console.log('Document not found', docName);
+  }
+  return false;
 };
 
 /**
