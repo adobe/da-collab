@@ -193,6 +193,8 @@ export const persistence = {
    * @param {WSSharedDoc} ydoc - The Yjs document, which among other things contains the service
    * binding to da-admin.
    * @param {string} content - The content to store
+   * @param {string} guid - The guid of the document to store. It must match what da-admin has
+   * or if this is a new document, da-admin will use this guid.
    * @returns {object} The response from da-admin.
    */
   put: async (ydoc, content, guid) => {
@@ -221,9 +223,7 @@ export const persistence = {
       });
     }
 
-    const {
-      ok, status, statusText,
-    } = await ydoc.daadmin.fetch(ydoc.name, opts);
+    const { ok, status, statusText } = await ydoc.daadmin.fetch(ydoc.name, opts);
 
     return {
       ok,
@@ -274,9 +274,7 @@ export const persistence = {
       if (current !== content) {
         // Only store the document if it was actually changed.
 
-        const {
-          ok, status, statusText,
-        } = await persistence.put(ydoc, content, curGuid);
+        const { ok, status, statusText } = await persistence.put(ydoc, content, curGuid);
         if (newDoc) {
           // Update the guid in the guidHolder so that in subsequent calls we know what it is
           // eslint-disable-next-line no-param-reassign
