@@ -12,78 +12,10 @@
 import {
   prosemirrorToYXmlFragment, yDocToProsemirror,
 } from 'y-prosemirror';
-import {
-  DOMParser, DOMSerializer, Schema,
-} from 'prosemirror-model';
-import { addListNodes } from 'prosemirror-schema-list';
-import {
-  tableNodes,
-} from 'prosemirror-tables';
-import { schema as baseSchema } from 'prosemirror-schema-basic';
+import { DOMParser, DOMSerializer } from 'prosemirror-model';
 import { fromHtml } from 'hast-util-from-html';
 import { matches } from 'hast-util-select';
-
-function parseLocDOM(locTag) {
-  return [{
-    tag: locTag,
-
-    // Do we need to add this to the contentElement function?
-    // Only parse the content of the node, not the temporary elements
-    // const deleteThese = dom.querySelectorAll('[loc-temp-dom]');
-    // deleteThese.forEach((e) => e.remove());
-    contentElement: (dom) => dom,
-  }];
-}
-
-function addLocNodes(baseNodes) {
-  if (!baseNodes.content.includes('loc_deleted')) {
-    baseNodes.content.push('loc_deleted');
-    baseNodes.content.push({
-      group: 'block',
-      content: 'block+',
-      parseDOM: parseLocDOM('da-loc-deleted'),
-      toDOM: () => ['da-loc-deleted', { contenteditable: false }, 0],
-    });
-    baseNodes.content.push('loc_added');
-    baseNodes.content.push({
-      group: 'block',
-      content: 'block+',
-      parseDOM: parseLocDOM('da-loc-added'),
-      toDOM: () => ['da-loc-added', { contenteditable: false }, 0],
-    });
-  }
-  return baseNodes;
-}
-
-function addCustomMarks(marks) {
-  const sup = {
-    parseDOM: [{ tag: 'sup' }, { clearMark: (m) => m.type.name === 'sup' }],
-    toDOM() { return ['sup', 0]; },
-  };
-
-  const sub = {
-    parseDOM: [{ tag: 'sub' }, { clearMark: (m) => m.type.name === 'sub' }],
-    toDOM() { return ['sub', 0]; },
-  };
-
-  const contextHighlight = { toDOM: () => ['span', { class: 'highlighted-context' }, 0] };
-
-  return marks
-    .addToEnd('sup', sup)
-    .addToEnd('sub', sub)
-    .addToEnd('contextHighlightingMark', contextHighlight);
-}
-
-// Note: until getSchema() is separated in its own module, this function needs to be kept in-sync
-// with the getSchema() function in da-live blocks/edit/prose/index.js
-function getSchema() {
-  const { marks, nodes: baseNodes } = baseSchema.spec;
-  const withLocNodes = addLocNodes(baseNodes);
-  const withListnodes = addListNodes(withLocNodes, 'block+', 'block');
-  const nodes = withListnodes.append(tableNodes({ tableGroup: 'block', cellContent: 'block+' }));
-  const customMarks = addCustomMarks(marks);
-  return new Schema({ nodes, marks: customMarks });
-}
+import { getSchema } from './schema.js';
 
 function convertSectionBreak(node) {
   if (!node) return;
@@ -91,12 +23,17 @@ function convertSectionBreak(node) {
     node.children.forEach(convertSectionBreak);
   }
   if (node.tagName === 'p' && node.children && node.children.length === 1) {
-    if (node.children[0].type === 'text' && node.children[0].text === '---') {
-      node.children.clear();
+    if (node.children[0].type === 'text' && node.children[0].value === '---') {
+      // eslint-disable-next-line no-param-reassign
+      node.children.length = 0;
       // eslint-disable-next-line no-param-reassign
       node.tagName = 'hr';
     }
   }
+}
+
+function divFilter(parent) {
+  return parent.children.filter((child) => child.tagName === 'div');
 }
 
 function blockToTable(child, children) {
@@ -106,20 +43,27 @@ function blockToTable(child, children) {
   const classes = Array.from(child.properties.className);
   const name = classes.shift();
   const blockName = classes.length > 0 ? `${name} (${classes.join(', ')})` : name;
-  const rows = [...child.children];
-  const maxCols = rows.reduce((cols, row) => (
-    row.children?.length > cols ? row.children?.length : cols), 0);
+  const rows = [...divFilter(child)];
+  const maxCols = rows.reduce((colCount, row) => {
+    const cols = divFilter(row);
+    return cols.length > colCount ? cols.length : colCount;
+  }, 0);
 
   const table = {
     type: 'element', tagName: 'table', children: [], properties: {},
   };
+
+  if (child.properties.dataId) {
+    table.properties.dataId = child.properties.dataId;
+  }
+
   children.push(table);
   const headerRow = {
     type: 'element', tagName: 'tr', children: [], properties: {},
   };
 
   const td = {
-    type: 'element', tagName: 'td', children: [{ type: 'text', value: blockName }], properties: { colspan: maxCols },
+    type: 'element', tagName: 'td', children: [{ type: 'text', value: blockName }], properties: { colSpan: maxCols },
   };
 
   headerRow.children.push(td);
@@ -134,7 +78,7 @@ function blockToTable(child, children) {
         type: 'element', tagName: 'td', children: [], properties: {},
       };
       if (cells.length < maxCols && idx === cells.length - 1) {
-        tdi.properties.colspan = maxCols - idx;
+        tdi.properties.colSpan = maxCols - idx;
       }
       tdi.children.push(cells[idx]);
       tr.children.push(tdi);
@@ -146,9 +90,52 @@ function blockToTable(child, children) {
   });
 }
 
+/**
+ * Recursively traverses a node tree and fixes image links by moving link attributes to img elements
+ */
+function fixImageLinks(node) {
+  if (!node) return node;
+
+  // Recursively process children first
+  if (node.children) {
+    node.children.forEach((child) => {
+      if (child.tagName === 'a' && child.children?.length > 0) {
+        const { href, title } = child.properties;
+
+        child.children.forEach((linkChild) => {
+          if (linkChild.tagName === 'picture') {
+            linkChild.children.forEach((pictureChild) => {
+              if (pictureChild.tagName === 'img') {
+                // eslint-disable-next-line no-param-reassign
+                pictureChild.properties = {
+                  ...pictureChild.properties,
+                  href,
+                  title,
+                };
+              }
+            });
+          } else if (linkChild.tagName === 'img') {
+            // eslint-disable-next-line no-param-reassign
+            linkChild.properties = {
+              ...linkChild.properties,
+              href,
+              title,
+            };
+          }
+        });
+      } else {
+        fixImageLinks(child);
+      }
+    });
+  }
+
+  return node;
+}
+
 export function aem2doc(html, ydoc) {
   const tree = fromHtml(html, { fragment: true });
   const main = tree.children.find((child) => child.tagName === 'main');
+  fixImageLinks(main);
   (main.children || []).forEach((parent) => {
     if (parent.tagName === 'div' && parent.children) {
       const children = [];
@@ -270,25 +257,37 @@ export function aem2doc(html, ydoc) {
       return Reflect.get(target, prop);
     },
   };
+
   const json = DOMParser.fromSchema(getSchema()).parse(new Proxy(main, handler2));
   prosemirrorToYXmlFragment(json, ydoc.getXmlFragment('prosemirror'));
 }
 
+const getAttrString = (attributes) => Object.entries(attributes).map(([key, value]) => ` ${key}="${value}"`).join('');
+
 function tohtml(node) {
-  let attributes = Object.entries(node.attributes).map(([key, value]) => ` ${key}="${value}"`).join('');
+  const { attributes } = node;
+  let attrString = getAttrString(attributes);
   if (!node.children || node.children.length === 0) {
     if (node.type === 'text') {
       return node.text;
     }
     if (node.type === 'p') return '';
-    if (node.type === 'img' && !node.attributes.loading) {
-      attributes += ' loading="lazy"';
+    if (node.type === 'img' && !attributes.loading) {
+      attrString += ' loading="lazy"';
     }
     if (node.type === 'img') {
-      return `<picture><source srcset="${node.attributes.src}"><source srcset="${node.attributes.src}" media="(min-width: 600px)"><${node.type}${attributes}></picture>`;
+      const { href, src, title } = attributes;
+      if (attributes.href) {
+        delete attributes.href;
+        delete attributes.title;
+        attrString = getAttrString(attributes);
+        const titleStr = title ? ` title="${title}"` : '';
+        return `<a href="${href}"${titleStr}><picture><source srcset="${src}"><source srcset="${src}" media="(min-width: 600px)"><img${attrString}></picture></a>`;
+      }
+      return `<picture><source srcset="${src}"><source srcset="${src}" media="(min-width: 600px)"><img${attrString}></picture>`;
     }
 
-    const result = node.type !== 'br' ? `<${node.type}${attributes}></${node.type}>` : `<${node.type}>`;
+    const result = node.type !== 'br' ? `<${node.type}${attrString}></${node.type}>` : `<${node.type}>`;
 
     return result;
   }
@@ -307,7 +306,7 @@ function tohtml(node) {
       }
     }
   }
-  return `<${node.type}${attributes}>${children.map((child) => tohtml(child)).join('')}</${node.type}>`;
+  return `<${node.type}${attrString}>${children.map((child) => tohtml(child)).join('')}</${node.type}>`;
 }
 
 function toBlockCSSClassNames(text) {
@@ -329,11 +328,13 @@ function toBlockCSSClassNames(text) {
     .filter((name) => !!name);
 }
 
-function tableToBlock(child, fragment) {
+export function tableToBlock(child, fragment) {
   const rows = child.children[0].children;
   const nameRow = rows.shift();
-  const className = toBlockCSSClassNames(nameRow.children[0].children[0].children[0].text).join(' ');
+  const className = toBlockCSSClassNames(nameRow.children[0].children[0].children[0]?.text).join(' ');
   const block = { type: 'div', attributes: { class: className }, children: [] };
+  const dataId = child?.attributes?.dataId;
+  if (dataId) block.attributes['data-id'] = dataId;
   fragment.children.push(block);
   rows.forEach((row) => {
     const div = { type: 'div', attributes: {}, children: [] };

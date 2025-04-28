@@ -201,7 +201,15 @@ export const persistence = {
     formData.append('data', blob);
 
     const opts = { method: 'PUT', body: formData };
-    const auth = Array.from(ydoc.conns.keys())
+    const keys = Array.from(ydoc.conns.keys());
+    const allReadOnly = keys.length > 0 && keys.every((con) => con.readOnly === true);
+    if (allReadOnly) {
+      // eslint-disable-next-line no-console
+      console.log('All connections are read only, not storing');
+      return { ok: true };
+    }
+    const auth = keys
+      .filter((con) => con.readOnly !== true)
       .map((con) => con.auth);
 
     if (auth.length > 0) {
@@ -236,7 +244,7 @@ export const persistence = {
         const { ok, status, statusText } = await persistence.put(ydoc, content);
 
         if (!ok) {
-          closeAll = status === 401;
+          closeAll = (status === 401 || status === 403);
           throw new Error(`${status} - ${statusText}`);
         }
         // eslint-disable-next-line no-console
@@ -265,22 +273,32 @@ export const persistence = {
    * @param {TransactionalStorage} storage - the worker transactional storage object
    */
   bindState: async (docName, ydoc, conn, storage) => {
+    let timingReadStateDuration;
+    let timingDaAdminGetDuration;
+
     let current;
     let restored = false; // True if restored from worker storage
     try {
       let newDoc = false;
+      const timingBeforeDaAdminGet = Date.now();
       current = await persistence.get(docName, conn.auth, ydoc.daadmin);
-      if (current === null) {
-        // The document isn't there any more, clear the local storage
-        await storage.deleteAll();
+      timingDaAdminGetDuration = Date.now() - timingBeforeDaAdminGet;
 
-        current = EMPTY_DOC;
-        newDoc = true;
-      }
-
+      const timingBeforeReadState = Date.now();
       // Read the stored state from internal worker storage
       const stored = await readState(docName, storage);
-      if (stored && stored.length > 0) {
+      timingReadStateDuration = Date.now() - timingBeforeReadState;
+
+      if (current === null) {
+        if (!stored) {
+          // This is a new document, it wasn't present in local storage
+          newDoc = true;
+        }
+        // if stored has a value, the document previously existed but was deleted
+
+        current = EMPTY_DOC;
+        await storage.deleteAll();
+      } else if (stored && stored.length > 0) {
         Y.applyUpdate(ydoc, stored);
 
         // Check if the state from the worker storage is the same as the current state in da-admin.
@@ -293,7 +311,9 @@ export const persistence = {
           // eslint-disable-next-line no-console
           console.log('Restored from worker persistence', docName);
         }
-      } else if (newDoc === true) {
+      }
+
+      if (newDoc === true) {
         // There is no stored state and the document is empty, which means
         // we have a new doc here, which doesn't need to be restored from da-admin
         restored = true;
@@ -344,6 +364,11 @@ export const persistence = {
         current = await persistence.update(ydoc, current);
       }
     }, 2000, { maxWait: 10000 }));
+
+    const timingMap = new Map();
+    timingMap.set('timingReadStateDuration', timingReadStateDuration);
+    timingMap.set('timingDaAdminGetDuration', timingDaAdminGetDuration);
+    return timingMap;
   },
 };
 
@@ -403,7 +428,7 @@ export class WSSharedDoc extends Y.Doc {
  * @param {boolean} gc - whether garbage collection is enabled
  * @returns The Yjs document object, which may be shared across multiple sockets.
  */
-export const getYDoc = async (docname, conn, env, storage, gc = true) => {
+export const getYDoc = async (docname, conn, env, storage, timingData, gc = true) => {
   let doc = docs.get(docname);
   if (doc === undefined) {
     // The doc is not yet in the cache, create a new one.
@@ -426,12 +451,34 @@ export const getYDoc = async (docname, conn, env, storage, gc = true) => {
 
   // We wait for the promise, for second and subsequent connections to the same doc, this will
   // already be resolved.
-  await doc.promise;
+  const timings = await doc.promise;
+  if (timingData) {
+    timings.forEach((v, k) => timingData.set(k, v));
+  }
   return doc;
 };
 
 // For testing
 export const setYDoc = (docname, ydoc) => docs.set(docname, ydoc);
+
+// This read sync message handles readonly connections
+const readSyncMessage = (decoder, encoder, doc, readOnly, transactionOrigin) => {
+  const messageType = decoding.readVarUint(decoder);
+  switch (messageType) {
+    case syncProtocol.messageYjsSyncStep1:
+      syncProtocol.readSyncStep1(decoder, encoder, doc);
+      break;
+    case syncProtocol.messageYjsSyncStep2:
+      if (!readOnly) syncProtocol.readSyncStep2(decoder, doc, transactionOrigin);
+      break;
+    case syncProtocol.messageYjsUpdate:
+      if (!readOnly) syncProtocol.readUpdate(decoder, doc, transactionOrigin);
+      break;
+    default:
+      throw new Error('Unknown message type');
+  }
+  return messageType;
+};
 
 export const messageListener = (conn, doc, message) => {
   try {
@@ -441,7 +488,7 @@ export const messageListener = (conn, doc, message) => {
     switch (messageType) {
       case messageSync:
         encoding.writeVarUint(encoder, messageSync);
-        syncProtocol.readSyncMessage(decoder, encoder, doc, conn);
+        readSyncMessage(decoder, encoder, doc, conn.readOnly);
 
         // If the `encoder` only contains the type of reply message and no
         // message, there is no need to send the message. When `encoder` only
@@ -498,10 +545,12 @@ export const invalidateFromAdmin = async (docName) => {
  * @returns {Promise<void>} - The return value of this
  */
 export const setupWSConnection = async (conn, docName, env, storage) => {
+  const timingData = new Map();
+
   // eslint-disable-next-line no-param-reassign
   conn.binaryType = 'arraybuffer';
   // get doc, initialize if it does not exist yet
-  const doc = await getYDoc(docName, conn, env, storage, true);
+  const doc = await getYDoc(docName, conn, env, storage, timingData, true);
 
   // listen and reply to events
   conn.addEventListener('message', (message) => messageListener(conn, doc, new Uint8Array(message.data)));
@@ -527,4 +576,6 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
       send(doc, conn, encoding.toUint8Array(encoder));
     }
   }
+
+  return timingData;
 };
