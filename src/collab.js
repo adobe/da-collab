@@ -135,6 +135,7 @@ function fixImageLinks(node) {
 export function aem2doc(html, ydoc) {
   const tree = fromHtml(html, { fragment: true });
   const main = tree.children.find((child) => child.tagName === 'main');
+
   fixImageLinks(main);
   (main.children || []).forEach((parent) => {
     if (parent.tagName === 'div' && parent.children) {
@@ -187,6 +188,22 @@ export function aem2doc(html, ydoc) {
         result.push(node);
       }
       count += 1;
+    } else if (node.tagName === 'da-metadata') {
+      // Process da-metadata
+      const metadataMap = ydoc.getMap('da-metadata');
+      const mdString = node.properties?.dataMd;
+      if (mdString) {
+        try {
+          const md = JSON.parse(mdString);
+          Object.entries(md).forEach(([key, value]) => {
+            metadataMap.set(key, value);
+          });
+        } catch (e) {
+          console.error('Failed to parse da-metadata data-md attribute:', e);
+        }
+      }
+      // Remove the node by returning an empty array
+      return [];
     } else {
       result.push(node);
     }
@@ -345,6 +362,13 @@ export function tableToBlock(child, fragment) {
   });
 }
 
+const encodeHTMLAttribute = (str) => String(str)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
+
 export function doc2aem(ydoc) {
   const schema = getSchema();
   const json = yDocToProsemirror(schema, ydoc);
@@ -413,11 +437,19 @@ export function doc2aem(ydoc) {
     return acc;
   }, [section]);
 
+  const metadataMap = ydoc.getMap('da-metadata');
+  const metadataObject = Object.fromEntries(metadataMap.entries());
+  let daMetadataString = '';
+  if (Object.keys(metadataObject).length) {
+    const encodedMd = encodeHTMLAttribute(JSON.stringify(metadataObject));
+    daMetadataString = `<da-metadata data-md="${encodedMd}"></da-metadata>`;
+  }
+
   const text = sections.map((s) => tohtml(s)).join('');
   return `
 <body>
   <header></header>
-  <main>${text}</main>
+  <main>${text}${daMetadataString}</main>
   <footer></footer>
 </body>
 `;

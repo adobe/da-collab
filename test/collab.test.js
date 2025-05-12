@@ -557,6 +557,29 @@ assert.equal(result, html);
     const result = doc2aem(yDoc);
     assert.equal(collapseWhitespace(result), collapseWhitespace(html));
   });
+
+  it.only('Supports da-metadata', async () => {
+    const html = `
+      <body>
+        <header></header>
+        <main>
+          <div>
+            <div class="hello" data-id="96789">
+              <div>
+                <div><p>Row 1 - Column 1</p></div>
+                <div><p>Row 1 - Column 2</p></div>
+              </div>
+            </div>
+          </div>
+          <da-metadata data-md="{&quot;locInherit&quot;:true}"></da-metadata>
+        </main>
+        <footer></footer>
+      </body>`;
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+    const result = doc2aem(yDoc);
+    assert.equal(collapseWhitespace(result), collapseWhitespace(html));
+  });
 });
 
 
