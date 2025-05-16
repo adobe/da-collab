@@ -744,7 +744,7 @@ describe('Collab Test Suite', () => {
     }
   });
 
-  /* Not sure what use-case this is for...
+  /* Not sure what use-case this is for... TODO find out!
   it('test bind to empty doc that was stored before updates ydoc', async () => {
     const docName = 'https://admin.da.live/source/foo.html';
 
