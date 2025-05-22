@@ -744,7 +744,6 @@ describe('Collab Test Suite', () => {
     }
   });
 
-  /* Not sure what use-case this is for... TODO find out!
   it('test bind to empty doc that was stored before updates ydoc', async () => {
     const docName = 'https://admin.da.live/source/foo.html';
 
@@ -783,12 +782,10 @@ describe('Collab Test Suite', () => {
 
       await persistence.bindState(docName, ydoc, conn, storage);
       assert.deepStrictEqual([true], deleteAllCalled);
-      assert.equal(1, setTimeoutCalled.length, 'SetTimeout should have been called to update the doc');
     } finally {
       globalThis.setTimeout = savedSetTimeout;
     }
   });
-  */
 
   it('test persist state in worker storage on update', async () => {
     const docName = 'https://admin.da.live/source/foo/bar.html';

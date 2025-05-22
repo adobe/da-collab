@@ -265,6 +265,8 @@ export const persistence = {
 
       if (!newDoc && !guid) {
         // Someone is still editing a document in the browser that has since been deleted
+        // we know it's deleted because guid from da-admin is not set.
+        // eslint-disable-next-line no-console
         console.log('Document GUID mismatch, da-admin guid:', guid, 'edited guid:', curGuid);
         showError(ydoc, { message: 'This document has since been deleted, your edits are not persisted' });
         return current;
@@ -378,8 +380,11 @@ export const persistence = {
     if (!restored && guid) {
       // The doc was not restored from worker persistence, so read it from da-admin,
       // but only if the doc actually exists in da-admin (guid has a value).
-      // but do this async to give the ydoc some time to get synced up first. Without
-      // this timeout, the ydoc can get confused which may result in duplicated content.
+      // If it's a brand new document, subsequent update() calls will set it in
+      // da-admin and provide the guid to use.
+
+      // Do this async to give the ydoc some time to get synced up first. Without this
+      // timeout, the ydoc can get confused which may result in duplicated content.
       setTimeout(() => {
         if (ydoc === docs.get(docName)) {
           const rootType = ydoc.getXmlFragment(`prosemirror-${guid}`);
