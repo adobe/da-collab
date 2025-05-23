@@ -14,7 +14,7 @@ import assert from 'assert';
 import esmock from 'esmock';
 
 import {
-  closeConn, getYDoc, invalidateFromAdmin, messageListener, persistence,
+  closeConn, deleteFromAdmin, getYDoc, invalidateFromAdmin, messageListener, persistence,
   readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
 import { aem2doc, doc2aem } from '../src/collab.js';
@@ -381,6 +381,77 @@ describe('Collab Test Suite', () => {
     await testCloseAllOnAuthFailure(403);
   });
 
+  it('Test no guid array in update does nothing', async () => {
+    const docName = 'http://a.b.c/my/doc.html';
+    const ydoc = new WSSharedDoc(docName);
+
+    const doc2aemCalled = [];
+    const mockDoc2Aem = () => {
+      doc2aemCalled.push('doc2aem');
+    };
+    const pss = await esmock(
+      '../src/shareddoc.js', {
+        '../src/collab.js': {
+          doc2aem: mockDoc2Aem
+        }
+      });
+
+    const res = await pss.persistence.update(ydoc, 'My Content', { guid: '1234' });
+    assert.equal(0, doc2aemCalled.length, 'doc2aem should not have been called');
+    assert.equal(res, 'My Content', 'Should not have changed the content, as the guid array was not set');
+  });
+
+  it('Test update document deleted from admin produces error and is ignored', async () => {
+    const docName = 'http://a.b.c/my/doc.html';
+    const ydoc = new WSSharedDoc(docName);
+    ydoc.transact = (f) => f();
+
+    const doc2aemCalled = [];
+    const mockDoc2Aem = () => {
+      doc2aemCalled.push('doc2aem');
+    };
+    const pss = await esmock(
+      '../src/shareddoc.js', {
+        '../src/collab.js': {
+          doc2aem: mockDoc2Aem
+        }
+      });
+
+    assert.equal(0, ydoc.getMap('error').size, 'Precondition');
+    ydoc.getArray('prosemirror-guids').push([{ ts: Date.now(), guid: '1234' }]);
+    const res = await pss.persistence.update(ydoc, 'My Content', {});
+    assert(ydoc.getMap('error').size > 0, 'Should have set the error');
+    assert(ydoc.getMap('error').get('message').length > 0, 'Should have set the error message');
+    assert.equal(0, doc2aemCalled.length, 'doc2aem should not have been called');
+    assert.equal(res, 'My Content', 'Should not have changed the content, as the guid array was not set');
+  });
+
+  it('Test update new doc with guid provided', async () => {
+    const docName = 'http://a.b.c/my/doc.html';
+    const ydoc = new WSSharedDoc(docName);
+    ydoc.transact = (f) => f();
+
+    const pss = await esmock(
+      '../src/shareddoc.js', {
+    });
+    pss.persistence.put = async (ydoc, content, guid) => {
+      if (guid == '3-3') {
+        return { ok: true, status: 200, statusText: 'OK - Stored'};
+      }
+    };
+
+    assert.equal(0, ydoc.getMap('error').size, 'Precondition');
+    const ga = ydoc.getArray('prosemirror-guids');
+    ga.push([{ ts: 222, guid: '2-2' }]);
+    ga.push([{ newDoc: true, ts: 333, guid: '3-3' }]);
+    ga.push([{ ts: 111, guid: '1-1' }]);
+
+    const guidHolder = {};
+    await pss.persistence.update(ydoc, 'My Content', guidHolder);
+    assert.deepStrictEqual(guidHolder, { guid: '3-3' });
+    assert.deepStrictEqual([{ guid: '3-3', ts: 333 }], [...ydoc.getArray('prosemirror-guids')]);
+  });
+
   it('Test invalidateFromAdmin', async () => {
     const docName = 'http://blah.di.blah/a/ha.html';
 
@@ -404,6 +475,44 @@ describe('Collab Test Suite', () => {
     const res2 = ['close2', 'close1'];
     assert(res1.toString() === closeCalled.toString()
       || res2.toString() === closeCalled.toString());
+  });
+
+  it('Test deleteFromAdmin', async() => {
+    const docName = 'https://do.re.mi/so/la/ti.html';
+
+    const deleteCalled = [];
+    const rt1234 = {
+      length: 7,
+      delete: (i, l) => { deleteCalled.push(`delete(${i},${l})`)}
+    };
+    const rt5678 = {
+      length: 19,
+      delete: (i, l) => { deleteCalled.push(`delete(${i},${l})`)}
+    };
+    const rtMap = new Map();
+    rtMap.set('prosemirror-g1234', rt1234);
+    rtMap.set('prosemirror-g5678', rt5678);
+
+    const closeCalled = [];
+    const conn = { close: () => closeCalled.push('close') };
+    const conns = new Map();
+    conns.set(conn, new Set());
+
+    const testYDoc = new WSSharedDoc(docName);
+    testYDoc.getXmlFragment = (k) => rtMap.get(k);
+    const guids = testYDoc.getArray('prosemirror-guids');
+    guids.push([{guid: 'g1234', ts: 999}]);
+    guids.push([{guid: 'g5678', ts: 777}]);
+    testYDoc.transact = (f) => f();
+    testYDoc.conns = conns;
+    const m = setYDoc(docName, testYDoc);
+
+    assert(m.has(docName), 'Precondition');
+    deleteFromAdmin(docName);
+    assert(!m.has(docName), 'Document should have been removed from global map');
+
+    assert.deepStrictEqual(['close'], closeCalled);
+    assert.deepStrictEqual(['delete(0,7)', 'delete(0,19)'], deleteCalled);
   });
 
   it('Test close connection', async () => {
@@ -563,24 +672,32 @@ describe('Collab Test Suite', () => {
     const storage = { list: async () => stored };
 
     const savedGet = persistence.get;
+    const savedSetTimeout = globalThis.setTimeout;
     try {
+      const setTimeoutCalled = [];
+      globalThis.setTimeout = () => setTimeoutCalled.push('setTimeout');
       persistence.get = (d) => {
         if (d === docName) {
-          return `
+          return {
+            guid: 'abcd-efgh-1234-5678',
+            text: `
 <body>
   <header></header>
   <main><div></div></main>
   <footer></footer>
 </body>
-`;
+`};
         }
       };
 
       await persistence.bindState(docName, ydoc, conn, storage);
 
       assert.equal('somevalue', ydoc.getMap('foo').get('someattr'));
+      assert.equal(0, setTimeoutCalled.length,
+        'Should not have called setTimeout as there is no document to restore from da-admin');
     } finally {
       persistence.get = savedGet;
+      globalThis.setTimeout = savedSetTimeout;
     }
   });
 

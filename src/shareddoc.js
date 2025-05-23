@@ -254,7 +254,6 @@ export const persistence = {
       // when the document is just opened in the browser.
       const guidArray = ydoc.getArray('prosemirror-guids');
       const copy = [...guidArray];
-      console.log('guidArray', copy);
       if (copy.length === 0) {
         // eslint-disable-next-line no-console
         console.log('No guid array found in update. Ignoring.');
