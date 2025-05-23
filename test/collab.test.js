@@ -38,8 +38,8 @@ describe('Parsing test suite', () => {
 
     html = collapseWhitespace(html);
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'test-guid');
+    const result = doc2aem(yDoc, 'test-guid');
     assert.equal(collapseWhitespace(result), html);
   });
 
@@ -64,8 +64,8 @@ describe('Parsing test suite', () => {
     html = collapseWhitespace(html);
 
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'some-guid');
+    const result = doc2aem(yDoc, 'some-guid');
     assert.equal(collapseWhitespace(result), html);
   });
 
@@ -79,8 +79,8 @@ describe('Parsing test suite', () => {
 </body>
 `;
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'some-guid');
+    const result = doc2aem(yDoc, 'some-guid');
     console.log(result);
     assert.equal(result, html);
   })
@@ -101,8 +101,8 @@ describe('Parsing test suite', () => {
 </body>
 `;
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'some-guid');
+    const result = doc2aem(yDoc, 'some-guid');
     assert.equal(result, expectedResult);
   });
 
@@ -115,8 +115,8 @@ describe('Parsing test suite', () => {
 </body>
 `;
       const yDoc = new Y.Doc();
-      aem2doc(html, yDoc);
-      const result = doc2aem(yDoc);
+      aem2doc(html, yDoc, 'some-guid');
+      const result = doc2aem(yDoc, 'some-guid');
       assert.equal(result, html);
     });
 
@@ -129,8 +129,8 @@ describe('Parsing test suite', () => {
 </body>
 `;
       const yDoc = new Y.Doc();
-      aem2doc(html, yDoc);
-      const result = doc2aem(yDoc);
+      aem2doc(html, yDoc, 'my-guid');
+      const result = doc2aem(yDoc, 'my-guid');
       assert.equal(result, html);
     });
 
@@ -143,8 +143,8 @@ describe('Parsing test suite', () => {
 </body>
 `;
       const yDoc = new Y.Doc();
-      aem2doc(html, yDoc);
-      const result = doc2aem(yDoc);
+      aem2doc(html, yDoc, 'my-guid');
+      const result = doc2aem(yDoc, 'my-guid');
       assert.equal(result, html);
     });
 
@@ -157,12 +157,12 @@ describe('Parsing test suite', () => {
 </body>
 `;
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'my-guid');
+    const result = doc2aem(yDoc, 'my-guid');
     assert.equal(result, html);
   });
 
-  it('Test nested marks roundtrip', async () => {
+it('Test nested marks roundtrip', async () => {
     const html = `
 <body>
   <header></header>
@@ -171,10 +171,11 @@ describe('Parsing test suite', () => {
 </body>
 `;
   const yDoc = new Y.Doc();
-  aem2doc(html, yDoc);
-  const result = doc2aem(yDoc);
+  aem2doc(html, yDoc, 'my-guid');
+  const result = doc2aem(yDoc, 'my-guid');
   assert.equal(result, html);
 });
+
 it('Test simple block roundtrip', async () => {
   const html = `
 <body>
@@ -184,8 +185,8 @@ it('Test simple block roundtrip', async () => {
 </body>
 `;
 const yDoc = new Y.Doc();
-aem2doc(html, yDoc);
-const result = doc2aem(yDoc);
+aem2doc(html, yDoc, 'my-guid');
+const result = doc2aem(yDoc, 'my-guid');
 assert.equal(result, html);
 });
 it('Test complex block roundtrip', async () => {
@@ -197,8 +198,8 @@ it('Test complex block roundtrip', async () => {
 </body>
 `;
 const yDoc = new Y.Doc();
-aem2doc(html, yDoc);
-const result = doc2aem(yDoc);
+aem2doc(html, yDoc, 'my-guid');
+const result = doc2aem(yDoc, 'my-guid');
 console.log(result);
 assert.equal(result, html);
 });
@@ -211,8 +212,8 @@ it('Test linebreak roundtrip', async () => {
 </body>
 `;
 const yDoc = new Y.Doc();
-aem2doc(html, yDoc);
-const result = doc2aem(yDoc);
+aem2doc(html, yDoc, 'my-guid');
+const result = doc2aem(yDoc, 'my-guid');
 console.log(result);
 assert.equal(result, html);
 });
@@ -226,8 +227,8 @@ assert.equal(result, html);
 </body>
 `;
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'my-guid');
+    const result = doc2aem(yDoc, 'my-guid');
     console.log(result);
     assert.equal(result, html);
   });
@@ -235,8 +236,8 @@ assert.equal(result, html);
   it('Test regional edit table parsing', async () => {
     const html = readFileSync('./test/mocks/regional-edit-1.html', 'utf-8');
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'my-guid');
+    const result = doc2aem(yDoc, 'my-guid');
     assert.equal(collapseWhitespace(result.trim()), collapseWhitespace(html.trim()));
   });
 
@@ -306,8 +307,8 @@ assert.equal(result, html);
       `;
     html = collapseWhitespace(html);
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = collapseWhitespace(doc2aem(yDoc));
+    aem2doc(html, yDoc, 'my-guid');
+    const result = collapseWhitespace(doc2aem(yDoc, 'my-guid'));
     assert.equal(result, html);
   });
 
@@ -320,8 +321,8 @@ assert.equal(result, html);
 </body>
 `;
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'my-guid');
+    const result = doc2aem(yDoc, 'my-guid');
     console.log(result);
     assert.equal(result, html);
   });
@@ -342,8 +343,8 @@ assert.equal(result, html);
 </body>
 `;
     const yDoc = new Y.Doc();
-    aem2doc(htmlIn, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(htmlIn, yDoc, 'my-guid');
+    const result = doc2aem(yDoc, 'my-guid');
     console.log(result);
     assert.equal(result, htmlOut,
       'The horizontal line should have been converted to a section break');
@@ -440,8 +441,8 @@ assert.equal(result, html);
 
     html = collapseWhitespace(html);
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'my-guid');
+    const result = doc2aem(yDoc, 'my-guid');
     assert.equal(collapseWhitespace(result), html);
   });
 
@@ -466,8 +467,8 @@ assert.equal(result, html);
 
     html = collapseWhitespace(html);
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'my-guid');
+    const result = doc2aem(yDoc, 'my-guid');
     assert.equal(collapseWhitespace(result), html);
   });
 
@@ -497,8 +498,8 @@ assert.equal(result, html);
 
     html = collapseWhitespace(html);
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'my-guid');
+    const result = doc2aem(yDoc, 'my-guid');
     assert.equal(collapseWhitespace(result), html);
   });
 
@@ -521,8 +522,8 @@ assert.equal(result, html);
   <footer></footer>
 </body>`;
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'my-guid');
+    const result = doc2aem(yDoc, 'my-guid');
     assert.equal(collapseWhitespace(result), collapseWhitespace(html));
   });
 
@@ -553,8 +554,8 @@ assert.equal(result, html);
   <footer></footer>
 </body>`;
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'my-guid');
+    const result = doc2aem(yDoc, 'my-guid');
     assert.equal(collapseWhitespace(result), collapseWhitespace(html));
   });
 });
