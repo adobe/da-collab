@@ -428,14 +428,24 @@ describe('Collab Test Suite', () => {
 
   it('Test update new doc with guid provided', async () => {
     const docName = 'http://a.b.c/my/doc.html';
+
+    const initialContent = `
+<body>
+  <header></header>
+  <main><div><p>Hello</p></div></main>
+  <footer></footer>
+</body>
+`;
+
     const ydoc = new WSSharedDoc(docName);
     ydoc.transact = (f) => f();
+    aem2doc(initialContent, ydoc, '3-3');
 
     const pss = await esmock(
       '../src/shareddoc.js', {
     });
     pss.persistence.put = async (ydoc, content, guid) => {
-      if (guid == '3-3') {
+      if (guid == '3-3' && content.includes('Hello')) {
         return { ok: true, status: 200, statusText: 'OK - Stored'};
       }
     };
@@ -447,9 +457,10 @@ describe('Collab Test Suite', () => {
     ga.push([{ ts: 111, guid: '1-1' }]);
 
     const guidHolder = {};
-    await pss.persistence.update(ydoc, 'My Content', guidHolder);
+    const res = await pss.persistence.update(ydoc, 'My Old Content', guidHolder);
     assert.deepStrictEqual(guidHolder, { guid: '3-3' });
     assert.deepStrictEqual([{ guid: '3-3', ts: 333 }], [...ydoc.getArray('prosemirror-guids')]);
+    assert(res.includes('Hello'), 'Should have kept the content');
   });
 
   it('Test invalidateFromAdmin', async () => {

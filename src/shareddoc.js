@@ -271,7 +271,7 @@ export const persistence = {
         return current;
       }
 
-      const content = doc2aem(ydoc, guid);
+      const content = doc2aem(ydoc, curGuid);
       if (current !== content) {
         // Only store the document if it was actually changed.
 
