@@ -132,10 +132,19 @@ function fixImageLinks(node) {
   return node;
 }
 
+function removeComments(node) {
+  if (!node) return node;
+  // eslint-disable-next-line no-param-reassign
+  node.children = node.children?.filter((child) => child.type !== 'comment') || [];
+  node.children.forEach(removeComments);
+  return node;
+}
+
 export function aem2doc(html, ydoc) {
   const tree = fromHtml(html, { fragment: true });
   const main = tree.children.find((child) => child.tagName === 'main');
   fixImageLinks(main);
+  removeComments(main);
   (main.children || []).forEach((parent) => {
     if (parent.tagName === 'div' && parent.children) {
       const children = [];
