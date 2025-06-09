@@ -10,9 +10,9 @@
  * governing permissions and limitations under the License.
  */
 import {
-  prosemirrorToYXmlFragment, yDocToProsemirrorJSON,
+  prosemirrorToYXmlFragment, yDocToProsemirror,
 } from 'y-prosemirror';
-import { DOMParser, DOMSerializer, Node } from 'prosemirror-model';
+import { DOMParser, DOMSerializer } from 'prosemirror-model';
 import { fromHtml } from 'hast-util-from-html';
 import { matches } from 'hast-util-select';
 import { getSchema } from './schema.js';
@@ -132,7 +132,7 @@ function fixImageLinks(node) {
   return node;
 }
 
-export function aem2doc(html, ydoc, guid) {
+export function aem2doc(html, ydoc) {
   const tree = fromHtml(html, { fragment: true });
   const main = tree.children.find((child) => child.tagName === 'main');
   fixImageLinks(main);
@@ -259,7 +259,7 @@ export function aem2doc(html, ydoc, guid) {
   };
 
   const json = DOMParser.fromSchema(getSchema()).parse(new Proxy(main, handler2));
-  prosemirrorToYXmlFragment(json, ydoc.getXmlFragment(`prosemirror-${guid}`));
+  prosemirrorToYXmlFragment(json, ydoc.getXmlFragment('prosemirror'));
 }
 
 const getAttrString = (attributes) => Object.entries(attributes).map(([key, value]) => ` ${key}="${value}"`).join('');
@@ -345,25 +345,9 @@ export function tableToBlock(child, fragment) {
   });
 }
 
-function getAEMHtml(text) {
-  return `
-<body>
-  <header></header>
-  <main>${text}</main>
-  <footer></footer>
-</body>
-`;
-}
-
-export function doc2aem(ydoc, guid) {
-  if (!guid) {
-    // this is a brand new document
-    return getAEMHtml('<div></div>');
-  }
-
+export function doc2aem(ydoc) {
   const schema = getSchema();
-  const state = yDocToProsemirrorJSON(ydoc, `prosemirror-${guid}`);
-  const json = Node.fromJSON(schema, state);
+  const json = yDocToProsemirror(schema, ydoc);
 
   const fragment = { type: 'div', children: [], attributes: {} };
   const handler3 = {
@@ -430,5 +414,11 @@ export function doc2aem(ydoc, guid) {
   }, [section]);
 
   const text = sections.map((s) => tohtml(s)).join('');
-  return getAEMHtml(text);
+  return `
+<body>
+  <header></header>
+  <main>${text}</main>
+  <footer></footer>
+</body>
+`;
 }
