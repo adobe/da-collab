@@ -85,6 +85,27 @@ describe('Parsing test suite', () => {
     assert.equal(result, html);
   })
 
+  it('Comments are not an issue', async () => {
+    const html = `
+<body>
+  <header></header>
+  <!-- Comment before main --><main><!-- Comment before div --><div><!-- Comment before h1 --><h1>test title</h1><!-- Comment after h1 --></div><!-- Comment after div --></main><!-- Comment after main -->
+  <footer></footer>
+</body>
+`;
+    const expectedResult = `
+<body>
+  <header></header>
+  <main><div><h1>test title</h1></div></main>
+  <footer></footer>
+</body>
+`;
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+    const result = doc2aem(yDoc);
+    assert.equal(result, expectedResult);
+  });
+
   it('Test linked image', async () => {
     const html = `
 <body>
