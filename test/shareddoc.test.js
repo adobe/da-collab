@@ -486,7 +486,7 @@ describe('Collab Test Suite', () => {
     assert.equal(2, aem2DocCalled.length);
     assert.equal('Get: http://lalala.com/ha/ha/ha.html-myauth-daadmin', aem2DocCalled[0]);
     assert.equal(testYDoc, aem2DocCalled[1]);
-  }).timeout(5000);
+  });
 
   it('Test bindState gets empty doc on da-admin 404', async() => {
     const mockdebounce = (f) => async () => await f();
