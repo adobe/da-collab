@@ -53,9 +53,9 @@ function blockToTable(child, children) {
     type: 'element', tagName: 'table', children: [], properties: {},
   };
 
-  if (child.properties.dataId) {
-    table.properties.dataId = child.properties.dataId;
-  }
+  table.properties.dataId = child.properties.dataId;
+  table.properties['da-diff-added'] = child.properties['da-diff-added'];
+  // table.properties['da-diff-deleted'] = child.properties['da-diff-deleted'];
 
   children.push(table);
   const headerRow = {
@@ -98,35 +98,75 @@ function fixImageLinks(node) {
 
   // Recursively process children first
   if (node.children) {
-    node.children.forEach((child) => {
+    // Process children and collect indices of <a> tags that wrap images
+    const childrenToReplace = [];
+
+    node.children.forEach((child, index) => {
       if (child.tagName === 'a' && child.children?.length > 0) {
-        const { href, title } = child.properties;
+        const {
+          href, title,
+          // 'da-diff-deleted': daDiffDeleted,
+          'da-diff-added': daDiffAdded,
+        } = child.properties;
+        let hasImages = false;
+
+        const propsToAdd = {
+          href,
+          title,
+          // ...(daDiffDeleted === '' ? { 'da-diff-deleted': daDiffDeleted } : {}),
+          ...(daDiffAdded === '' ? { 'da-diff-added': daDiffAdded } : {}),
+        };
 
         child.children.forEach((linkChild) => {
           if (linkChild.tagName === 'picture') {
+            hasImages = true;
             linkChild.children.forEach((pictureChild) => {
               if (pictureChild.tagName === 'img') {
                 // eslint-disable-next-line no-param-reassign
                 pictureChild.properties = {
                   ...pictureChild.properties,
-                  href,
-                  title,
+                  ...propsToAdd,
                 };
               }
             });
           } else if (linkChild.tagName === 'img') {
+            hasImages = true;
             // eslint-disable-next-line no-param-reassign
             linkChild.properties = {
               ...linkChild.properties,
-              href,
-              title,
+              ...propsToAdd,
             };
           }
         });
+
+        // If this link wraps images, mark it for replacement
+        if (hasImages) {
+          childrenToReplace.push({ index, children: child.children });
+        }
       } else {
         fixImageLinks(child);
       }
     });
+
+    // Replace <a> tags that wrap images with their children
+    if (childrenToReplace.length > 0) {
+      const newChildren = [];
+      let replaceIndex = 0;
+
+      node.children.forEach((child, index) => {
+        if (replaceIndex < childrenToReplace.length
+          && childrenToReplace[replaceIndex].index === index) {
+          // Replace this <a> tag with its children
+          newChildren.push(...childrenToReplace[replaceIndex].children);
+          replaceIndex += 1;
+        } else {
+          newChildren.push(child);
+        }
+      });
+
+      // eslint-disable-next-line no-param-reassign
+      node.children = newChildren;
+    }
   }
 
   return node;
@@ -142,47 +182,124 @@ function removeComments(node) {
 
 export const EMPTY_DOC = '<body><header></header><main><div></div></main><footer></footer></body>';
 
+/**
+ * Wraps elements with da-diff-added attribute in a da-diff-added element
+ * If the element is a block-group-start, it will wrap the entire block-group
+ */
+function processDaDiffAdded(main) {
+  if (!main?.children) return;
+
+  // Helper function to create wrapper element
+  const createWrapper = (children) => ({
+    type: 'element',
+    tagName: 'da-diff-added',
+    properties: {},
+    children,
+  });
+
+  // Helper function to check if element has da-diff-added attribute
+  const hasDaDiffAdded = (child) => child.type === 'element' && child.properties?.['da-diff-added'] !== undefined;
+
+  const isBlockGroupStart = (child) => child.tagName === 'div'
+    && child.properties?.className?.includes('block-group-start');
+
+  const isBlockGroupEnd = (child) => child.tagName === 'div'
+    && child.properties?.className?.includes('block-group-end');
+
+  const collectBlockGroup = (children, startIndex) => {
+    // Find the index where the block group ends
+    const endIndex = children.findIndex(
+      (child, index) => index > startIndex && isBlockGroupEnd(child),
+    );
+
+    // If no end found, take until the end of array
+    const actualEndIndex = endIndex === -1 ? children.length - 1 : endIndex;
+
+    return {
+      elementsToWrap: children.slice(startIndex, actualEndIndex + 1),
+      endIndex: actualEndIndex,
+    };
+  };
+
+  // Process each div that is a direct child of main
+  main.children.forEach((divChild) => {
+    if (divChild.tagName !== 'div' || !divChild.children) return;
+
+    const children = [...divChild.children]; // Create a copy to avoid mutation issues
+    const newChildren = [];
+    let i = 0;
+
+    while (i < children.length) {
+      const child = children[i];
+
+      if (hasDaDiffAdded(child)) {
+        if (isBlockGroupStart(child)) {
+          // Collect this element and all following until block-group-end
+          const { elementsToWrap, endIndex } = collectBlockGroup(children, i);
+          newChildren.push(createWrapper(elementsToWrap));
+          i = endIndex + 1; // Skip all the wrapped elements
+        } else {
+          // Single element case - just wrap this one element
+          newChildren.push(createWrapper([child]));
+          i += 1;
+        }
+      } else {
+        // No da-diff-added attribute, just add as-is
+        newChildren.push(child);
+        i += 1;
+      }
+    }
+
+    // eslint-disable-next-line no-param-reassign
+    divChild.children = newChildren;
+  });
+}
+
 export function aem2doc(html, ydoc) {
   if (!html) {
     // eslint-disable-next-line no-param-reassign
     html = EMPTY_DOC;
   }
   const tree = fromHtml(html, { fragment: true });
+
   const main = tree.children.find((child) => child.tagName === 'main');
-  if (main) {
-    fixImageLinks(main);
-    removeComments(main);
-    (main.children || []).forEach((parent) => {
-      if (parent.tagName === 'div' && parent.children) {
-        const children = [];
-        let modified = false;
-        parent.children.forEach((child) => {
-          if (child.tagName === 'div' && child.properties.className?.length > 0) {
-            modified = true;
-            blockToTable(child, children);
-          } else if (child.tagName === 'da-loc-deleted' || child.tagName === 'da-loc-added') {
-            modified = true;
-            const locChildren = [];
-            child.children.forEach((locChild) => {
-              if (locChild.tagName === 'div' && locChild.properties.className?.length > 0) {
-                blockToTable(locChild, locChildren);
-              } else {
-                locChildren.push(locChild);
-              }
-            });
-            // eslint-disable-next-line no-param-reassign
-            child.children = locChildren;
-            children.push(child);
-          } else {
-            children.push(child);
-          }
-        });
-        if (modified) {
+  if (html.includes('da-diff-added')) {
+    processDaDiffAdded(main);
+  }
+  fixImageLinks(main);
+  removeComments(main);
+  (main.children || []).forEach((parent) => {
+    if (parent.tagName === 'div' && parent.children) {
+      const children = [];
+      let modified = false;
+      parent.children.forEach((child) => {
+        if (child.tagName === 'div' && child.properties.className?.length > 0) {
+          modified = true;
+          blockToTable(child, children);
+        } else if (['da-diff-deleted', 'da-diff-added'].includes(child.tagName)) {
+          modified = true;
+          const locChildren = [];
+          child.children.forEach((locChild) => {
+            if (locChild.tagName === 'div' && locChild.properties.className?.length > 0) {
+              blockToTable(locChild, locChildren);
+            } else {
+              locChildren.push(locChild);
+            }
+          });
           // eslint-disable-next-line no-param-reassign
           parent.children = children;
+
+          // eslint-disable-next-line no-param-reassign
+      child.children = locChildren;
+      children.push(child);
+    } else {
+      children.push(child);
+    }
         }
-      }
-    });
+      });
+
+  });
+  if (modified) {
     convertSectionBreak(main);
     let count = 0;
     main.children = main.children.flatMap((node) => {
@@ -190,13 +307,22 @@ export function aem2doc(html, ydoc) {
       if (node.tagName === 'div') {
         if (count > 0) {
           result.push({
-            type: 'element', tagName: 'p', children: [], properties: {},
+            type: 'element',
+            tagName: 'p',
+            children: [],
+            properties: {},
           });
           result.push({
-            type: 'element', tagName: 'hr', children: [], properties: {},
+            type: 'element',
+            tagName: 'hr',
+            children: [],
+            properties: {},
           });
           result.push({
-            type: 'element', tagName: 'p', children: [], properties: {},
+            type: 'element',
+            tagName: 'p',
+            children: [],
+            properties: {},
           });
           result.push(...node.children);
         } else {
@@ -293,17 +419,22 @@ function tohtml(node) {
       return node.text;
     }
     if (node.type === 'p') return '';
-    if (node.type === 'img' && !attributes.loading) {
-      attrString += ' loading="lazy"';
-    }
     if (node.type === 'img') {
+      if (!attributes.loading) {
+        attrString += ' loading="lazy"';
+      }
       const { href, src, title } = attributes;
       if (attributes.href) {
+        // hoist link attributes back to <a>
         delete attributes.href;
         delete attributes.title;
+
+        const daDiffAddedStr = attributes['da-diff-added'] === '' ? ' da-diff-added=""' : '';
+        delete attributes['da-diff-added'];
+
         attrString = getAttrString(attributes);
         const titleStr = title ? ` title="${title}"` : '';
-        return `<a href="${href}"${titleStr}><picture><source srcset="${src}"><source srcset="${src}" media="(min-width: 600px)"><img${attrString}></picture></a>`;
+        return `<a href="${href}"${titleStr}${daDiffAddedStr}><picture><source srcset="${src}"><source srcset="${src}" media="(min-width: 600px)"><img${attrString}></picture></a>`;
       }
       return `<picture><source srcset="${src}"><source srcset="${src}" media="(min-width: 600px)"><img${attrString}></picture>`;
     }
@@ -313,18 +444,22 @@ function tohtml(node) {
     return result;
   }
   let { children } = node;
-  if (node.type === 'li') {
-    if (children.length === 1) {
-      if (children[0].type === 'p') {
-        children = children[0].children;
-      }
-    }
+  if (node.type === 'li' && children.length === 1 && children[0].type === 'p') {
+    children = children[0].children;
   }
-  if (node.type === 'p') {
-    if (children.length === 1) {
-      if (children[0].type === 'img') {
-        return children.map((child) => tohtml(child)).join('');
-      }
+  // Unwrap paragraphs that contain only images (single or multiple)
+  // Filter out empty text nodes and check if remaining content is only images
+  if (node.type === 'p' && children.length > 0) {
+    const meaningfulChildren = children.filter((child) => {
+      // Keep non-text nodes
+      if (child.type !== 'text') return true;
+      // Keep text nodes that have actual content (not just whitespace)
+      return child.text && child.text.trim().length > 0;
+    });
+
+    // If we only have images after filtering, unwrap them
+    if (meaningfulChildren.length > 0 && meaningfulChildren.every((child) => child.type === 'img')) {
+      return children.map((child) => tohtml(child)).join('');
     }
   }
   return `<${node.type}${attrString}>${children.map((child) => tohtml(child)).join('')}</${node.type}>`;
@@ -354,8 +489,9 @@ export function tableToBlock(child, fragment) {
   const nameRow = rows.shift();
   const className = toBlockCSSClassNames(nameRow.children[0].children[0].children[0]?.text).join(' ');
   const block = { type: 'div', attributes: { class: className }, children: [] };
-  const dataId = child?.attributes?.dataId;
+  const { dataId, daDiffAdded } = child.attributes || {};
   if (dataId) block.attributes['data-id'] = dataId;
+  if (daDiffAdded === '') block.attributes['da-diff-added'] = '';
   fragment.children.push(block);
   rows.forEach((row) => {
     const div = { type: 'div', attributes: {}, children: [] };
@@ -404,7 +540,7 @@ export function doc2aem(ydoc) {
   children.forEach((child) => {
     if (child.type === 'table') {
       tableToBlock(child, fragment);
-    } else if (child.type === 'da-loc-deleted' || child.type === 'da-loc-added') {
+    } else if (child.type === 'da-diff-deleted') {
       // eslint-disable-next-line no-param-reassign
       delete child.attributes.contenteditable;
       const locChildren = child.children;
@@ -418,6 +554,16 @@ export function doc2aem(ydoc) {
         }
       });
       fragment.children.push(child);
+    } else if (child.type === 'da-diff-added') {
+      // unwrap the content inside of da-diff-added
+      const locChildren = child.children;
+      locChildren.forEach((locChild) => {
+        if (locChild.type === 'table') {
+          tableToBlock(locChild, fragment);
+        } else {
+          fragment.children.push(locChild);
+        }
+      });
     } else {
       fragment.children.push(child);
     }

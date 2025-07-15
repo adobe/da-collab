@@ -242,7 +242,7 @@ assert.equal(result, html);
     const html = `
 <body>
   <header></header>
-  <main><div><da-loc-deleted><h1>Deleted H1 Here</h1></da-loc-deleted><da-loc-added><h1>Added H1 Here</h1></da-loc-added></div></main>
+  <main><div><da-diff-deleted data-mdast="ignore"><h1>Deleted H1 Here</h1></da-diff-deleted><h1 da-diff-added="">Added H1 Here</h1></div></main>
   <footer></footer>
 </body>
 `;
@@ -251,6 +251,28 @@ assert.equal(result, html);
     const result = doc2aem(yDoc);
     console.log(result);
     assert.equal(result, html);
+  });
+
+  it('Test regional edit backwards compatibility', async () => {
+    const html = `
+<body>
+  <header></header>
+  <main><div><da-diff-deleted data-mdast="ignore"><h1>Deleted H1 Here</h1></da-diff-deleted><da-diff-added><h1>Added H1 Here</h1></da-diff-added></div></main>
+  <footer></footer>
+</body>
+`;
+    const expected = `
+<body>
+  <header></header>
+  <main><div><da-diff-deleted data-mdast="ignore"><h1>Deleted H1 Here</h1></da-diff-deleted><h1 da-diff-added="">Added H1 Here</h1></div></main>
+  <footer></footer>
+</body>
+`;
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+    const result = doc2aem(yDoc);
+    console.log(result);
+    assert.equal(result, expected);
   });
 
   it('Test regional edit table parsing', async () => {
@@ -552,7 +574,7 @@ assert.equal(result, html);
 <body>
   <header></header>
   <main><div>
-    <da-loc-deleted>
+    <da-diff-deleted data-mdast="ignore">
       <a href="https://old.example.com" title="Old">
         <picture>
           <source srcset="https://old.example.com/image.jpg">
@@ -560,16 +582,14 @@ assert.equal(result, html);
           <img src="https://old.example.com/image.jpg" alt="Old">
         </picture>
       </a>
-    </da-loc-deleted>
-    <da-loc-added>
-      <a href="https://new.example.com" title="New">
-        <picture>
-          <source srcset="https://new.example.com/image.jpg">
-          <source srcset="https://new.example.com/image.jpg" media="(min-width: 600px)">
-          <img src="https://new.example.com/image.jpg" alt="New">
-        </picture>
-      </a>
-    </da-loc-added>
+    </da-diff-deleted>
+    <a href="https://new.example.com" title="New" da-diff-added="">
+      <picture>
+        <source srcset="https://new.example.com/image.jpg">
+        <source srcset="https://new.example.com/image.jpg" media="(min-width: 600px)">
+        <img src="https://new.example.com/image.jpg" alt="New">
+      </picture>
+    </a>
   </div></main>
   <footer></footer>
 </body>`;

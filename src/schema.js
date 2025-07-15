@@ -26,21 +26,22 @@ import { Schema } from 'prosemirror-model';
 import { addListNodes } from 'prosemirror-schema-list';
 import { tableNodes } from 'prosemirror-tables';
 
-function parseLocDOM(locTag) {
-  return [{
-    tag: locTag,
+const topLevelAttrs = {
+  dataId: { default: null, validate: 'string|null' },
+  daDiffAdded: { default: null, validate: 'string|null' },
+};
 
-    // Do we need to add this to the contentElement function?
-    // Only parse the content of the node, not the temporary elements
-    // const deleteThese = dom.querySelectorAll('[loc-temp-dom]');
-    // deleteThese.forEach((e) => e.remove());
-    contentElement: (dom) => dom,
-  }];
-}
+const getTopLevelToDomAttrs = (node) => {
+  const attrs = {};
+  if (node.attrs.dataId != null) attrs['data-id'] = node.attrs.dataId;
+  if (node.attrs.daDiffAdded === '') attrs['da-diff-added'] = '';
+  return attrs;
+};
 
-const topLevelAttrs = { dataId: { default: null, validate: 'string|null' } };
-const getTopLevelToDomAttrs = (node) => ({ 'data-id': node.attrs.dataId });
-const getTopLevelParseAttrs = (dom) => ({ dataId: dom.getAttribute('dataId') || null });
+const getTopLevelParseAttrs = (dom) => ({
+  dataId: dom.getAttribute('dataId') ?? null,
+  daDiffAdded: dom.getAttribute('da-diff-added') ?? null,
+});
 
 const getHeadingAttrs = (level) => (dom) => ({
   level,
@@ -122,32 +123,34 @@ const baseNodes = {
     },
     group: 'inline',
     draggable: true,
-    parseDOM: [{
-      tag: 'img[src]',
-      getAttrs(dom) {
-        return {
-          src: dom.getAttribute('src'),
-          title: dom.getAttribute('title'),
-          alt: dom.getAttribute('alt'),
-          href: dom.getAttribute('href'),
-          ...getTopLevelParseAttrs(dom),
-        };
+    parseDOM: [
+      {
+        tag: 'img[src]',
+        getAttrs(dom) {
+          return {
+            src: dom.getAttribute('src'),
+            title: dom.getAttribute('title'),
+            alt: dom.getAttribute('alt'),
+            href: dom.getAttribute('href'),
+            ...getTopLevelParseAttrs(dom),
+          };
+        },
       },
-    }],
+    ],
     toDOM(node) {
       const {
-        src,
-        alt,
-        title,
-        href,
+        src, alt, title, href,
       } = node.attrs;
-      return ['img', {
-        src,
-        alt,
-        title,
-        href,
-        ...getTopLevelToDomAttrs(node),
-      }];
+      return [
+        'img',
+        {
+          src,
+          alt,
+          title,
+          href,
+          ...getTopLevelToDomAttrs(node),
+        },
+      ];
     },
   },
   hard_break: {
@@ -159,22 +162,39 @@ const baseNodes = {
       return ['br'];
     },
   },
-  // DA diffing tags
-  loc_added: {
+  diff_added: {
     group: 'block',
     content: 'block+',
     atom: true,
     isolating: true,
-    parseDOM: parseLocDOM('da-loc-added'),
-    toDOM: () => ['da-loc-added', { contenteditable: false }, 0],
+    parseDOM: [
+      {
+        tag: 'da-diff-added',
+        contentElement: (dom) => {
+          [...dom.children].forEach((child) => {
+            if (child.properties) {
+              // eslint-disable-next-line no-param-reassign
+              child.properties['da-diff-added'] = '';
+            }
+          });
+          return dom;
+        },
+      },
+    ],
+    toDOM: () => ['da-diff-added', { contenteditable: false }, 0],
   },
-  loc_deleted: {
+  diff_deleted: {
     group: 'block',
     content: 'block+',
     atom: true,
     isolating: true,
-    parseDOM: parseLocDOM('da-loc-deleted'),
-    toDOM: () => ['da-loc-deleted', { contenteditable: false }, 0],
+    parseDOM: [
+      {
+        tag: 'da-diff-deleted',
+        contentElement: (dom) => dom,
+      },
+    ],
+    toDOM: () => ['da-diff-deleted', { 'data-mdast': 'ignore', contenteditable: false }, 0],
   },
 };
 
@@ -183,19 +203,20 @@ const baseMarks = {
     attrs: {
       href: {},
       title: { default: null },
+      ...topLevelAttrs,
     },
     inclusive: false,
     parseDOM: [
       {
         tag: 'a[href]',
         getAttrs(dom) {
-          return { href: dom.getAttribute('href'), title: dom.getAttribute('title') };
+          return { href: dom.getAttribute('href'), title: dom.getAttribute('title'), ...getTopLevelParseAttrs(dom) };
         },
       },
     ],
     toDOM(node) {
       const { href, title } = node.attrs;
-      return ['a', { href, title }, 0];
+      return ['a', { href, title, ...getTopLevelToDomAttrs(node) }, 0];
     },
   },
   em: {

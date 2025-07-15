@@ -29,4 +29,14 @@ forget to deploy da-admin on stage as well, as otherwise you might be connecting
 To access da-collab and da-admin running on stage, open this URL in a browser: http://localhost:3000/?da-admin=stage&da-collab=stage
 
 #### Notes
-1. When passing in `?da-collab=local&da-collab=local` each service will set a localStorage value and will not clear until you use `?name-of-service=reset`. It is recommended to use an incognito browser window to ensure you don't forget about this setting.
+1. When passing in `?da-collab=local&da-admin=local` each service will set a localStorage value and will not clear until you use `?name-of-service=reset`. It is recommended to use an incognito browser window to ensure you don't forget about this setting.
+
+## Additional details
+### Recommendations
+1. We recommend running `npm run lint` for linting.
+
+## Dev Notes
+
+### Handling diffs
+
+There are two types of diff content, deleted and added.  Content is normally marked by `da-diff-deleted` or `da-diff-added` attributes on elements.  However for the special case of block groups, deleted content will be wrapped in a `da-diff-deleted` element that contains the block group.  The `da-diff-added` element is never used.
