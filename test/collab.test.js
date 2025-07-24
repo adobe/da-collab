@@ -578,6 +578,26 @@ assert.equal(result, html);
     const result = doc2aem(yDoc);
     assert.equal(collapseWhitespace(result), collapseWhitespace(html));
   });
+
+  it('Escapes brackets as needed in text', () => {
+    const htmlIn = `
+<body>
+  <header></header>
+  <main><div><p>AAAA</p><p>&lt;hihi&gt;hoho&lt;/hihi&gt;</p><p>ZZ &amp; ZZ</p></div></main>
+  <footer></footer>
+</body>
+`;
+
+    const yDoc = new Y.Doc();
+    aem2doc(htmlIn, yDoc);
+
+    assert.equal(yDoc.getXmlFragment('prosemirror').toString(),
+      '<paragraph>AAAA</paragraph><paragraph><hihi>hoho</hihi></paragraph><paragraph>ZZ & ZZ</paragraph>',
+      'The text should have been un-escaped');
+
+    const result = doc2aem(yDoc);
+    console.log(result);
+    assert.equal(result, htmlIn,
+      'The escaping of brackets in text should have been applied');
+  });
 });
-
-
