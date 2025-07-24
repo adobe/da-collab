@@ -583,7 +583,7 @@ assert.equal(result, html);
     const htmlIn = `
 <body>
   <header></header>
-  <main><div><p>AAAA</p><p>&lt;hihi&gt;hoho&lt;/hihi&gt;</p><p>ZZ &amp; ZZ</p></div></main>
+  <main><div><p>AAAA</p><p>&lt;hihi&gt;hoho&lt;/hihi&gt;aha&lt;p&gt;yes&lt;/p&gt;</p><p>ZZ &amp; ZZ</p></div></main>
   <footer></footer>
 </body>
 `;
@@ -592,7 +592,7 @@ assert.equal(result, html);
     aem2doc(htmlIn, yDoc);
 
     assert.equal(yDoc.getXmlFragment('prosemirror').toString(),
-      '<paragraph>AAAA</paragraph><paragraph><hihi>hoho</hihi></paragraph><paragraph>ZZ & ZZ</paragraph>',
+      '<paragraph>AAAA</paragraph><paragraph><hihi>hoho</hihi>aha<p>yes</p></paragraph><paragraph>ZZ & ZZ</paragraph>',
       'The text should have been un-escaped');
 
     const result = doc2aem(yDoc);
