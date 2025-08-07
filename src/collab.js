@@ -55,7 +55,6 @@ function blockToTable(child, children) {
 
   table.properties.dataId = child.properties.dataId;
   table.properties['da-diff-added'] = child.properties['da-diff-added'];
-  // table.properties['da-diff-deleted'] = child.properties['da-diff-deleted'];
 
   children.push(table);
   const headerRow = {
@@ -105,7 +104,6 @@ function fixImageLinks(node) {
       if (child.tagName === 'a' && child.children?.length > 0) {
         const {
           href, title,
-          // 'da-diff-deleted': daDiffDeleted,
           'da-diff-added': daDiffAdded,
         } = child.properties;
         let hasImages = false;
@@ -113,7 +111,6 @@ function fixImageLinks(node) {
         const propsToAdd = {
           href,
           title,
-          // ...(daDiffDeleted === '' ? { 'da-diff-deleted': daDiffDeleted } : {}),
           ...(daDiffAdded === '' ? { 'da-diff-added': daDiffAdded } : {}),
         };
 
@@ -181,6 +178,17 @@ function removeComments(node) {
 }
 
 export const EMPTY_DOC = '<body><header></header><main><div></div></main><footer></footer></body>';
+
+function convertLocTags(html) {
+  // TODO: Remove this once we no longer support old regional edits
+  // eslint-disable-next-line no-param-reassign
+  html = html.replaceAll('<da-loc-added', '<da-diff-added')
+    .replaceAll('<da-loc-deleted', '<da-diff-deleted')
+    .replaceAll('</da-loc-added', '</da-diff-added')
+    .replaceAll('</da-loc-deleted', '</da-diff-deleted');
+  return html;
+}
+
 
 /**
  * Wraps elements with da-diff-added attribute in a da-diff-added element
@@ -260,6 +268,10 @@ export function aem2doc(html, ydoc) {
     // eslint-disable-next-line no-param-reassign
     html = EMPTY_DOC;
   }
+  if (html.includes('<da-loc-added') || html.includes('<da-loc-deleted')) {
+    html = convertLocTags(html);
+  }
+
   const tree = fromHtml(html, { fragment: true });
 
   const main = tree.children.find((child) => child.tagName === 'main');
@@ -295,9 +307,6 @@ export function aem2doc(html, ydoc) {
     } else {
       children.push(child);
     }
-        }
-      });
-
   });
   if (modified) {
     convertSectionBreak(main);
