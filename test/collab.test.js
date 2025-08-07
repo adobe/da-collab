@@ -254,10 +254,12 @@ assert.equal(result, html);
   });
 
   it('Test regional edit backwards compatibility', async () => {
+    // TODO: Remove this test once we no longer support old regional edits
+    // Temp code to support old regional edits
     const html = `
 <body>
   <header></header>
-  <main><div><da-diff-deleted data-mdast="ignore"><h1>Deleted H1 Here</h1></da-diff-deleted><da-diff-added><h1>Added H1 Here</h1></da-diff-added></div></main>
+  <main><div><da-loc-deleted data-mdast="ignore"><h1>Deleted H1 Here</h1></da-loc-deleted><da-loc-added><h1>Added H1 Here</h1></da-loc-added></div></main>
   <footer></footer>
 </body>
 `;

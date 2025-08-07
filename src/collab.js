@@ -55,7 +55,6 @@ function blockToTable(child, children) {
 
   table.properties.dataId = child.properties.dataId;
   table.properties['da-diff-added'] = child.properties['da-diff-added'];
-  // table.properties['da-diff-deleted'] = child.properties['da-diff-deleted'];
 
   children.push(table);
   const headerRow = {
@@ -105,7 +104,6 @@ function fixImageLinks(node) {
       if (child.tagName === 'a' && child.children?.length > 0) {
         const {
           href, title,
-          // 'da-diff-deleted': daDiffDeleted,
           'da-diff-added': daDiffAdded,
         } = child.properties;
         let hasImages = false;
@@ -113,7 +111,6 @@ function fixImageLinks(node) {
         const propsToAdd = {
           href,
           title,
-          // ...(daDiffDeleted === '' ? { 'da-diff-deleted': daDiffDeleted } : {}),
           ...(daDiffAdded === '' ? { 'da-diff-added': daDiffAdded } : {}),
         };
 
@@ -254,6 +251,15 @@ function processDaDiffAdded(main) {
 }
 
 export function aem2doc(html, ydoc) {
+  if (html.includes('<da-loc-added') || html.includes('<da-loc-deleted')) {
+    // Temp code to support old regional edits
+    // eslint-disable-next-line no-param-reassign
+    html = html.replaceAll('<da-loc-added', '<da-diff-added')
+      .replaceAll('<da-loc-deleted', '<da-diff-deleted')
+      .replaceAll('</da-loc-added', '</da-diff-added')
+      .replaceAll('</da-loc-deleted', '</da-diff-deleted');
+  }
+
   const tree = fromHtml(html, { fragment: true });
 
   const main = tree.children.find((child) => child.tagName === 'main');

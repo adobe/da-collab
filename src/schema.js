@@ -176,6 +176,18 @@ const baseNodes = {
           return dom;
         },
       },
+      {
+        tag: 'da-loc-added', // Temp code to support old regional edits
+        contentElement: (dom) => {
+          [...dom.children].forEach((child) => {
+            if (child.properties) {
+              // eslint-disable-next-line no-param-reassign
+              child.properties['da-diff-added'] = '';
+            }
+          });
+          return dom;
+        },
+      },
     ],
     toDOM: () => ['da-diff-added', { contenteditable: false }, 0],
   },
@@ -185,6 +197,10 @@ const baseNodes = {
     parseDOM: [
       {
         tag: 'da-diff-deleted',
+        contentElement: (dom) => dom,
+      },
+      {
+        tag: 'da-loc-deleted', // Temp code to support old regional edits
         contentElement: (dom) => dom,
       },
     ],
