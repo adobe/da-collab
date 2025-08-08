@@ -138,7 +138,9 @@ const baseNodes = {
       },
     ],
     toDOM(node) {
-      const { src, alt, title, href } = node.attrs;
+      const {
+        src, alt, title, href,
+      } = node.attrs;
       return [
         'img',
         {
