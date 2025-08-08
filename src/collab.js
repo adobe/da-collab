@@ -205,8 +205,8 @@ function processDaDiffAdded(main) {
     children,
   });
 
-  // Helper function to check if element has da-diff-added attribute
-  const hasDaDiffAdded = (child) => child.type === 'element' && child.properties?.['da-diff-added'] !== undefined;
+  const hasDaDiffAdded = (child) => child.type === 'element'
+    && child.properties?.['da-diff-added'] !== undefined;
 
   const isBlockGroupStart = (child) => child.tagName === 'div'
     && child.properties?.className?.includes('block-group-start');
@@ -215,46 +215,38 @@ function processDaDiffAdded(main) {
     && child.properties?.className?.includes('block-group-end');
 
   const collectBlockGroup = (children, startIndex) => {
-    // Find the index where the block group ends
     const endIndex = children.findIndex(
       (child, index) => index > startIndex && isBlockGroupEnd(child),
     );
 
-    // If no end found, take until the end of array
-    const actualEndIndex = endIndex === -1 ? children.length - 1 : endIndex;
-
     return {
-      elementsToWrap: children.slice(startIndex, actualEndIndex + 1),
-      endIndex: actualEndIndex,
+      elementsToWrap: children.slice(
+        startIndex,
+        endIndex === -1 ? children.length : endIndex + 1,
+      ),
+      endIndex: endIndex === -1 ? children.length - 1 : endIndex,
     };
   };
 
-  // Process each div that is a direct child of main
   main.children.forEach((divChild) => {
     if (divChild.tagName !== 'div' || !divChild.children) return;
 
-    const children = [...divChild.children]; // Create a copy to avoid mutation issues
+    const children = [...divChild.children];
     const newChildren = [];
-    let i = 0;
 
-    while (i < children.length) {
+    for (let i = 0; i < children.length; i += 1) {
       const child = children[i];
 
       if (hasDaDiffAdded(child)) {
         if (isBlockGroupStart(child)) {
-          // Collect this element and all following until block-group-end
           const { elementsToWrap, endIndex } = collectBlockGroup(children, i);
           newChildren.push(createWrapper(elementsToWrap));
-          i = endIndex + 1; // Skip all the wrapped elements
+          i = endIndex; // Skip all the wrapped elements
         } else {
-          // Single element case - just wrap this one element
           newChildren.push(createWrapper([child]));
-          i += 1;
         }
       } else {
-        // No da-diff-added attribute, just add as-is
         newChildren.push(child);
-        i += 1;
       }
     }
 
@@ -459,15 +451,13 @@ function tohtml(node) {
   // Unwrap paragraphs that contain only images (single or multiple)
   // Filter out empty text nodes and check if remaining content is only images
   if (node.type === 'p' && children.length > 0) {
-    const meaningfulChildren = children.filter((child) => {
-      // Keep non-text nodes
+    const nonEmptyChildren = children.filter((child) => {
       if (child.type !== 'text') return true;
-      // Keep text nodes that have actual content (not just whitespace)
-      return child.text && child.text.trim().length > 0;
+      return child.text?.trim().length > 0;
     });
 
     // If we only have images after filtering, unwrap them
-    if (meaningfulChildren.length > 0 && meaningfulChildren.every((child) => child.type === 'img')) {
+    if (nonEmptyChildren.every((child) => child.type === 'img')) {
       return children.map((child) => tohtml(child)).join('');
     }
   }
