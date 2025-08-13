@@ -17,10 +17,6 @@ import { fromHtml } from 'hast-util-from-html';
 import { matches } from 'hast-util-select';
 import { getSchema } from './schema.js';
 
-function escapeBrackets(text) {
-  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-}
-
 function convertSectionBreak(node) {
   if (!node) return;
   if (node.children) {
@@ -286,7 +282,7 @@ function tohtml(node) {
   let attrString = getAttrString(attributes);
   if (!node.children || node.children.length === 0) {
     if (node.type === 'text') {
-      return escapeBrackets(node.text);
+      return node.text;
     }
     if (node.type === 'p') return '';
     if (node.type === 'img' && !attributes.loading) {
