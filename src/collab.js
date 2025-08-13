@@ -17,10 +17,6 @@ import { fromHtml } from 'hast-util-from-html';
 import { matches } from 'hast-util-select';
 import { getSchema } from './schema.js';
 
-function escapeBrackets(text) {
-  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-}
-
 function convertSectionBreak(node) {
   if (!node) return;
   if (node.children) {
@@ -363,12 +359,16 @@ export function aem2doc(html, ydoc) {
 
       if (prop === 'getAttribute') {
         return (name) => {
+          // when `tree` is created using `fromHtml` in hast-util-from-html
+          // that then calls fromParse5 in hast-util-from-parse5
+          // which converts the `colspan`/`rowspan` attribute to `colSpan`/`rowSpan`
           if (name === 'colspan') {
-            // when `tree` is created using `fromHtml` in hast-util-from-html
-            // that then calls fromParse5 in hast-util-from-parse5
-            // which converts the `colspan` attribute to `colSpan`
             // eslint-disable-next-line no-param-reassign
             name = 'colSpan';
+          }
+          if (name === 'rowspan') {
+            // eslint-disable-next-line no-param-reassign
+            name = 'rowSpan';
           }
           return target.properties ? target.properties[name] : undefined;
         };
@@ -397,7 +397,7 @@ function tohtml(node) {
   let attrString = getAttrString(attributes);
   if (!node.children || node.children.length === 0) {
     if (node.type === 'text') {
-      return escapeBrackets(node.text);
+      return node.text;
     }
     if (node.type === 'p') return '';
     if (node.type === 'img') {

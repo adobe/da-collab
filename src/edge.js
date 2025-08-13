@@ -109,6 +109,7 @@ export async function handleApiRequest(request, env) {
   // We need to massage the path somewhat because on connections from localhost safari sends
   // a path with only one slash for some reason.
   let docName = request.url.substring(new URL(request.url).origin.length + 1)
+    .replace('https:/admin.da.page', 'https://admin.da.page')
     .replace('https:/admin.da.live', 'https://admin.da.live')
     .replace('http:/localhost', 'http://localhost');
 
@@ -116,8 +117,9 @@ export async function handleApiRequest(request, env) {
     docName = docName.substring(0, docName.indexOf('?'));
   }
 
-  // Make sure we only work with da.live or localhost
+  // Make sure we only work with da.live, da.page or localhost
   if (!docName.startsWith('https://admin.da.live/')
+      && !docName.startsWith('https://admin.da.page/')
       && !docName.startsWith('https://stage-admin.da.live/')
       && !docName.startsWith('http://localhost:')) {
     return new Response('unable to get resource', { status: 404 });
