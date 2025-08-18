@@ -30,7 +30,3 @@ To access da-collab and da-admin running on stage, open this URL in a browser: h
 
 #### Notes
 1. When passing in `?da-collab=local&da-collab=local` each service will set a localStorage value and will not clear until you use `?name-of-service=reset`. It is recommended to use an incognito browser window to ensure you don't forget about this setting.
-
-## Additional details
-### Recommendations
-1. We recommend running `npm run lint` for linting.
