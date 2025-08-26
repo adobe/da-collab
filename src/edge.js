@@ -182,13 +182,8 @@ export async function handleApiRequest(request, env) {
     // Send the request to the Durable Object. The `fetch()` method of a Durable Object stub has the
     // same signature as the global `fetch()` function, but the request is always sent to the
     // object, regardless of the hostname in the request's URL.
-    const response = await roomObject.fetch(req);
-    if (response.status === 101) {
-      return response;
-    }
-    // eslint-disable-next-line no-console
-    console.log(`Could not fetch the doc from the room ${docName}`, response);
-    return new Response('unable to get resource', { status: 500 });
+    const res = await roomObject.fetch(req);
+    return res;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`Error fetching the doc from the room ${docName}`, err);
