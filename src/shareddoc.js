@@ -87,6 +87,8 @@ export const readState = async (docName, storage) => {
   }
 
   if (stored.has('docstore')) {
+    // eslint-disable-next-line no-console
+    console.log('Document found in persistence');
     return stored.get('docstore');
   }
 
@@ -100,6 +102,8 @@ export const readState = async (docName, storage) => {
       data.push(chunk[j]);
     }
   }
+  // eslint-disable-next-line no-console
+  console.log('Document data read');
   return new Uint8Array(data);
 };
 
@@ -182,7 +186,7 @@ export const persistence = {
       return null;
     } else {
       // eslint-disable-next-line no-console
-      console.log(`unable to get resource: ${initialReq.status} - ${initialReq.statusText}`);
+      console.error(`Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`);
       throw new Error(`unable to get resource - status: ${initialReq.status}`);
     }
   },
@@ -247,14 +251,12 @@ export const persistence = {
           closeAll = (status === 401 || status === 403);
           throw new Error(`${status} - ${statusText}`);
         }
-        // eslint-disable-next-line no-console
-        console.log(content);
 
         return content;
       }
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error(err);
+      console.error('Failed to update document', err);
       showError(ydoc, err);
     }
     if (closeAll) {
@@ -320,7 +322,7 @@ export const persistence = {
       }
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.log('Problem restoring state from worker storage', error);
+      console.error('Problem restoring state from worker storage', error);
       showError(ydoc, error);
     }
 
@@ -342,7 +344,7 @@ export const persistence = {
               console.log('Restored from da-admin', docName);
             } catch (error) {
               // eslint-disable-next-line no-console
-              console.log('Problem restoring state from da-admin', error);
+              console.error('Problem restoring state from da-admin', error);
               showError(ydoc, error);
             }
           });
@@ -507,7 +509,7 @@ export const messageListener = (conn, doc, message) => {
     }
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error(err);
+    console.error('Error in messageListener', err);
     showError(doc, err);
   }
 };

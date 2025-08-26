@@ -139,7 +139,7 @@ export async function handleApiRequest(request, env) {
 
     if (!initialReq.ok && initialReq.status !== 404) {
       // eslint-disable-next-line no-console
-      console.log(`${initialReq.status} - ${initialReq.statusText}`);
+      console.log(`Unable to get resource ${docName}: ${initialReq.status} - ${initialReq.statusText}`);
       return new Response('unable to get resource', { status: initialReq.status });
     }
 
@@ -147,7 +147,7 @@ export async function handleApiRequest(request, env) {
     [, authActions] = daActions.split('=');
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.log(err);
+    console.error(`Unable to handle API request ${docName}`, err);
     return new Response('unable to get resource', { status: 500 });
   }
 
@@ -165,7 +165,7 @@ export async function handleApiRequest(request, env) {
   const timingDocRoomGetDuration = Date.now() - timingBeforeDocRoomGet;
 
   // eslint-disable-next-line no-console
-  console.log(`FETCHING: ${docName} ${id}`);
+  console.log(`Fetching: ${docName} ${id}`);
 
   const headers = [...request.headers,
     ['X-collab-room', docName],
@@ -311,7 +311,7 @@ export class DocRoom {
       webSocket.readOnly = true;
     }
     // eslint-disable-next-line no-console
-    console.log(`setupWSConnection ${docName} with auth(${webSocket.auth
+    console.log(`Setting up WSConnection for ${docName} with auth(${webSocket.auth
       ? webSocket.auth.substring(0, webSocket.auth.indexOf(' ')) : 'none'})`);
     const timingData = await setupWSConnection(webSocket, docName, this.env, this.storage);
     return timingData;
