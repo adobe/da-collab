@@ -151,37 +151,49 @@ export async function handleApiRequest(request, env) {
     return new Response('unable to get resource', { status: 500 });
   }
 
-  const timingBeforeDocRoomGet = Date.now();
-  // Each Durable Object has a 256-bit unique ID. Route the request based on the path.
-  const id = env.rooms.idFromName(docName);
+  try {
+    const timingBeforeDocRoomGet = Date.now();
+    // Each Durable Object has a 256-bit unique ID. Route the request based on the path.
+    const id = env.rooms.idFromName(docName);
 
-  // Get the Durable Object stub for this room! The stub is a client object that can be used
-  // to send messages to the remote Durable Object instance. The stub is returned immediately;
-  // there is no need to await it. This is important because you would not want to wait for
-  // a network round trip before you could start sending requests. Since Durable Objects are
-  // created on-demand when the ID is first used, there's nothing to wait for anyway; we know
-  // an object will be available somewhere to receive our requests.
-  const roomObject = env.rooms.get(id);
-  const timingDocRoomGetDuration = Date.now() - timingBeforeDocRoomGet;
+    // Get the Durable Object stub for this room! The stub is a client object that can be used
+    // to send messages to the remote Durable Object instance. The stub is returned immediately;
+    // there is no need to await it. This is important because you would not want to wait for
+    // a network round trip before you could start sending requests. Since Durable Objects are
+    // created on-demand when the ID is first used, there's nothing to wait for anyway; we know
+    // an object will be available somewhere to receive our requests.
+    const roomObject = env.rooms.get(id);
+    const timingDocRoomGetDuration = Date.now() - timingBeforeDocRoomGet;
 
-  // eslint-disable-next-line no-console
-  console.log(`Fetching: ${docName} ${id}`);
+    // eslint-disable-next-line no-console
+    console.log(`Fetching: ${docName} ${id}`);
 
-  const headers = [...request.headers,
-    ['X-collab-room', docName],
-    ['X-timing-start', timingStartTime],
-    ['X-timing-da-admin-head-duration', timingDaAdminHeadDuration],
-    ['X-timing-docroom-get-duration', timingDocRoomGetDuration],
-    ['X-auth-actions', authActions],
-  ];
-  if (auth) {
-    headers.push(['Authorization', auth]);
+    const headers = [...request.headers,
+      ['X-collab-room', docName],
+      ['X-timing-start', timingStartTime],
+      ['X-timing-da-admin-head-duration', timingDaAdminHeadDuration],
+      ['X-timing-docroom-get-duration', timingDocRoomGetDuration],
+      ['X-auth-actions', authActions],
+    ];
+    if (auth) {
+      headers.push(['Authorization', auth]);
+    }
+    const req = new Request(new URL(docName), { headers });
+    // Send the request to the Durable Object. The `fetch()` method of a Durable Object stub has the
+    // same signature as the global `fetch()` function, but the request is always sent to the
+    // object, regardless of the hostname in the request's URL.
+    const response = await roomObject.fetch(req);
+    if (response.status === 101) {
+      return response;
+    }
+    // eslint-disable-next-line no-console
+    console.log(`Could not fetch the doc from the room ${docName}`, response);
+    return new Response('unable to get resource', { status: 500 });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`Error fetching the doc from the room ${docName}`, err);
+    return new Response('unable to get resource', { status: 500 });
   }
-  const req = new Request(new URL(docName), { headers });
-  // Send the request to the Durable Object. The `fetch()` method of a Durable Object stub has the
-  // same signature as the global `fetch()` function, but the request is always sent to the
-  // object, regardless of the hostname in the request's URL.
-  return roomObject.fetch(req);
 }
 
 // In modules-syntax workers, we use `export default` to export our script's main event handlers.
