@@ -343,7 +343,7 @@ describe('Worker test suite', () => {
     const env = { rooms, daadmin: serviceBinding };
 
     const res = await handleApiRequest(req, env);
-    assert.equal(500, res.status);
+    assert.equal(306, res.status);
 
     assert.equal(1, mockFetchCalled.length);
     const mfreq = mockFetchCalled[0];
