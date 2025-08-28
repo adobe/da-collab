@@ -595,7 +595,7 @@ assert.equal(result, html);
     assert.equal(collapseWhitespace(result), collapseWhitespace(EMPTY_DOC));
   });
 
-  it.only('can parse no main', async () => {
+  it('can parse no main', async () => {
     const html = '<body><header></header><footer></footer></body>';
     const yDoc = new Y.Doc();
     aem2doc(html, yDoc);
