@@ -594,6 +594,14 @@ assert.equal(result, html);
     const result = doc2aem(yDoc);
     assert.equal(collapseWhitespace(result), collapseWhitespace(EMPTY_DOC));
   });
+
+  it.only('can parse no main', async () => {
+    const html = '<body><header></header><footer></footer></body>';
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+    const result = doc2aem(yDoc);
+    assert.equal(collapseWhitespace(result), collapseWhitespace(EMPTY_DOC));
+  });
 });
 
 

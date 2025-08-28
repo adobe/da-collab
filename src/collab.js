@@ -148,7 +148,8 @@ export function aem2doc(html, ydoc) {
     html = EMPTY_DOC;
   }
   const tree = fromHtml(html, { fragment: true });
-  const main = tree.children.find((child) => child.tagName === 'main');
+  console.log('tree', tree);
+  const main = tree.children.find((child) => child.tagName === 'main') || { children: [] };
   fixImageLinks(main);
   removeComments(main);
   (main.children || []).forEach((parent) => {
