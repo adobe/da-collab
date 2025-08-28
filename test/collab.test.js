@@ -12,7 +12,7 @@
 import assert from 'assert';
 import * as Y from 'yjs';
 import { readFileSync } from 'fs';
-import { aem2doc, doc2aem, tableToBlock } from '../src/collab.js';
+import { aem2doc, doc2aem, tableToBlock, EMPTY_DOC } from '../src/collab.js';
 
 const collapseTagWhitespace = (str) => str.replace(/>\s+</g, '><');
 const collapseWhitespace = (str) => collapseTagWhitespace(str.replace(/\s+/g, ' ')).trim();
@@ -577,6 +577,22 @@ assert.equal(result, html);
     aem2doc(html, yDoc);
     const result = doc2aem(yDoc);
     assert.equal(collapseWhitespace(result), collapseWhitespace(html));
+  });
+  
+  it('can parse empty doc', async () => {
+    const html = EMPTY_DOC;
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+    const result = doc2aem(yDoc);
+    assert.equal(collapseWhitespace(result), collapseWhitespace(EMPTY_DOC));
+  });
+
+  it('can parse null', async () => {
+    const html = null;
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+    const result = doc2aem(yDoc);
+    assert.equal(collapseWhitespace(result), collapseWhitespace(EMPTY_DOC));
   });
 });
 
