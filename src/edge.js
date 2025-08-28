@@ -9,7 +9,7 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
-import { invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
+import { invalidateFromAdmin, setupWSConnection, createYDoc } from './shareddoc.js';
 
 // This is the Edge Worker, built using Durable Objects!
 
@@ -206,10 +206,12 @@ export default {
 // connect to the room using WebSockets, and the room broadcasts messages from each participant
 // to all others.
 export class DocRoom {
-  constructor(controller, env) {
+  constructor(controller, env, docs = new Map()) {
     // `controller.storage` provides access to our durable storage. It provides a simple KV
     // get()/put() interface.
     this.storage = controller.storage;
+
+    this.docs = docs;
 
     // `env` is our environment bindings (discussed earlier).
     this.env = env;
@@ -224,15 +226,17 @@ export class DocRoom {
     const baseURL = request.url.substring(0, qidx);
 
     const api = url.searchParams.get('api');
+    // eslint-disable-next-line no-console
+    console.log('API Call received', api, baseURL);
     switch (api) {
       case 'deleteAdmin':
-        if (await invalidateFromAdmin(baseURL)) {
+        if (await invalidateFromAdmin(this.docs.get(baseURL))) {
           return new Response(null, { status: 204 });
         } else {
           return new Response('Not Found', { status: 404 });
         }
       case 'syncAdmin':
-        if (await invalidateFromAdmin(baseURL)) {
+        if (await invalidateFromAdmin(this.docs.get(baseURL))) {
           return new Response('OK', { status: 200 });
         } else {
           return new Response('Not Found', { status: 404 });
@@ -320,7 +324,32 @@ export class DocRoom {
     // eslint-disable-next-line no-console
     console.log(`Setting up WSConnection for ${docName} with auth(${webSocket.auth
       ? webSocket.auth.substring(0, webSocket.auth.indexOf(' ')) : 'none'})`);
-    const timingData = await setupWSConnection(webSocket, docName, this.env, this.storage);
+
+    const timingData = new Map();
+
+    let ydoc = this.docs.get(docName);
+    if (!ydoc) {
+      // get doc, initialize if it does not exist yet
+      ydoc = await createYDoc(
+        docName,
+        webSocket,
+        this.env,
+        this.storage,
+        timingData,
+        this.docs,
+        true,
+      );
+      this.docs.set(docName, ydoc);
+    }
+
+    webSocket.addEventListener('close', () => {
+      // eslint-disable-next-line no-console
+      console.log(`Closing connection for ${docName} - removing from docs cache`);
+      this.docs.delete(docName);
+    });
+
+    await setupWSConnection(webSocket, ydoc);
+
     return timingData;
   }
 }
