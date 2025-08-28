@@ -327,7 +327,6 @@ export const persistence = {
       // this timeout, the ydoc can get confused which may result in duplicated content.
       // eslint-disable-next-line no-console
       console.log('Could not be restored, trying to restore from da-admin', docName);
-      // await new Promise((resolve) => {
       setTimeout(() => {
         if (ydoc === docsCache.get(docName)) {
           const rootType = ydoc.getXmlFragment('prosemirror');
