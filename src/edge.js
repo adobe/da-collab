@@ -9,7 +9,12 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
-import { invalidateFromAdmin, setupWSConnection, createYDoc } from './shareddoc.js';
+import {
+  invalidateFromAdmin,
+  setupWSConnection,
+  createYDoc,
+  setupYDoc,
+} from './shareddoc.js';
 
 // This is the Edge Worker, built using Durable Objects!
 
@@ -329,18 +334,18 @@ export class DocRoom {
 
     let ydoc = this.docs.get(docName);
     if (!ydoc) {
-      // get doc, initialize if it does not exist yet
-      ydoc = await createYDoc(
+      ydoc = createYDoc(
         docName,
         webSocket,
         this.env,
         this.storage,
-        timingData,
         this.docs,
         true,
       );
       this.docs.set(docName, ydoc);
     }
+
+    await setupYDoc(ydoc, webSocket, timingData);
 
     webSocket.addEventListener('close', () => {
       const doc = this.docs.get(docName);

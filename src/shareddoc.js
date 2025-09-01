@@ -431,17 +431,21 @@ export class WSSharedDoc extends Y.Doc {
  * @param {boolean} gc - whether garbage collection is enabled
  * @returns The Yjs document object, which may be shared across multiple sockets.
  */
-export const createYDoc = async (docname, conn, env, storage, timingData, docsCache, gc = true) => {
+export const createYDoc = (docname, conn, env, storage, docsCache, gc = true) => {
   const doc = new WSSharedDoc(docname);
   doc.gc = gc;
-
-  if (!doc.conns.get(conn)) {
-    doc.conns.set(conn, new Set());
-  }
 
   // Store the service binding to da-admin which we receive through the environment in the doc
   doc.daadmin = env.daadmin;
   doc.promise = persistence.bindState(docname, doc, conn, storage, docsCache);
+
+  return doc;
+};
+
+export const setupYDoc = async (doc, conn, timingData) => {
+  if (!doc.conns.get(conn)) {
+    doc.conns.set(conn, new Set());
+  }
 
   // We wait for the promise, for second and subsequent connections to the same doc, this will
   // already be resolved.
@@ -449,7 +453,6 @@ export const createYDoc = async (docname, conn, env, storage, timingData, docsCa
   if (timingData) {
     timings.forEach((v, k) => timingData.set(k, v));
   }
-  return doc;
 };
 
 // This read sync message handles readonly connections
