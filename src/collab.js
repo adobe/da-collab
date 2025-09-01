@@ -148,65 +148,69 @@ export function aem2doc(html, ydoc) {
     html = EMPTY_DOC;
   }
   const tree = fromHtml(html, { fragment: true });
-  const main = tree.children.find((child) => child.tagName === 'main') || { children: [] };
-  fixImageLinks(main);
-  removeComments(main);
-  (main.children || []).forEach((parent) => {
-    if (parent.tagName === 'div' && parent.children) {
-      const children = [];
-      let modified = false;
-      parent.children.forEach((child) => {
-        if (child.tagName === 'div' && child.properties.className?.length > 0) {
-          modified = true;
-          blockToTable(child, children);
-        } else if (child.tagName === 'da-loc-deleted' || child.tagName === 'da-loc-added') {
-          modified = true;
-          const locChildren = [];
-          child.children.forEach((locChild) => {
-            if (locChild.tagName === 'div' && locChild.properties.className?.length > 0) {
-              blockToTable(locChild, locChildren);
-            } else {
-              locChildren.push(locChild);
-            }
-          });
+  const main = tree.children.find((child) => child.tagName === 'main');
+  console.log('tree', tree);
+  console.log('main', main);
+  if (main) {
+    fixImageLinks(main);
+    removeComments(main);
+    (main.children || []).forEach((parent) => {
+      if (parent.tagName === 'div' && parent.children) {
+        const children = [];
+        let modified = false;
+        parent.children.forEach((child) => {
+          if (child.tagName === 'div' && child.properties.className?.length > 0) {
+            modified = true;
+            blockToTable(child, children);
+          } else if (child.tagName === 'da-loc-deleted' || child.tagName === 'da-loc-added') {
+            modified = true;
+            const locChildren = [];
+            child.children.forEach((locChild) => {
+              if (locChild.tagName === 'div' && locChild.properties.className?.length > 0) {
+                blockToTable(locChild, locChildren);
+              } else {
+                locChildren.push(locChild);
+              }
+            });
+            // eslint-disable-next-line no-param-reassign
+            child.children = locChildren;
+            children.push(child);
+          } else {
+            children.push(child);
+          }
+        });
+        if (modified) {
           // eslint-disable-next-line no-param-reassign
-          child.children = locChildren;
-          children.push(child);
-        } else {
-          children.push(child);
+          parent.children = children;
         }
-      });
-      if (modified) {
-        // eslint-disable-next-line no-param-reassign
-        parent.children = children;
       }
-    }
-  });
-  convertSectionBreak(main);
-  let count = 0;
-  main.children = main.children.flatMap((node) => {
-    const result = [];
-    if (node.tagName === 'div') {
-      if (count > 0) {
-        result.push({
-          type: 'element', tagName: 'p', children: [], properties: {},
-        });
-        result.push({
-          type: 'element', tagName: 'hr', children: [], properties: {},
-        });
-        result.push({
-          type: 'element', tagName: 'p', children: [], properties: {},
-        });
-        result.push(...node.children);
+    });
+    convertSectionBreak(main);
+    let count = 0;
+    main.children = main.children.flatMap((node) => {
+      const result = [];
+      if (node.tagName === 'div') {
+        if (count > 0) {
+          result.push({
+            type: 'element', tagName: 'p', children: [], properties: {},
+          });
+          result.push({
+            type: 'element', tagName: 'hr', children: [], properties: {},
+          });
+          result.push({
+            type: 'element', tagName: 'p', children: [], properties: {},
+          });
+          result.push(...node.children);
+        } else {
+          result.push(node);
+        }
+        count += 1;
       } else {
         result.push(node);
       }
-      count += 1;
-    } else {
-      result.push(node);
-    }
-    return result;
-  });
+      return result;
+    });
+  }
   const handler2 = {
     get(target, prop) {
       const source = target;
@@ -277,7 +281,7 @@ export function aem2doc(html, ydoc) {
     },
   };
 
-  const json = DOMParser.fromSchema(getSchema()).parse(new Proxy(main, handler2));
+  const json = DOMParser.fromSchema(getSchema()).parse(new Proxy(main || tree, handler2));
   prosemirrorToYXmlFragment(json, ydoc.getXmlFragment('prosemirror'));
 }
 
