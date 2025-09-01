@@ -343,9 +343,12 @@ export class DocRoom {
     }
 
     webSocket.addEventListener('close', () => {
-      // eslint-disable-next-line no-console
-      console.log(`Closing connection for ${docName} - removing from docs cache`);
-      this.docs.delete(docName);
+      const doc = this.docs.get(docName);
+      if (doc && doc.conns.size === 0) {
+        // eslint-disable-next-line no-console
+        console.log(`All connections closed for ${docName} - removing from docs cache`);
+        this.docs.delete(docName);
+      }
     });
 
     await setupWSConnection(webSocket, ydoc);
