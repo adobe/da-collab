@@ -16,7 +16,7 @@ import * as awarenessProtocol from 'y-protocols/awareness.js';
 import * as encoding from 'lib0/encoding.js';
 import * as decoding from 'lib0/decoding.js';
 import debounce from 'lodash/debounce.js';
-import { aem2doc, doc2aem } from './collab.js';
+import { aem2doc, doc2aem, EMPTY_DOC } from './collab.js';
 
 const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
@@ -24,7 +24,6 @@ const wsReadyStateOpen = 1;
 // disable gc when using snapshots!
 const gcEnabled = false;
 
-const EMPTY_DOC = '<main></main>';
 const messageSync = 0;
 const messageAwareness = 1;
 const MAX_STORAGE_KEYS = 128;
@@ -148,14 +147,19 @@ export const storeState = async (docName, state, storage, chunkSize = MAX_STORAG
 };
 
 export const showError = (ydoc, err) => {
-  const em = ydoc.getMap('error');
+  try {
+    const em = ydoc.getMap('error');
 
-  // Perform the change in a transaction to avoid seeing a partial error
-  ydoc.transact(() => {
-    em.set('timestamp', Date.now());
-    em.set('message', err.message);
-    em.set('stack', err.stack);
-  });
+    // Perform the change in a transaction to avoid seeing a partial error
+    ydoc.transact(() => {
+      em.set('timestamp', Date.now());
+      em.set('message', err.message);
+      em.set('stack', err.stack);
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('Error showing error', e, err);
+  }
 };
 
 export const persistence = {
@@ -341,7 +345,7 @@ export const persistence = {
               console.log('Restored from da-admin', docName);
             } catch (error) {
               // eslint-disable-next-line no-console
-              console.error('Problem restoring state from da-admin', error);
+              console.error('Problem restoring state from da-admin', error, current);
               showError(ydoc, error);
             }
           });

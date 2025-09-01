@@ -17,7 +17,7 @@ import {
   closeConn, createYDoc, invalidateFromAdmin, messageListener, persistence,
   readState, setupWSConnection, showError, storeState, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
-import { aem2doc, doc2aem } from '../src/collab.js';
+import { aem2doc, doc2aem, EMPTY_DOC } from '../src/collab.js';
 
 function isSubArray(full, sub) {
   if (sub.length === 0) {
@@ -525,7 +525,7 @@ describe('Collab Test Suite', () => {
 
     await ydocUpdateCB[0]();
     await ydocUpdateCB[1]();
-    assert.deepStrictEqual(['<main></main>'], updateCalled);
+    assert.deepStrictEqual([EMPTY_DOC], updateCalled);
   });
 
   it('Test bindstate read from worker storage', async () => {

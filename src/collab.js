@@ -140,9 +140,15 @@ function removeComments(node) {
   return node;
 }
 
+export const EMPTY_DOC = '<body><header></header><main><div></div></main><footer></footer></body>';
+
 export function aem2doc(html, ydoc) {
+  if (!html) {
+    // eslint-disable-next-line no-param-reassign
+    html = EMPTY_DOC;
+  }
   const tree = fromHtml(html, { fragment: true });
-  const main = tree.children.find((child) => child.tagName === 'main');
+  const main = tree.children.find((child) => child.tagName === 'main') || { children: [] };
   fixImageLinks(main);
   removeComments(main);
   (main.children || []).forEach((parent) => {
