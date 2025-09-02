@@ -163,7 +163,7 @@ export const showError = (ydoc, err) => {
 };
 
 export const persistence = {
-  closeConn: closeConn.bind(this),
+  closeConn,
 
   /**
    * Get the document from da-admin. If da-admin doesn't have the doc, a new empty doc is
