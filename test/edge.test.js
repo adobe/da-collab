@@ -11,10 +11,9 @@
  */
 import assert from 'assert';
 
-import * as Y from 'yjs';
 import defaultEdge, { DocRoom, handleApiRequest, handleErrors } from '../src/edge.js';
-import { WSSharedDoc, persistence } from '../src/shareddoc.js';
-import { doc2aem } from '../src/collab.js';
+import { persistence } from '../src/persistence.js';
+import { WSSharedDoc } from '../src/wssharedoc.js';
 
 function hash(str) {
   let hash = 0;

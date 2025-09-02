@@ -14,9 +14,11 @@ import assert from 'assert';
 import esmock from 'esmock';
 
 import {
-  closeConn, createYDoc, invalidateFromAdmin, messageListener, persistence,
-  readState, setupWSConnection, showError, storeState, updateHandler, WSSharedDoc,
+  createYDoc, invalidateFromAdmin, setupWSConnection,
 } from '../src/shareddoc.js';
+import { closeConn, showError, messageListener } from '../src/utils.js';
+import { persistence, storeState, readState } from '../src/persistence.js';
+import { WSSharedDoc, updateHandler } from '../src/wssharedoc.js';
 import { aem2doc, doc2aem, EMPTY_DOC } from '../src/collab.js';
 
 function isSubArray(full, sub) {
@@ -277,7 +279,7 @@ describe('Collab Test Suite', () => {
   it('Test persistence update does not put if no change', async () => {
     const mockDoc2Aem = () => 'Svr content';
     const pss = await esmock(
-      '../src/shareddoc.js', {
+      '../src/persistence.js', {
         '../src/collab.js': {
           doc2aem: mockDoc2Aem
         }
@@ -303,7 +305,7 @@ describe('Collab Test Suite', () => {
   it('Test persistence update does put if change', async () => {
     const mockDoc2Aem = () => 'Svr content update';
     const pss = await esmock(
-      '../src/shareddoc.js', {
+      '../src/persistence.js', {
         '../src/collab.js': {
           doc2aem: mockDoc2Aem
         }
@@ -336,7 +338,7 @@ describe('Collab Test Suite', () => {
   async function testCloseAllOnAuthFailure(httpError) {
     const mockDoc2Aem = () => 'Svr content update';
     const pss = await esmock(
-      '../src/shareddoc.js', {
+      '../src/persistence.js', {
         '../src/collab.js': {
           doc2aem: mockDoc2Aem
         }
@@ -443,7 +445,7 @@ describe('Collab Test Suite', () => {
     const aem2DocCalled = [];
     const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
     const pss = await esmock(
-      '../src/shareddoc.js', {
+      '../src/persistence.js', {
         '../src/collab.js': {
           aem2doc: mockAem2Doc,
         }
@@ -481,7 +483,7 @@ describe('Collab Test Suite', () => {
   it('Test bindState gets empty doc on da-admin 404', async() => {
     const mockdebounce = (f) => async () => await f();
     const pss = await esmock(
-      '../src/shareddoc.js', {
+      '../src/persistence.js', {
         'lodash/debounce.js': {
           default: mockdebounce
         }
@@ -597,7 +599,7 @@ describe('Collab Test Suite', () => {
   it('test persistence update on storage update', async () => {
     const mockdebounce = (f) => async () => await f();
     const pss = await esmock(
-      '../src/shareddoc.js', {
+      '../src/persistence.js', {
         'lodash/debounce.js': {
           default: mockdebounce
         }
@@ -1015,7 +1017,7 @@ describe('Collab Test Suite', () => {
    }
 
     const shd = await esmock(
-      '../src/shareddoc.js', {
+      '../src/utils.js', {
         'y-protocols/sync.js': {
           readSyncStep2: mockSS2
         }
@@ -1054,7 +1056,7 @@ describe('Collab Test Suite', () => {
    }
 
     const shd = await esmock(
-      '../src/shareddoc.js', {
+      '../src/utils.js', {
         'y-protocols/sync.js': {
           readUpdate: mockUpd
         }
