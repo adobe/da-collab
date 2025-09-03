@@ -49,9 +49,11 @@ async function adminAPI(api, url, request, env) {
     return new Response('Bad', { status: 400 });
   }
 
-  // eslint-disable-next-line no-console
-  console.log('Room name:', doc);
   const id = env.rooms.idFromName(doc);
+
+  // eslint-disable-next-line no-console
+  console.debug('AdminAPI - Document and room id', doc, id.toString());
+
   const roomObject = env.rooms.get(id);
 
   return roomObject.fetch(new URL(`${doc}?api=${api}`));
