@@ -39,12 +39,21 @@ const MAX_STORAGE_VALUE_SIZE = 131072;
  * @param {WebSocket} conn - the websocket connection to close.
  */
 export const closeConn = (doc, conn) => {
+  // eslint-disable-next-line no-console
+  console.debug('Closing connection', doc.name, doc.conns.size);
   if (doc.conns.has(conn)) {
     const controlledIds = doc.conns.get(conn);
     doc.conns.delete(conn);
-    awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
+    try {
+      awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Error removing awareness states', err);
+    }
 
     if (doc.conns.size === 0) {
+      // eslint-disable-next-line no-console
+      console.debug('No connections left, removing document from local map', doc.name);
       docs.delete(doc.name);
     }
   }
@@ -59,6 +68,8 @@ const send = (doc, conn, m) => {
   try {
     conn.send(m, (err) => err != null && closeConn(doc, conn));
   } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('Error sending message', e);
     closeConn(doc, conn);
   }
 };
@@ -141,6 +152,8 @@ export const storeState = async (docName, state, storage, chunkSize = MAX_STORAG
     }
 
     if (j >= MAX_STORAGE_KEYS) {
+      // eslint-disable-next-line no-console
+      console.error('Object too big for worker storage', docName, j, MAX_STORAGE_KEYS);
       throw new Error('Object too big for worker storage');
     }
 
@@ -227,6 +240,10 @@ export const persistence = {
       });
     }
 
+    if (blob.size < 84) {
+      // eslint-disable-next-line no-console
+      console.warn('Writting back an empty document', ydoc.name, blob.size);
+    }
     const { ok, status, statusText } = await ydoc.daadmin.fetch(ydoc.name, opts);
 
     return {
@@ -493,15 +510,23 @@ export const messageListener = (conn, doc, message) => {
     const encoder = encoding.createEncoder();
     const decoder = decoding.createDecoder(message);
     const messageType = decoding.readVarUint(decoder);
+    // eslint-disable-next-line no-console, no-nested-ternary
+    console.debug('messageListener - Received message', doc.name, messageType === messageSync ? 'sync' : (messageType === messageAwareness ? 'awareness' : 'unknown'));
     switch (messageType) {
       case messageSync:
         encoding.writeVarUint(encoder, messageSync);
-        readSyncMessage(decoder, encoder, doc, conn.readOnly);
+        // eslint-disable-next-line no-case-declarations
+        const type = readSyncMessage(decoder, encoder, doc, conn.readOnly);
+
+        // eslint-disable-next-line no-console
+        console.debug('messageListener - Type', doc.name, type);
 
         // If the `encoder` only contains the type of reply message and no
         // message, there is no need to send the message. When `encoder` only
         // contains the type of reply, its length is 1.
         if (encoding.length(encoder) > 1) {
+          // eslint-disable-next-line no-console
+          console.debug('messageListener - sending');
           send(doc, conn, encoding.toUint8Array(encoder));
         }
         break;

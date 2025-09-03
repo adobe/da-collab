@@ -26,7 +26,7 @@
     "mocha": "^10.2.0",
     "mocha-junit-reporter": "^2.2.1",
     "mocha-multi-reporters": "^1.5.1",
-    "wrangler": "^3.107.3"
+    "wrangler": "4.33.2"
   },
   "dependencies": {
     "hast-util-from-html": "^2.0.1",
