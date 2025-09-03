@@ -594,7 +594,7 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
   });
   // put the following in a variables in a block so the interval handlers don't keep in in
   // scope
-  {
+  try {
     // send sync step 1
     let encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, messageSync);
@@ -608,6 +608,9 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
         .encodeAwarenessUpdate(doc.awareness, Array.from(awarenessStates.keys())));
       send(doc, conn, encoding.toUint8Array(encoder));
     }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Error in setupWSConnection', err);
   }
 
   return timingData;
