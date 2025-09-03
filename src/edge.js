@@ -215,7 +215,7 @@ export class DocRoom {
 
     // `env` is our environment bindings (discussed earlier).
     this.env = env;
-    this.id = controller.id.toString();
+    this.id = controller && controller.id ? controller.id.toString() : `no-controller-${new Date().getTime()}`;
 
     // eslint-disable-next-line no-console
     console.debug('DocRoom created with id', this.id);
