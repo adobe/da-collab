@@ -131,7 +131,7 @@ export async function handleApiRequest(request, env) {
   // using Math.random() to understand if it is the same request and CF logging issue
   // or if we enter here twice
   // eslint-disable-next-line no-console
-  console.log('da-collab#handleApiRequest', docName, request.url, Math.random());
+  console.log('da-collab#handleApiRequest', docName, Math.random());
 
   // Check if we have the authorization for the room (this is a poor man's solution as right now
   // only da-admin knows).
