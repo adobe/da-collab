@@ -40,7 +40,7 @@ const MAX_STORAGE_VALUE_SIZE = 131072;
  */
 export const closeConn = (doc, conn) => {
   // eslint-disable-next-line no-console
-  console.debug('Closing connection', doc.name, doc.conns.size);
+  console.log('Closing connection', doc.name, doc.conns.size);
   if (doc.conns.has(conn)) {
     const controlledIds = doc.conns.get(conn);
     doc.conns.delete(conn);
@@ -53,7 +53,7 @@ export const closeConn = (doc, conn) => {
 
     if (doc.conns.size === 0) {
       // eslint-disable-next-line no-console
-      console.debug('No connections left, removing document from local map', doc.name);
+      console.log('No connections left, removing document from local map', doc.name);
       docs.delete(doc.name);
     }
   }
@@ -506,27 +506,20 @@ const readSyncMessage = (decoder, encoder, doc, readOnly, transactionOrigin) => 
 };
 
 export const messageListener = (conn, doc, message) => {
+  let messageType;
   try {
     const encoder = encoding.createEncoder();
     const decoder = decoding.createDecoder(message);
-    const messageType = decoding.readVarUint(decoder);
-    // eslint-disable-next-line no-console, no-nested-ternary
-    console.debug('messageListener - Received message', doc.name, messageType === messageSync ? 'sync' : (messageType === messageAwareness ? 'awareness' : 'unknown'));
+    messageType = decoding.readVarUint(decoder);
     switch (messageType) {
       case messageSync:
         encoding.writeVarUint(encoder, messageSync);
-        // eslint-disable-next-line no-case-declarations
-        const type = readSyncMessage(decoder, encoder, doc, conn.readOnly);
-
-        // eslint-disable-next-line no-console
-        console.debug('messageListener - Type', doc.name, type);
+        readSyncMessage(decoder, encoder, doc, conn.readOnly);
 
         // If the `encoder` only contains the type of reply message and no
         // message, there is no need to send the message. When `encoder` only
         // contains the type of reply, its length is 1.
         if (encoding.length(encoder) > 1) {
-          // eslint-disable-next-line no-console
-          console.debug('messageListener - sending');
           send(doc, conn, encoding.toUint8Array(encoder));
         }
         break;
@@ -539,6 +532,12 @@ export const messageListener = (conn, doc, message) => {
         break;
     }
   } catch (err) {
+    // eslint-disable-next-line no-console, no-nested-ternary
+    console.error('messageListener - Received message', doc.name, messageType === messageSync ? 'sync' : (messageType === messageAwareness ? 'awareness' : 'unknown'));
+    // eslint-disable-next-line no-console, no-nested-ternary
+    console.error('messageListener - Stack', err.stack);
+    // eslint-disable-next-line no-console, no-nested-ternary
+    console.error('messageListener - Message', err.message);
     // eslint-disable-next-line no-console
     console.error('Error in messageListener', err);
     showError(doc, err);
