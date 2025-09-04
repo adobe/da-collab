@@ -363,6 +363,8 @@ export class DocRoom {
 
     let ydoc = this.docs.get(docName);
     if (!ydoc) {
+      // eslint-disable-next-line no-console
+      console.log('Document not found in cache', docName);
       ydoc = createYDoc(
         docName,
         webSocket,
@@ -372,18 +374,12 @@ export class DocRoom {
         true,
       );
       this.docs.set(docName, ydoc);
+    } else {
+      // eslint-disable-next-line no-console
+      console.log('Document found in cache', docName);
     }
 
     await setupYDoc(ydoc, webSocket, timingData);
-
-    webSocket.addEventListener('close', () => {
-      const doc = this.docs.get(docName);
-      if (doc && doc.conns.size === 0) {
-        // eslint-disable-next-line no-console
-        console.log(`All connections closed for ${docName} - removing from docs cache`);
-        this.docs.delete(docName);
-      }
-    });
 
     await setupWSConnection(webSocket, ydoc);
 

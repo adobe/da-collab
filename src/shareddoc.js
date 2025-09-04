@@ -43,6 +43,13 @@ export const closeConn = (doc, conn) => {
     doc.conns.delete(conn);
     awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
   }
+
+  if (doc.onClose && doc.conns.size === 0) {
+    // eslint-disable-next-line no-console
+    console.log(`All connections closed for ${doc.name} - removing from docs cache`);
+    doc.onClose();
+  }
+
   conn.close();
 };
 
@@ -446,6 +453,11 @@ export const createYDoc = (docname, conn, env, storage, docsCache, gc = true) =>
   // Store the service binding to da-admin which we receive through the environment in the doc
   doc.daadmin = env.daadmin;
   doc.promise = persistence.bindState(docname, doc, conn, storage, docsCache);
+  doc.onClose = () => {
+    // eslint-disable-next-line no-console
+    console.log('Document on close - remove from docs cache', docname);
+    docsCache.delete(docname);
+  };
 
   return doc;
 };
