@@ -14,8 +14,8 @@ import assert from 'assert';
 import esmock from 'esmock';
 
 import {
-  closeConn, getYDoc, invalidateFromAdmin, messageListener, persistence,
-  readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
+  closeConn, createYDoc, invalidateFromAdmin, messageListener, persistence,
+  readState, setupWSConnection, showError, storeState, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
 import { aem2doc, doc2aem, EMPTY_DOC } from '../src/collab.js';
 
@@ -388,11 +388,7 @@ describe('Collab Test Suite', () => {
     const testYDoc = new WSSharedDoc(docName);
     testYDoc.conns = conns;
 
-    const m = setYDoc(docName, testYDoc);
-
-    assert(m.has(docName), 'Precondition');
-    invalidateFromAdmin(docName);
-    assert(!m.has(docName), 'Document should have been removed from global map');
+    invalidateFromAdmin(testYDoc);
 
     const res1 = ['close1', 'close2'];
     const res2 = ['close2', 'close1'];
@@ -411,7 +407,6 @@ describe('Collab Test Suite', () => {
       conns: new Map(),
     };
     mockDoc.awareness.states.set('123', null);
-    const docs = setYDoc(mockDoc.name, mockDoc);
 
     const called = [];
     const mockConn = {
@@ -422,17 +417,11 @@ describe('Collab Test Suite', () => {
     mockDoc.conns.set(mockConn, ids);
 
     assert.equal(0, called.length, 'Precondition');
-    assert(docs.get(mockDoc.name), 'Precondition');
     closeConn(mockDoc, mockConn);
     assert.deepStrictEqual(['close'], called);
     assert.equal(0, mockDoc.conns.size);
     assert.deepStrictEqual(['123'], awarenessEmitted[0][0].removed,
       'removeAwarenessStates should be called');
-
-    assert.equal(docs.get(mockDoc.name), undefined,
-      'Document should be removed from global map');
-
-    assert(docs.get(mockDoc.name) === undefined, 'Should have been removed from docs map');
   });
 
   it('Test close unknown connection', async () => {
@@ -467,7 +456,6 @@ describe('Collab Test Suite', () => {
       auth: 'myauth',
       authActions: ['read']
     };
-    pss.setYDoc(docName, testYDoc);
 
     const mockStorage = { list: () => new Map() };
 
@@ -476,7 +464,9 @@ describe('Collab Test Suite', () => {
     pss.persistence.update = async (d, v) => updated.set(d, v);
 
     assert.equal(0, updated.size, 'Precondition');
-    await pss.persistence.bindState(docName, testYDoc, mockConn, mockStorage);
+    const docs = new Map();
+    docs.set(docName, testYDoc);
+    await pss.persistence.bindState(docName, testYDoc, mockConn, mockStorage, docs);
 
     assert.equal(0, aem2DocCalled.length, 'Precondition, it\'s important to handle the doc setting async');
 
@@ -502,7 +492,6 @@ describe('Collab Test Suite', () => {
     const ydocUpdateCB = [];
     const testYDoc = new Y.Doc();
     testYDoc.on = (ev, f) => { if (ev === 'update') ydocUpdateCB.push(f); }
-    pss.setYDoc(docName, testYDoc);
 
     const called = []
     const mockStorage = {
@@ -520,7 +509,9 @@ describe('Collab Test Suite', () => {
     try {
       globalThis.setTimeout = () => setTimeoutCalls.push('setTimeout');
 
-      await pss.persistence.bindState(docName, testYDoc, {}, mockStorage);
+      const docs = new Map();
+      docs.set(docName, testYDoc);
+      await pss.persistence.bindState(docName, testYDoc, {}, mockStorage, docs);
     } finally {
       globalThis.setTimeout = savedSetTimeout;
     }
@@ -578,7 +569,6 @@ describe('Collab Test Suite', () => {
   it('Test bindstate falls back to daadmin on worker storage error', async () => {
     const docName = 'https://admin.da.live/source/foo/bar.html';
     const ydoc = new Y.Doc();
-    setYDoc(docName, ydoc);
 
     const storage = { list: async () => { throw new Error('yikes') } };
 
@@ -593,7 +583,9 @@ describe('Collab Test Suite', () => {
         <main><div>From daadmin</div></main>
         <footer></footer>
         </body>`;
-      await persistence.bindState(docName, ydoc, {}, storage);
+      const docs = new Map();
+      docs.set(docName, ydoc);
+      await persistence.bindState(docName, ydoc, {}, storage, docs);
 
       assert(doc2aem(ydoc).includes('<div><p>From daadmin</p></div>'));
     } finally {
@@ -620,7 +612,6 @@ describe('Collab Test Suite', () => {
         updObservers.push(fun);
       }
     };
-    pss.setYDoc(docName, ydoc);
 
     const savedSetTimeout = globalThis.setTimeout;
     const savedGet = pss.persistence.get;
@@ -641,7 +632,9 @@ describe('Collab Test Suite', () => {
         }
       };
 
-      await pss.persistence.bindState(docName, ydoc, {}, storage);
+      const docs = new Map();
+      docs.set(docName, ydoc);
+      await pss.persistence.bindState(docName, ydoc, {}, storage, docs);
 
       aem2doc('<main><div>newcontent</div></main>', ydoc);
 
@@ -674,7 +667,6 @@ describe('Collab Test Suite', () => {
 
     const ydoc = new Y.Doc();
     ydoc.daadmin = serviceBinding;
-    setYDoc(docName, ydoc);
     const conn = {};
     const storage = {
       deleteAll: async () => {},
@@ -711,7 +703,6 @@ describe('Collab Test Suite', () => {
 
     const ydoc = new Y.Doc();
     ydoc.daadmin = serviceBinding;
-    setYDoc(docName, ydoc);
     const conn = {};
 
     const deleteAllCalled = [];
@@ -734,7 +725,10 @@ describe('Collab Test Suite', () => {
         f();
       };
 
-      await persistence.bindState(docName, ydoc, conn, storage);
+      const docs = new Map();
+      docs.set(docName, ydoc);
+
+      await persistence.bindState(docName, ydoc, conn, storage, docs);
       assert.deepStrictEqual([true], deleteAllCalled);
       assert.equal(1, setTimeoutCalled.length, 'SetTimeout should have been called to update the doc');
     } finally {
@@ -753,7 +747,6 @@ describe('Collab Test Suite', () => {
         updObservers.push(fun);
       }
     };
-    setYDoc(docName, ydoc);
 
     const conn = {};
     const called = [];
@@ -773,7 +766,10 @@ describe('Collab Test Suite', () => {
       };
       persistence.get = async () => '<main><div>myinitial</div></main>';
 
-      await persistence.bindState(docName, ydoc, conn, storage);
+      const docs = new Map();
+      docs.set(docName, ydoc);
+
+      await persistence.bindState(docName, ydoc, conn, storage, docs);
       assert(doc2aem(ydoc).includes('myinitial'));
       assert.equal(2, updObservers.length);
 
@@ -796,7 +792,7 @@ describe('Collab Test Suite', () => {
     }
   });
 
-  it('Test getYDoc', async () => {
+  it('Test createYDoc', async () => {
     const savedBS = persistence.bindState;
 
     try {
@@ -809,7 +805,7 @@ describe('Collab Test Suite', () => {
       const mockConn = {};
 
       assert.equal(0, bsCalls.length, 'Precondition');
-      const doc = await getYDoc(docName, mockConn, {}, {});
+      const doc = await createYDoc(docName, mockConn, {}, {});
       assert.equal(1, bsCalls.length);
       assert.equal(bsCalls[0].dn, docName);
       assert.equal(bsCalls[0].d, doc);
@@ -817,10 +813,8 @@ describe('Collab Test Suite', () => {
 
       const daadmin = { foo: 'bar' }
       const env = { daadmin };
-      const doc2 = await getYDoc(docName, mockConn, env, {});
-      assert.equal(1, bsCalls.length, 'Should not have called bindstate again');
-      assert.equal(doc, doc2);
-      assert.equal('bar', doc.daadmin.foo, 'Should have bound daadmin now');
+      const doc2 = await createYDoc(docName, mockConn, env, {});
+      assert.equal('bar', doc2.daadmin.foo, 'Should have bound daadmin now');
     } finally {
       persistence.bindState = savedBS;
     }
@@ -904,7 +898,9 @@ describe('Collab Test Suite', () => {
 
       assert.equal(0, bindCalls.length, 'Precondition');
       assert.equal(0, eventListeners.size, 'Precondition');
-      await setupWSConnection(mockConn, docName, env, storage);
+
+      const ydoc = await createYDoc(docName, mockConn, env, storage, new Map(), new Map(), true); 
+      await setupWSConnection(mockConn, ydoc);
 
       assert.equal('arraybuffer', mockConn.binaryType);
       assert.equal(1, bindCalls.length);
@@ -951,10 +947,10 @@ describe('Collab Test Suite', () => {
         states: awarenessStates
       };
 
-      const ydoc = await getYDoc(docName, mockConn, {}, {}, true);
+      const ydoc = await createYDoc(docName, mockConn, {}, {}, new Map(), new Map(), true);
       ydoc.awareness = awareness;
 
-      await setupWSConnection(mockConn, docName, {}, {});
+      await setupWSConnection(mockConn, ydoc);
 
       assert.equal(0, closeCalls.length);
       assert.equal(2, sendCalls.length);

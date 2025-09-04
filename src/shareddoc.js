@@ -24,9 +24,6 @@ const wsReadyStateOpen = 1;
 // disable gc when using snapshots!
 const gcEnabled = false;
 
-// The local cache of ydocs
-const docs = new Map();
-
 const messageSync = 0;
 const messageAwareness = 1;
 const MAX_STORAGE_KEYS = 128;
@@ -39,25 +36,26 @@ const MAX_STORAGE_VALUE_SIZE = 131072;
  * @param {WebSocket} conn - the websocket connection to close.
  */
 export const closeConn = (doc, conn) => {
-  // eslint-disable-next-line no-console
-  console.log('Closing connection', doc.name, doc.conns.size);
-  if (doc.conns.has(conn)) {
-    const controlledIds = doc.conns.get(conn);
-    doc.conns.delete(conn);
-    try {
+  try {
+    // eslint-disable-next-line no-console
+    console.log('Closing connection', doc.name, doc.conns.size);
+    if (doc.conns.has(conn)) {
+      const controlledIds = doc.conns.get(conn);
+      doc.conns.delete(conn);
       awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('Error removing awareness states', err);
     }
 
-    if (doc.conns.size === 0) {
+    if (doc.onClose && doc.conns.size === 0) {
       // eslint-disable-next-line no-console
-      console.log('No connections left, removing document from local map', doc.name);
-      docs.delete(doc.name);
+      console.log(`All connections closed for ${doc.name} - removing from docs cache`);
+      doc.onClose();
     }
+
+    conn.close();
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('Could not properly close the connection', e);
   }
-  conn.close();
 };
 
 const send = (doc, conn, m) => {
@@ -181,7 +179,7 @@ export const showError = (ydoc, err) => {
 };
 
 export const persistence = {
-  closeConn: closeConn.bind(this),
+  closeConn,
 
   /**
    * Get the document from da-admin. If da-admin doesn't have the doc, a new empty doc is
@@ -295,7 +293,7 @@ export const persistence = {
    * @param {WebSocket} conn - the websocket connection
    * @param {TransactionalStorage} storage - the worker transactional storage object
    */
-  bindState: async (docName, ydoc, conn, storage) => {
+  bindState: async (docName, ydoc, conn, storage, docsCache) => {
     let timingReadStateDuration;
     let timingDaAdminGetDuration;
 
@@ -354,7 +352,7 @@ export const persistence = {
       // eslint-disable-next-line no-console
       console.log('Could not be restored, trying to restore from da-admin', docName);
       setTimeout(() => {
-        if (ydoc === docs.get(docName)) {
+        if (ydoc === docsCache.get(docName)) {
           const rootType = ydoc.getXmlFragment('prosemirror');
           ydoc.transact(() => {
             try {
@@ -377,7 +375,7 @@ export const persistence = {
 
     ydoc.on('update', async () => {
       // Whenever we receive an update on the document store it in the local storage
-      if (ydoc === docs.get(docName)) { // make sure this ydoc is still active
+      if (ydoc === docsCache.get(docName)) { // make sure this ydoc is still active
         storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
       }
     });
@@ -385,7 +383,7 @@ export const persistence = {
     ydoc.on('update', debounce(async () => {
       // If we receive an update on the document, store it in da-admin, but debounce it
       // to avoid excessive da-admin calls.
-      if (ydoc === docs.get(docName)) {
+      if (ydoc === docsCache.get(docName)) {
         current = await persistence.update(ydoc, current);
       }
     }, 2000, { maxWait: 10000 }));
@@ -453,25 +451,25 @@ export class WSSharedDoc extends Y.Doc {
  * @param {boolean} gc - whether garbage collection is enabled
  * @returns The Yjs document object, which may be shared across multiple sockets.
  */
-export const getYDoc = async (docname, conn, env, storage, timingData, gc = true) => {
-  let doc = docs.get(docname);
-  if (doc === undefined) {
-    // The doc is not yet in the cache, create a new one.
-    doc = new WSSharedDoc(docname);
-    doc.gc = gc;
-    docs.set(docname, doc);
-  }
-
-  if (!doc.conns.get(conn)) {
-    doc.conns.set(conn, new Set());
-  }
+export const createYDoc = (docname, conn, env, storage, docsCache, gc = true) => {
+  const doc = new WSSharedDoc(docname);
+  doc.gc = gc;
 
   // Store the service binding to da-admin which we receive through the environment in the doc
   doc.daadmin = env.daadmin;
-  if (!doc.promise) {
-    // The doc is not yet bound to the persistence layer, do so now. The promise will be resolved
-    // when bound.
-    doc.promise = persistence.bindState(docname, doc, conn, storage);
+  doc.promise = persistence.bindState(docname, doc, conn, storage, docsCache);
+  doc.onClose = () => {
+    // eslint-disable-next-line no-console
+    console.log('Document on close - remove from docs cache', docname);
+    docsCache.delete(docname);
+  };
+
+  return doc;
+};
+
+export const setupYDoc = async (doc, conn, timingData) => {
+  if (!doc.conns.get(conn)) {
+    doc.conns.set(conn, new Set());
   }
 
   // We wait for the promise, for second and subsequent connections to the same doc, this will
@@ -480,11 +478,7 @@ export const getYDoc = async (docname, conn, env, storage, timingData, gc = true
   if (timingData) {
     timings.forEach((v, k) => timingData.set(k, v));
   }
-  return doc;
 };
-
-// For testing
-export const setYDoc = (docname, ydoc) => docs.set(docname, ydoc);
 
 // This read sync message handles readonly connections
 const readSyncMessage = (decoder, encoder, doc, readOnly, transactionOrigin) => {
@@ -539,7 +533,7 @@ export const messageListener = (conn, doc, message) => {
     // eslint-disable-next-line no-console, no-nested-ternary
     console.error('messageListener - Message', err.message);
     // eslint-disable-next-line no-console
-    console.error('Error in messageListener', err);
+    console.error(`Error in messageListener ${doc?.name} - messageType: ${messageType}`, err);
     showError(doc, err);
   }
 };
@@ -552,18 +546,18 @@ export const messageListener = (conn, doc, message) => {
  * @param {string} docName - The name of the document
  * @returns true if the document was found and invalidated, false otherwise.
  */
-export const invalidateFromAdmin = async (docName) => {
-  // eslint-disable-next-line no-console
-  console.log('Invalidate from Admin received', docName);
-  const ydoc = docs.get(docName);
+export const invalidateFromAdmin = async (ydoc) => {
   if (ydoc) {
+    // eslint-disable-next-line no-console
+    console.log('Invalidating document', ydoc.name);
+
     // As we are closing all connections, the ydoc will be removed from the docs map
     ydoc.conns.forEach((_, c) => closeConn(ydoc, c));
 
     return true;
   } else {
     // eslint-disable-next-line no-console
-    console.log('Document not found', docName);
+    console.log('No document to invalidate');
   }
   return false;
 };
@@ -576,20 +570,16 @@ export const invalidateFromAdmin = async (docName) => {
  * @param {TransactionalStorage} storage - The worker transactional storage object
  * @returns {Promise<void>} - The return value of this
  */
-export const setupWSConnection = async (conn, docName, env, storage) => {
-  const timingData = new Map();
-
+export const setupWSConnection = async (conn, ydoc) => {
   // eslint-disable-next-line no-param-reassign
   conn.binaryType = 'arraybuffer';
-  // get doc, initialize if it does not exist yet
-  const doc = await getYDoc(docName, conn, env, storage, timingData, true);
 
   // listen and reply to events
-  conn.addEventListener('message', (message) => messageListener(conn, doc, new Uint8Array(message.data)));
+  conn.addEventListener('message', (message) => messageListener(conn, ydoc, new Uint8Array(message.data)));
 
   // Check if connection is still alive
   conn.addEventListener('close', () => {
-    closeConn(doc, conn);
+    closeConn(ydoc, conn);
   });
   // put the following in a variables in a block so the interval handlers don't keep in in
   // scope
@@ -597,20 +587,18 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
     // send sync step 1
     let encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, messageSync);
-    syncProtocol.writeSyncStep1(encoder, doc);
-    send(doc, conn, encoding.toUint8Array(encoder));
-    const awarenessStates = doc.awareness.getStates();
+    syncProtocol.writeSyncStep1(encoder, ydoc);
+    send(ydoc, conn, encoding.toUint8Array(encoder));
+    const awarenessStates = ydoc.awareness.getStates();
     if (awarenessStates.size > 0) {
       encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, messageAwareness);
       encoding.writeVarUint8Array(encoder, awarenessProtocol
-        .encodeAwarenessUpdate(doc.awareness, Array.from(awarenessStates.keys())));
-      send(doc, conn, encoding.toUint8Array(encoder));
+        .encodeAwarenessUpdate(ydoc.awareness, Array.from(awarenessStates.keys())));
+      send(ydoc, conn, encoding.toUint8Array(encoder));
     }
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('Error in setupWSConnection', err);
   }
-
-  return timingData;
 };

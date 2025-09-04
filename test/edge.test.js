@@ -13,7 +13,7 @@ import assert from 'assert';
 
 import * as Y from 'yjs';
 import defaultEdge, { DocRoom, handleApiRequest, handleErrors } from '../src/edge.js';
-import { WSSharedDoc, persistence, setYDoc } from '../src/shareddoc.js';
+import { WSSharedDoc, persistence } from '../src/shareddoc.js';
 import { doc2aem } from '../src/collab.js';
 
 function hash(str) {
@@ -138,7 +138,6 @@ describe('Worker test suite', () => {
   it('Docroom deleteFromAdmin', async () => {
     const ydocName = 'http://foobar.com/q.html';
     const testYdoc = new WSSharedDoc(ydocName);
-    const m = setYDoc(ydocName, testYdoc);
 
     const connCalled = []
     const mockConn = {
@@ -150,12 +149,10 @@ describe('Worker test suite', () => {
       url: `${ydocName}?api=deleteAdmin`
     };
 
-    const dr = new DocRoom({});
+    const dr = new DocRoom({}, {}, new Map([[ydocName, testYdoc]]));
 
-    assert(m.has(ydocName), 'Precondition');
     const resp = await dr.fetch(req)
     assert.equal(204, resp.status);
-    assert(!m.has(ydocName), 'Doc should have been removed');
     assert.deepStrictEqual(['close'], connCalled);
   });
 
@@ -172,8 +169,7 @@ describe('Worker test suite', () => {
   it('Docroom syncFromAdmin', async () => {
     const ydocName = 'http://foobar.com/a/b/c.html';
     const testYdoc = new WSSharedDoc(ydocName);
-    const m = setYDoc(ydocName, testYdoc);
-
+    
     const connCalled = []
     const mockConn = {
       close() { connCalled.push('close'); }
@@ -184,12 +180,10 @@ describe('Worker test suite', () => {
       url: `${ydocName}?api=syncAdmin`
     };
 
-    const dr = new DocRoom({});
+    const dr = new DocRoom({}, {}, new Map([[ydocName, testYdoc]]));
 
-    assert(m.has(ydocName), 'Precondition');
     const resp = await dr.fetch(req)
     assert.equal(200, resp.status);
-    assert(!m.has(ydocName), 'Doc should have been removed');
     assert.deepStrictEqual(['close'], connCalled);
   });
 
@@ -255,14 +249,14 @@ describe('Worker test suite', () => {
       assert.equal('au123', wsp1.auth);
 
       const acceptIdx = wspCalled.indexOf('accept');
-      const alMessIdx = wspCalled.indexOf('addEventListener message');
-      const alClsIdx = wspCalled.indexOf('addEventListener close');
+      const alMessCount = wspCalled.filter(call => call === 'addEventListener message').length;
+      const alClsCount = wspCalled.filter(call => call === 'addEventListener close').length;
       const clsIdx = wspCalled.indexOf('close');
 
-      assert(acceptIdx >= 0);
-      assert(alMessIdx > acceptIdx);
-      assert(alClsIdx > alMessIdx);
-      assert(clsIdx > alClsIdx);
+      assert(acceptIdx === 0);
+      assert(alMessCount === 1);
+      assert(alClsCount === 1);
+      assert(clsIdx === wspCalled.length - 1);
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
       persistence.bindState = savedBS;
