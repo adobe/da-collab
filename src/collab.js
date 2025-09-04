@@ -149,8 +149,6 @@ export function aem2doc(html, ydoc) {
   }
   const tree = fromHtml(html, { fragment: true });
   const main = tree.children.find((child) => child.tagName === 'main');
-  console.log('tree', tree);
-  console.log('main', main);
   if (main) {
     fixImageLinks(main);
     removeComments(main);
