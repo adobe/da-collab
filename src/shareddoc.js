@@ -36,21 +36,26 @@ const MAX_STORAGE_VALUE_SIZE = 131072;
  * @param {WebSocket} conn - the websocket connection to close.
  */
 export const closeConn = (doc, conn) => {
-  // eslint-disable-next-line no-console
-  console.log('Closing connection', doc.name, doc.conns.size);
-  if (doc.conns.has(conn)) {
-    const controlledIds = doc.conns.get(conn);
-    doc.conns.delete(conn);
-    awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
-  }
-
-  if (doc.onClose && doc.conns.size === 0) {
+  try {
     // eslint-disable-next-line no-console
-    console.log(`All connections closed for ${doc.name} - removing from docs cache`);
-    doc.onClose();
-  }
+    console.log('Closing connection', doc.name, doc.conns.size);
+    if (doc.conns.has(conn)) {
+      const controlledIds = doc.conns.get(conn);
+      doc.conns.delete(conn);
+      awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
+    }
 
-  conn.close();
+    if (doc.onClose && doc.conns.size === 0) {
+      // eslint-disable-next-line no-console
+      console.log(`All connections closed for ${doc.name} - removing from docs cache`);
+      doc.onClose();
+    }
+
+    conn.close();
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('Could not properly close the connection', e);
+  }
 };
 
 const send = (doc, conn, m) => {
