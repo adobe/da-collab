@@ -255,7 +255,7 @@ describe('Worker test suite', () => {
 
       assert(acceptIdx === 0);
       assert(alMessCount === 1);
-      assert(alClsCount === 2);
+      assert(alClsCount === 1);
       assert(clsIdx === wspCalled.length - 1);
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
