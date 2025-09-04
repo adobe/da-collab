@@ -534,7 +534,9 @@ export const messageListener = (conn, doc, message) => {
   } catch (err) {
     // eslint-disable-next-line no-console, no-nested-ternary
     console.error('messageListener - Received message', doc.name, messageType === messageSync ? 'sync' : (messageType === messageAwareness ? 'awareness' : 'unknown'));
+    // eslint-disable-next-line no-console, no-nested-ternary
     console.error('messageListener - Stack', err.stack);
+    // eslint-disable-next-line no-console, no-nested-ternary
     console.error('messageListener - Message', err.message);
     // eslint-disable-next-line no-console
     console.error('Error in messageListener', err);
