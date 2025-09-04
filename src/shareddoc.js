@@ -37,7 +37,7 @@ const MAX_STORAGE_VALUE_SIZE = 131072;
  */
 export const closeConn = (doc, conn) => {
   // eslint-disable-next-line no-console
-  console.log('Closing connection for - removing awareness states', doc.name);
+  console.log('Closing connection', doc.name, doc.conns.size);
   if (doc.conns.has(conn)) {
     const controlledIds = doc.conns.get(conn);
     doc.conns.delete(conn);
@@ -54,6 +54,8 @@ const send = (doc, conn, m) => {
   try {
     conn.send(m, (err) => err != null && closeConn(doc, conn));
   } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('Error sending message', e);
     closeConn(doc, conn);
   }
 };
@@ -136,6 +138,8 @@ export const storeState = async (docName, state, storage, chunkSize = MAX_STORAG
     }
 
     if (j >= MAX_STORAGE_KEYS) {
+      // eslint-disable-next-line no-console
+      console.error('Object too big for worker storage', docName, j, MAX_STORAGE_KEYS);
       throw new Error('Object too big for worker storage');
     }
 
@@ -222,6 +226,10 @@ export const persistence = {
       });
     }
 
+    if (blob.size < 84) {
+      // eslint-disable-next-line no-console
+      console.warn('Writting back an empty document', ydoc.name, blob.size);
+    }
     const { ok, status, statusText } = await ydoc.daadmin.fetch(ydoc.name, opts);
 
     return {
@@ -501,6 +509,12 @@ export const messageListener = (conn, doc, message) => {
         break;
     }
   } catch (err) {
+    // eslint-disable-next-line no-console, no-nested-ternary
+    console.error('messageListener - Received message', doc.name, messageType === messageSync ? 'sync' : (messageType === messageAwareness ? 'awareness' : 'unknown'));
+    // eslint-disable-next-line no-console, no-nested-ternary
+    console.error('messageListener - Stack', err.stack);
+    // eslint-disable-next-line no-console, no-nested-ternary
+    console.error('messageListener - Message', err.message);
     // eslint-disable-next-line no-console
     console.error(`Error in messageListener ${doc?.name} - messageType: ${messageType}`, err);
     showError(doc, err);
@@ -552,7 +566,7 @@ export const setupWSConnection = async (conn, ydoc) => {
   });
   // put the following in a variables in a block so the interval handlers don't keep in in
   // scope
-  {
+  try {
     // send sync step 1
     let encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, messageSync);
@@ -566,5 +580,8 @@ export const setupWSConnection = async (conn, ydoc) => {
         .encodeAwarenessUpdate(ydoc.awareness, Array.from(awarenessStates.keys())));
       send(ydoc, conn, encoding.toUint8Array(encoder));
     }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Error in setupWSConnection', err);
   }
 };

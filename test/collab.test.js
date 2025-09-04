@@ -595,12 +595,12 @@ assert.equal(result, html);
     assert.equal(collapseWhitespace(result), collapseWhitespace(EMPTY_DOC));
   });
 
-  it('can parse no main', async () => {
-    const html = '<body><header></header><footer></footer></body>';
+  it('can parse no main - results should remain unchanged - doc2aem wraps content into main', async () => {
+    const html = '<body><div><p>Hello</p></div><footer><p>World</p></footer></body>';
     const yDoc = new Y.Doc();
     aem2doc(html, yDoc);
     const result = doc2aem(yDoc);
-    assert.equal(collapseWhitespace(result), collapseWhitespace(EMPTY_DOC));
+    assert.equal(collapseWhitespace(result), collapseWhitespace('<body><header></header><main><div><p>Hello</p><p>World</p></div></main><footer></footer></body>'));
   });
 });
 

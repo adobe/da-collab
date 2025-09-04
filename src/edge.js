@@ -30,7 +30,7 @@ import {
 // code but it is convenient when debugging and iterating.
 export async function handleErrors(request, func) {
   try {
-    return await func();
+    return func();
   } catch (err) {
     if (request.headers.get('Upgrade') === 'websocket') {
       // Annoyingly, if we return an HTTP error in response to a WebSocket request, Chrome devtools
@@ -54,9 +54,11 @@ async function adminAPI(api, url, request, env) {
     return new Response('Bad', { status: 400 });
   }
 
-  // eslint-disable-next-line no-console
-  console.log('Room name:', doc);
   const id = env.rooms.idFromName(doc);
+
+  // eslint-disable-next-line no-console
+  console.log('AdminAPI - Document and room id', doc, id.toString());
+
   const roomObject = env.rooms.get(id);
 
   return roomObject.fetch(new URL(`${doc}?api=${api}`));
@@ -130,6 +132,12 @@ export async function handleApiRequest(request, env) {
     return new Response('unable to get resource', { status: 404 });
   }
 
+  // temporary log: HEAD request appears twice in the logs
+  // using Math.random() to understand if it is the same request and CF logging issue
+  // or if we enter here twice
+  // eslint-disable-next-line no-console
+  console.log('da-collab#handleApiRequest', docName, Math.random());
+
   // Check if we have the authorization for the room (this is a poor man's solution as right now
   // only da-admin knows).
   try {
@@ -140,6 +148,10 @@ export async function handleApiRequest(request, env) {
 
     const timingBeforeDaAdminHead = Date.now();
     const initialReq = await env.daadmin.fetch(docName, opts);
+
+    // this seems to be required by CloudFlare to consider the request as completed
+    await initialReq.text();
+
     timingDaAdminHeadDuration = Date.now() - timingBeforeDaAdminHead;
 
     if (!initialReq.ok && initialReq.status !== 404) {
@@ -172,6 +184,8 @@ export async function handleApiRequest(request, env) {
 
     // eslint-disable-next-line no-console
     console.log(`Fetching: ${docName} ${id}`);
+    // eslint-disable-next-line no-console
+    console.log('Document and room id', docName, id.toString());
 
     const headers = [...request.headers,
       ['X-collab-room', docName],
@@ -187,8 +201,7 @@ export async function handleApiRequest(request, env) {
     // Send the request to the Durable Object. The `fetch()` method of a Durable Object stub has the
     // same signature as the global `fetch()` function, but the request is always sent to the
     // object, regardless of the hostname in the request's URL.
-    const res = await roomObject.fetch(req);
-    return res;
+    return roomObject.fetch(req);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`Error fetching the doc from the room ${docName}`, err);
@@ -220,6 +233,10 @@ export class DocRoom {
 
     // `env` is our environment bindings (discussed earlier).
     this.env = env;
+    this.id = controller?.id?.toString() || `no-controller-${new Date().getTime()}`;
+
+    // eslint-disable-next-line no-console
+    console.log('DocRoom created with id', this.id);
   }
 
   // Handle the API calls. Supported API calls right now are to sync the doc with the da-admin
@@ -265,48 +282,57 @@ export class DocRoom {
   // Note that strangely enough in a unit testing env returning a Response with status 101 isn't
   // allowed by the runtime, so we can set an alternative 'success' code here for testing.
   async fetch(request, _opts, successCode = 101) {
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
 
-    // If it's a pure API call then handle it and return.
-    if (url.search.startsWith('?api=')) {
-      return this.handleApiCall(url, request);
+      // If it's a pure API call then handle it and return.
+      if (url.search.startsWith('?api=')) {
+        return this.handleApiCall(url, request);
+      }
+
+      // If we get here, we're expecting this to be a WebSocket request.
+      if (request.headers.get('Upgrade') !== 'websocket') {
+        return new Response('expected websocket', { status: 400 });
+      }
+      const auth = request.headers.get('Authorization');
+      const authActions = request.headers.get('X-auth-actions') ?? '';
+      const docName = request.headers.get('X-collab-room');
+
+      if (!docName) {
+        return new Response('expected docName', { status: 400 });
+      }
+
+      const timingBeforeSetupWebsocket = Date.now();
+      // To accept the WebSocket request, we create a WebSocketPair (which is like a socketpair,
+      // i.e. two WebSockets that talk to each other), we return one end of the pair in the
+      // response, and we operate on the other end. Note that this API is not part of the
+      // Fetch API standard; unfortunately, the Fetch API / Service Workers specs do not define
+      // any way to act as a WebSocket server today.
+      const pair = DocRoom.newWebSocketPair();
+
+      // We're going to take pair[1] as our end, and return pair[0] to the client.
+      const timingData = await this.handleSession(pair[1], docName, auth, authActions);
+      const timingSetupWebSocketDuration = Date.now() - timingBeforeSetupWebsocket;
+
+      const reqHeaders = request.headers;
+      const respheaders = new Headers();
+      respheaders.set('X-1-timing-da-admin-head-duration', reqHeaders.get('X-timing-da-admin-head-duration'));
+      respheaders.set('X-2-timing-docroom-get-duration', reqHeaders.get('X-timing-docroom-get-duration'));
+      respheaders.set('X-4-timing-da-admin-get-duration', timingData.get('timingDaAdminGetDuration'));
+      respheaders.set('X-5-timing-read-state-duration', timingData.get('timingReadStateDuration'));
+      respheaders.set('X-7-timing-setup-websocket-duration', timingSetupWebSocketDuration);
+      respheaders.set('X-9-timing-full-duration', Date.now() - reqHeaders.get('X-timing-start'));
+
+      // eslint-disable-next-line no-console
+      console.log('DocRoom fetched for document with id', docName, this.id);
+
+      // Now we return the other end of the pair to the client.
+      return new Response(null, { status: successCode, headers: respheaders, webSocket: pair[0] });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Error in DocRoom fetch', err);
+      return new Response('internal server error', { status: 500 });
     }
-
-    // If we get here, we're expecting this to be a WebSocket request.
-    if (request.headers.get('Upgrade') !== 'websocket') {
-      return new Response('expected websocket', { status: 400 });
-    }
-    const auth = request.headers.get('Authorization');
-    const authActions = request.headers.get('X-auth-actions') ?? '';
-    const docName = request.headers.get('X-collab-room');
-
-    if (!docName) {
-      return new Response('expected docName', { status: 400 });
-    }
-
-    const timingBeforeSetupWebsocket = Date.now();
-    // To accept the WebSocket request, we create a WebSocketPair (which is like a socketpair,
-    // i.e. two WebSockets that talk to each other), we return one end of the pair in the
-    // response, and we operate on the other end. Note that this API is not part of the
-    // Fetch API standard; unfortunately, the Fetch API / Service Workers specs do not define
-    // any way to act as a WebSocket server today.
-    const pair = DocRoom.newWebSocketPair();
-
-    // We're going to take pair[1] as our end, and return pair[0] to the client.
-    const timingData = await this.handleSession(pair[1], docName, auth, authActions);
-    const timingSetupWebSocketDuration = Date.now() - timingBeforeSetupWebsocket;
-
-    const reqHeaders = request.headers;
-    const respheaders = new Headers();
-    respheaders.set('X-1-timing-da-admin-head-duration', reqHeaders.get('X-timing-da-admin-head-duration'));
-    respheaders.set('X-2-timing-docroom-get-duration', reqHeaders.get('X-timing-docroom-get-duration'));
-    respheaders.set('X-4-timing-da-admin-get-duration', timingData.get('timingDaAdminGetDuration'));
-    respheaders.set('X-5-timing-read-state-duration', timingData.get('timingReadStateDuration'));
-    respheaders.set('X-7-timing-setup-websocket-duration', timingSetupWebSocketDuration);
-    respheaders.set('X-9-timing-full-duration', Date.now() - reqHeaders.get('X-timing-start'));
-
-    // Now we return the other end of the pair to the client.
-    return new Response(null, { status: successCode, headers: respheaders, webSocket: pair[0] });
   }
 
   /**
@@ -329,6 +355,9 @@ export class DocRoom {
     // eslint-disable-next-line no-console
     console.log(`Setting up WSConnection for ${docName} with auth(${webSocket.auth
       ? webSocket.auth.substring(0, webSocket.auth.indexOf(' ')) : 'none'})`);
+
+    // eslint-disable-next-line no-console
+    console.log('DocRoom setting up WSConnection for document with id', docName, this.id);
 
     const timingData = new Map();
 
