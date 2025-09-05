@@ -189,7 +189,7 @@ export const persistence = {
    * @param {string} docName - The document name
    * @param {string} auth - The authorization header
    * @param {object} daadmin - The da-admin worker service binding
-   * @returns {Promise<string>} - The content of the document
+   * @returns {object} - text: The content of the document and guid: the guid of the document.
    */
   get: async (docName, auth, daadmin) => {
     const initalOpts = {};
@@ -198,7 +198,7 @@ export const persistence = {
     }
     const initialReq = await daadmin.fetch(docName, initalOpts);
     if (initialReq.ok) {
-      return initialReq.text();
+      return { text: await initialReq.text(), guid: initialReq.headers.get('X-da-id') };
     } else if (initialReq.status === 404) {
       return null;
     } else {
@@ -215,11 +215,12 @@ export const persistence = {
    * @param {string} content - The content to store
    * @returns {object} The response from da-admin.
    */
-  put: async (ydoc, content) => {
+  put: async (ydoc, content, guid) => {
     const blob = new Blob([content], { type: 'text/html' });
 
     const formData = new FormData();
     formData.append('data', blob);
+    formData.append('guid', guid);
 
     const opts = { method: 'PUT', body: formData };
     const keys = Array.from(ydoc.conns.keys());
@@ -258,16 +259,64 @@ export const persistence = {
    * @param {WSSharedDoc} ydoc - the ydoc that has been updated.
    * @param {string} current - the current content of the document previously
    * obtained from da-admin
+   * @param {object} guidHolder - an object containing the guid of the document.
+   * If the document exists, it will hold its guid. If the document does not yet
+   * exists, it will be modified to set its guid in this method so that its known
+   * for subsequent calls.
    * @returns {string} - the new content of the document in da-admin.
    */
-  update: async (ydoc, current) => {
+  update: async (ydoc, current, guidHolder) => {
     let closeAll = false;
     try {
-      const content = doc2aem(ydoc);
+      const { guid } = guidHolder;
+
+      // The guid array contains the known guids. We sort it by timestamp so that we
+      // know to find the latest. Any other guids are considered stale.
+      // Objects on the guid array may also contain a newDoc flag, which is set to true
+      // when the document is just opened in the browser.
+      const guidArray = ydoc.getArray('prosemirror-guids');
+      const copy = [...guidArray];
+      if (copy.length === 0) {
+        // eslint-disable-next-line no-console
+        console.log('No guid array found in update. Ignoring.');
+        return current;
+      }
+      copy.sort((a, b) => a.ts - b.ts);
+      const { newDoc, guid: curGuid, ts: createdTS } = copy.pop();
+
+      if (guid && curGuid !== guid) {
+        // Guid mismatch, need to update the editor
+        ydoc.transact(() => {
+          guidArray.delete(0, guidArray.length); // Delete the entire array
+          guidArray.push([{ guid, ts: createdTS + 1 }]);
+        });
+        return current;
+      }
+
+      if (!newDoc && !guid) {
+        // Someone is still editing a document in the browser that has since been deleted
+        // we know it's deleted because guid from da-admin is not set.
+        // eslint-disable-next-line no-console
+        console.log('Document GUID mismatch, da-admin guid:', guid, 'edited guid:', curGuid);
+        showError(ydoc, { message: 'This document has since been deleted, your edits are not persisted' });
+        return current;
+      }
+
+      const content = doc2aem(ydoc, curGuid);
       if (current !== content) {
         // Only store the document if it was actually changed.
-        const { ok, status, statusText } = await persistence.put(ydoc, content);
+        const { ok, status, statusText } = await persistence.put(ydoc, content, curGuid);
+        if (newDoc) {
+          // Update the guid in the guidHolder so that in subsequent calls we know what it is
+          // eslint-disable-next-line no-param-reassign
+          guidHolder.guid = curGuid;
 
+          // Remove the stale guids, and set the array to the current
+          ydoc.transact(() => {
+            guidArray.delete(0, guidArray.length); // Delete the entire array
+            guidArray.push([{ guid: curGuid, ts: createdTS }]);
+          });
+        }
         if (!ok) {
           closeAll = (status === 401 || status === 403);
           throw new Error(`${status} - ${statusText}`);
@@ -300,11 +349,18 @@ export const persistence = {
     let timingDaAdminGetDuration;
 
     let current;
+    let guid;
     let restored = false; // True if restored from worker storage
     try {
       let newDoc = false;
       const timingBeforeDaAdminGet = Date.now();
-      current = await persistence.get(docName, conn.auth, ydoc.daadmin);
+      const cur = await persistence.get(docName, conn.auth, ydoc.daadmin);
+      if (cur === null) {
+        current = null;
+      } else {
+        current = cur?.text;
+        guid = cur?.guid;
+      }
       timingDaAdminGetDuration = Date.now() - timingBeforeDaAdminGet;
 
       const timingBeforeReadState = Date.now();
@@ -327,7 +383,7 @@ export const persistence = {
         // Check if the state from the worker storage is the same as the current state in da-admin.
         // So for example if da-admin doesn't have the doc any more, or if it has been altered in
         // another way, we don't use the state of the worker storage.
-        const fromStorage = doc2aem(ydoc);
+        const fromStorage = doc2aem(ydoc, guid);
         if (fromStorage === current) {
           restored = true;
 
@@ -347,21 +403,25 @@ export const persistence = {
       showError(ydoc, error);
     }
 
-    if (!restored) {
+    if (!restored && guid) {
       // The doc was not restored from worker persistence, so read it from da-admin,
-      // but do this async to give the ydoc some time to get synced up first. Without
-      // this timeout, the ydoc can get confused which may result in duplicated content.
+      // but only if the doc actually exists in da-admin (guid has a value).
+      // If it's a brand new document, subsequent update() calls will set it in
+      // da-admin and provide the guid to use.
+
+      // Do this async to give the ydoc some time to get synced up first. Without this
+      // timeout, the ydoc can get confused which may result in duplicated content.
       // eslint-disable-next-line no-console
       console.log('Could not be restored, trying to restore from da-admin', docName);
       setTimeout(() => {
         if (ydoc === docs.get(docName)) {
-          const rootType = ydoc.getXmlFragment('prosemirror');
+          const rootType = ydoc.getXmlFragment(`prosemirror-${guid}`);
           ydoc.transact(() => {
             try {
               // clear document
               rootType.delete(0, rootType.length);
               // restore from da-admin
-              aem2doc(current, ydoc);
+              aem2doc(current, ydoc, guid);
 
               // eslint-disable-next-line no-console
               console.log('Restored from da-admin', docName);
@@ -382,11 +442,15 @@ export const persistence = {
       }
     });
 
+    // Use a holder for the guid. This is needed in case the guid is not known yet
+    // for a new document so that it can be updated later once its known.
+    const guidHolder = { guid };
+
     ydoc.on('update', debounce(async () => {
       // If we receive an update on the document, store it in da-admin, but debounce it
       // to avoid excessive da-admin calls.
       if (ydoc === docs.get(docName)) {
-        current = await persistence.update(ydoc, current);
+        current = await persistence.update(ydoc, current, guidHolder);
       }
     }, 2000, { maxWait: 10000 }));
 
@@ -542,6 +606,29 @@ export const messageListener = (conn, doc, message) => {
     console.error('Error in messageListener', err);
     showError(doc, err);
   }
+};
+
+export const deleteFromAdmin = async (docName) => {
+  // eslint-disable-next-line no-console
+  console.log('Delete from Admin received', docName);
+  const ydoc = docs.get(docName);
+  if (ydoc) {
+    // empty out all known docs, should normally just be one
+    for (const { guid } of ydoc.getArray('prosemirror-guids')) {
+      ydoc.transact(() => {
+        const rootType = ydoc.getXmlFragment(`prosemirror-${guid}`);
+        rootType.delete(0, rootType.length);
+      });
+    }
+
+    // Reset the connections to flush the guids
+    ydoc.conns.forEach((_, c) => closeConn(ydoc, c));
+    return true;
+  } else {
+    // eslint-disable-next-line no-console
+    console.log('Document not found', docName);
+  }
+  return false;
 };
 
 /**
