@@ -180,6 +180,13 @@ export const showError = (ydoc, err) => {
   }
 };
 
+const resetGuidArray = (ydoc, guidArray, guid, ts) => {
+  ydoc.transact(() => {
+    guidArray.delete(0, guidArray.length); // Delete the entire array
+    guidArray.push([{ guid, ts }]);
+  });
+};
+
 export const persistence = {
   closeConn: closeConn.bind(this),
 
@@ -285,11 +292,8 @@ export const persistence = {
       const { newDoc, guid: curGuid, ts: createdTS } = copy.pop();
 
       if (guid && curGuid !== guid) {
-        // Guid mismatch, need to update the editor
-        ydoc.transact(() => {
-          guidArray.delete(0, guidArray.length); // Delete the entire array
-          guidArray.push([{ guid, ts: createdTS + 1 }]);
-        });
+        // Guid mismatch, need to update the editor to the guid from da-admin
+        resetGuidArray(ydoc, guidArray, guid, createdTS + 1);
         return current;
       }
 
@@ -312,10 +316,7 @@ export const persistence = {
           guidHolder.guid = curGuid;
 
           // Remove the stale guids, and set the array to the current
-          ydoc.transact(() => {
-            guidArray.delete(0, guidArray.length); // Delete the entire array
-            guidArray.push([{ guid: curGuid, ts: createdTS }]);
-          });
+          resetGuidArray(ydoc, guidArray, curGuid, createdTS);
         }
         if (!ok) {
           closeAll = (status === 401 || status === 403);

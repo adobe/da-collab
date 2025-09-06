@@ -458,9 +458,49 @@ describe('Collab Test Suite', () => {
 
     const guidHolder = {};
     const res = await pss.persistence.update(ydoc, 'My Old Content', guidHolder);
+    assert.equal(0, ydoc.getMap('error').size, 'Should have been no errors');
     assert.deepStrictEqual(guidHolder, { guid: '3-3' });
     assert.deepStrictEqual([{ guid: '3-3', ts: 333 }], [...ydoc.getArray('prosemirror-guids')]);
     assert(res.includes('Hello'), 'Should have kept the content');
+  });
+
+  it('Doc mismatch with existing doc in admin takes the doc from admin', async () => {
+    const docName = 'http://a.b.c/my/doc.html';
+
+    const initialContent = `
+<body>
+  <header></header>
+  <main><div><p>Hi</p></div></main>
+  <footer></footer>
+</body>
+`;
+
+    const ydoc = new WSSharedDoc(docName);
+    ydoc.transact = (f) => f();
+    aem2doc(initialContent, ydoc, '4-4');
+
+    const pss = await esmock(
+      '../src/shareddoc.js', {
+    });
+    pss.persistence.put = () => {
+      throw new Error('should not have put document');
+    }
+
+    assert.equal(0, ydoc.getMap('error').size, 'Precondition');
+    const ga = ydoc.getArray('prosemirror-guids');
+    ga.push([{ ts: 444, guid: '4-4'}]);
+    ga.push([{ ts: 333, guid: '3-3'}]);
+
+    // The guidHolder holds the guid as it comes from da-admin. This one is different to what
+    // came in from the editor
+    const guidHolder = { guid: '5-5' };
+
+    const res = await pss.persistence.update(ydoc, 'My Admin Content', guidHolder);
+    assert.equal(0, ydoc.getMap('error').size, 'Should have been no errors');
+    assert.equal(res, 'My Admin Content', 'Should have kept the content from da-admin');
+    assert.equal(1, ga.length, 'Should have reset the guid array');
+    assert.equal('5-5', ga.get(0).guid, 'The guid from da-admin should have been used');
+    assert(ga.get(0).ts > 444, 'Should have made the timestamp newer');
   });
 
   it('Test invalidateFromAdmin', async () => {
