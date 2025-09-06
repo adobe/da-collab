@@ -14,7 +14,7 @@ import assert from 'assert';
 import esmock from 'esmock';
 
 import {
-  closeConn, getYDoc, invalidateFromAdmin, messageListener, persistence,
+  closeConn, deleteFromAdmin, getYDoc, invalidateFromAdmin, messageListener, persistence,
   readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
 import { aem2doc, doc2aem, EMPTY_DOC } from '../src/collab.js';
@@ -144,10 +144,13 @@ describe('Collab Test Suite', () => {
       assert.equal(url, 'foo');
       assert.equal(opts.method, undefined);
       assert(opts.headers === undefined);
-      return { ok: true, text: async () => 'content', status: 200, statusText: 'OK' };
+      const headers = new Headers();
+      headers.set('X-da-id', 'x1234y5678');
+      return { ok: true, text: async () => 'content', status: 200, statusText: 'OK', headers };
     };
     const result = await persistence.get('foo', undefined, daadmin);
-    assert.equal(result, 'content');
+    assert.equal(result.text, 'content');
+    assert.equal(result.guid, 'x1234y5678');
   });
 
   it('Test persistence get auth', async () => {
@@ -156,10 +159,10 @@ describe('Collab Test Suite', () => {
       assert.equal(url, 'foo');
       assert.equal(opts.method, undefined);
       assert.equal(opts.headers.get('authorization'), 'auth');
-      return { ok: true, text: async () => 'content', status: 200, statusText: 'OK' };
+      return { ok: true, text: async () => 'content', status: 200, statusText: 'OK', headers: new Headers() };
     };
     const result = await persistence.get('foo', 'auth', daadmin);
-    assert.equal(result, 'content');
+    assert.equal(result.text, 'content');
   });
 
   it('Test persistence get 404', async () => {
@@ -290,13 +293,14 @@ describe('Collab Test Suite', () => {
     const mockYDoc = {
       conns: { keys() { return [ {} ] }},
       name: 'http://foo.bar/0/123.html',
+      getArray() { return [{ ts: Date.now(), guid: '132' }]; },
     };
 
     pss.persistence.put = async (ydoc, content) => {
       assert.fail("update should not have happend");
     }
 
-    const result = await pss.persistence.update(mockYDoc, 'Svr content');
+    const result = await pss.persistence.update(mockYDoc, 'Svr content', { guid: '132' });
     assert.equal(result, 'Svr content');
   });
 
@@ -312,6 +316,7 @@ describe('Collab Test Suite', () => {
     const mockYDoc = {
       conns: { keys() { return [ {} ] }},
       name: 'http://foo.bar/0/123.html',
+      getArray() { return [{ ts: Date.now(), guid: '437' }]; },
     };
 
     let called = false;
@@ -327,7 +332,7 @@ describe('Collab Test Suite', () => {
       calledCloseCon = true;
     }
 
-    const result = await pss.persistence.update(mockYDoc, 'Svr content');
+    const result = await pss.persistence.update(mockYDoc, 'Svr content', { guid: '437' });
     assert.equal(result, 'Svr content update');
     assert(called);
     assert(!calledCloseCon);
@@ -345,6 +350,7 @@ describe('Collab Test Suite', () => {
     const mockYDoc = {
       conns: new Map().set('foo', 'bar'),
       name: 'http://foo.bar/0/123.html',
+      getArray() { return [{ ts: Date.now(), guid: '1234' }]; },
       getMap(nm) { return nm === 'error' ? new Map() : null },
       transact: (f) => f(),
     };
@@ -364,7 +370,7 @@ describe('Collab Test Suite', () => {
       calledCloseCon = true;
     }
 
-    const result = await pss.persistence.update(mockYDoc, 'Svr content');
+    const result = await pss.persistence.update(mockYDoc, 'Svr content', { guid: '1234' });
     assert.equal(result, 'Svr content');
     assert(called);
     assert(calledCloseCon);
@@ -373,6 +379,128 @@ describe('Collab Test Suite', () => {
   it('Test persistence update closes all on auth failure', async () => {
     await testCloseAllOnAuthFailure(401);
     await testCloseAllOnAuthFailure(403);
+  });
+
+  it('Test no guid array in update does nothing', async () => {
+    const docName = 'http://a.b.c/my/doc.html';
+    const ydoc = new WSSharedDoc(docName);
+
+    const doc2aemCalled = [];
+    const mockDoc2Aem = () => {
+      doc2aemCalled.push('doc2aem');
+    };
+    const pss = await esmock(
+      '../src/shareddoc.js', {
+        '../src/collab.js': {
+          doc2aem: mockDoc2Aem
+        }
+      });
+
+    const res = await pss.persistence.update(ydoc, 'My Content', { guid: '1234' });
+    assert.equal(0, doc2aemCalled.length, 'doc2aem should not have been called');
+    assert.equal(res, 'My Content', 'Should not have changed the content, as the guid array was not set');
+  });
+
+  it('Test update document deleted from admin produces error and is ignored', async () => {
+    const docName = 'http://a.b.c/my/doc.html';
+    const ydoc = new WSSharedDoc(docName);
+    ydoc.transact = (f) => f();
+
+    const doc2aemCalled = [];
+    const mockDoc2Aem = () => {
+      doc2aemCalled.push('doc2aem');
+    };
+    const pss = await esmock(
+      '../src/shareddoc.js', {
+        '../src/collab.js': {
+          doc2aem: mockDoc2Aem
+        }
+      });
+
+    assert.equal(0, ydoc.getMap('error').size, 'Precondition');
+    ydoc.getArray('prosemirror-guids').push([{ ts: Date.now(), guid: '1234' }]);
+    const res = await pss.persistence.update(ydoc, 'My Content', {});
+    assert(ydoc.getMap('error').size > 0, 'Should have set the error');
+    assert(ydoc.getMap('error').get('message').length > 0, 'Should have set the error message');
+    assert.equal(0, doc2aemCalled.length, 'doc2aem should not have been called');
+    assert.equal(res, 'My Content', 'Should not have changed the content, as the guid array was not set');
+  });
+
+  it('Test update new doc with guid provided', async () => {
+    const docName = 'http://a.b.c/my/doc.html';
+
+    const initialContent = `
+<body>
+  <header></header>
+  <main><div><p>Hello</p></div></main>
+  <footer></footer>
+</body>
+`;
+
+    const ydoc = new WSSharedDoc(docName);
+    ydoc.transact = (f) => f();
+    aem2doc(initialContent, ydoc, '3-3');
+
+    const pss = await esmock(
+      '../src/shareddoc.js', {
+    });
+    pss.persistence.put = async (ydoc, content, guid) => {
+      if (guid == '3-3' && content.includes('Hello')) {
+        return { ok: true, status: 200, statusText: 'OK - Stored'};
+      }
+    };
+
+    assert.equal(0, ydoc.getMap('error').size, 'Precondition');
+    const ga = ydoc.getArray('prosemirror-guids');
+    ga.push([{ ts: 222, guid: '2-2' }]);
+    ga.push([{ newDoc: true, ts: 333, guid: '3-3' }]);
+    ga.push([{ ts: 111, guid: '1-1' }]);
+
+    const guidHolder = {};
+    const res = await pss.persistence.update(ydoc, 'My Old Content', guidHolder);
+    assert.equal(0, ydoc.getMap('error').size, 'Should have been no errors');
+    assert.deepStrictEqual(guidHolder, { guid: '3-3' });
+    assert.deepStrictEqual([{ guid: '3-3', ts: 333 }], [...ydoc.getArray('prosemirror-guids')]);
+    assert(res.includes('Hello'), 'Should have kept the content');
+  });
+
+  it('Doc mismatch with existing doc in admin takes the doc from admin', async () => {
+    const docName = 'http://a.b.c/my/doc.html';
+
+    const initialContent = `
+<body>
+  <header></header>
+  <main><div><p>Hi</p></div></main>
+  <footer></footer>
+</body>
+`;
+
+    const ydoc = new WSSharedDoc(docName);
+    ydoc.transact = (f) => f();
+    aem2doc(initialContent, ydoc, '4-4');
+
+    const pss = await esmock(
+      '../src/shareddoc.js', {
+    });
+    pss.persistence.put = () => {
+      throw new Error('should not have put document');
+    }
+
+    assert.equal(0, ydoc.getMap('error').size, 'Precondition');
+    const ga = ydoc.getArray('prosemirror-guids');
+    ga.push([{ ts: 444, guid: '4-4'}]);
+    ga.push([{ ts: 333, guid: '3-3'}]);
+
+    // The guidHolder holds the guid as it comes from da-admin. This one is different to what
+    // came in from the editor
+    const guidHolder = { guid: '5-5' };
+
+    const res = await pss.persistence.update(ydoc, 'My Admin Content', guidHolder);
+    assert.equal(0, ydoc.getMap('error').size, 'Should have been no errors');
+    assert.equal(res, 'My Admin Content', 'Should have kept the content from da-admin');
+    assert.equal(1, ga.length, 'Should have reset the guid array');
+    assert.equal('5-5', ga.get(0).guid, 'The guid from da-admin should have been used');
+    assert(ga.get(0).ts > 444, 'Should have made the timestamp newer');
   });
 
   it('Test invalidateFromAdmin', async () => {
@@ -398,6 +526,44 @@ describe('Collab Test Suite', () => {
     const res2 = ['close2', 'close1'];
     assert(res1.toString() === closeCalled.toString()
       || res2.toString() === closeCalled.toString());
+  });
+
+  it('Test deleteFromAdmin', async() => {
+    const docName = 'https://do.re.mi/so/la/ti.html';
+
+    const deleteCalled = [];
+    const rt1234 = {
+      length: 7,
+      delete: (i, l) => { deleteCalled.push(`delete(${i},${l})`)}
+    };
+    const rt5678 = {
+      length: 19,
+      delete: (i, l) => { deleteCalled.push(`delete(${i},${l})`)}
+    };
+    const rtMap = new Map();
+    rtMap.set('prosemirror-g1234', rt1234);
+    rtMap.set('prosemirror-g5678', rt5678);
+
+    const closeCalled = [];
+    const conn = { close: () => closeCalled.push('close') };
+    const conns = new Map();
+    conns.set(conn, new Set());
+
+    const testYDoc = new WSSharedDoc(docName);
+    testYDoc.getXmlFragment = (k) => rtMap.get(k);
+    const guids = testYDoc.getArray('prosemirror-guids');
+    guids.push([{guid: 'g1234', ts: 999}]);
+    guids.push([{guid: 'g5678', ts: 777}]);
+    testYDoc.transact = (f) => f();
+    testYDoc.conns = conns;
+    const m = setYDoc(docName, testYDoc);
+
+    assert(m.has(docName), 'Precondition');
+    deleteFromAdmin(docName);
+    assert(!m.has(docName), 'Document should have been removed from global map');
+
+    assert.deepStrictEqual(['close'], closeCalled);
+    assert.deepStrictEqual(['delete(0,7)', 'delete(0,19)'], deleteCalled);
   });
 
   it('Test close connection', async () => {
@@ -471,7 +637,10 @@ describe('Collab Test Suite', () => {
 
     const mockStorage = { list: () => new Map() };
 
-    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    pss.persistence.get = async (nm, au, ad) => ({
+      guid: 'abc987',
+      text: `Get: ${nm}-${au}-${ad}`
+    });
     const updated = new Map();
     pss.persistence.update = async (d, v) => updated.set(d, v);
 
@@ -554,24 +723,32 @@ describe('Collab Test Suite', () => {
     const storage = { list: async () => stored };
 
     const savedGet = persistence.get;
+    const savedSetTimeout = globalThis.setTimeout;
     try {
+      const setTimeoutCalled = [];
+      globalThis.setTimeout = () => setTimeoutCalled.push('setTimeout');
       persistence.get = (d) => {
         if (d === docName) {
-          return `
+          return {
+            guid: 'abcd-efgh-1234-5678',
+            text: `
 <body>
   <header></header>
   <main><div></div></main>
   <footer></footer>
 </body>
-`;
+`};
         }
       };
 
       await persistence.bindState(docName, ydoc, conn, storage);
 
       assert.equal('somevalue', ydoc.getMap('foo').get('someattr'));
+      assert.equal(0, setTimeoutCalled.length,
+        'Should not have called setTimeout as there is no document to restore from da-admin');
     } finally {
       persistence.get = savedGet;
+       globalThis.setTimeout = savedSetTimeout;
     }
   });
 
@@ -587,15 +764,47 @@ describe('Collab Test Suite', () => {
     try {
       globalThis.setTimeout = (f) => f(); // run timeout method instantly
 
-      persistence.get = async () => `
+      persistence.get = async () => ({
+        guid: 'my-id',
+        text: `
         <body>
         <header></header>
         <main><div>From daadmin</div></main>
         <footer></footer>
-        </body>`;
+        </body>`});
       await persistence.bindState(docName, ydoc, {}, storage);
 
-      assert(doc2aem(ydoc).includes('<div><p>From daadmin</p></div>'));
+      assert(doc2aem(ydoc, 'my-id').includes('<div><p>From daadmin</p></div>'));
+    } finally {
+      persistence.get = savedGet;
+      globalThis.setTimeout = savedSetTimeout;
+    }
+  });
+
+  it('Test mismatch ID', async () => {
+    const docName = 'https://admin.da.live/source/foo/bar.html';
+    const ydoc = new Y.Doc();
+    setYDoc(docName, ydoc);
+
+    const storage = { list: async () => { throw new Error('yikes') } };
+
+    const savedGet = persistence.get;
+    const savedSetTimeout = globalThis.setTimeout;
+    try {
+      globalThis.setTimeout = (f) => f(); // run timeout method instantly
+
+      persistence.get = async () => ({
+        guid: 'my-id',
+        text: `
+        <body>
+        <header></header>
+        <main><div>From daadmin</div></main>
+        <footer></footer>
+        </body>`});
+      await persistence.bindState(docName, ydoc, {}, storage);
+
+      assert(!doc2aem(ydoc, 'my-other-id').includes('<div><p>From daadmin</p></div>'),
+        'The mismatched ID should not provide the daadmin content');
     } finally {
       persistence.get = savedGet;
       globalThis.setTimeout = savedSetTimeout;
@@ -620,6 +829,8 @@ describe('Collab Test Suite', () => {
         updObservers.push(fun);
       }
     };
+    const ga = ydoc.getArray('prosemirror-guids');
+    ga.push([{ ts: Date.now(), guid: '222-222-2222' }]);
     pss.setYDoc(docName, ydoc);
 
     const savedSetTimeout = globalThis.setTimeout;
@@ -632,7 +843,10 @@ describe('Collab Test Suite', () => {
         f();
       };
 
-      pss.persistence.get = async () => '<main><div>oldcontent</div></main>';
+      pss.persistence.get = async () => ({
+        guid: '222-222-2222',
+        text: '<main><div>oldcontent</div></main>'
+      });
       const putCalls = []
       pss.persistence.put = async (yd, c) => {
         if (yd === ydoc && c.includes('newcontent')) {
@@ -643,7 +857,7 @@ describe('Collab Test Suite', () => {
 
       await pss.persistence.bindState(docName, ydoc, {}, storage);
 
-      aem2doc('<main><div>newcontent</div></main>', ydoc);
+      aem2doc('<main><div>newcontent</div></main>', ydoc, '222-222-2222');
 
       assert.equal(2, updObservers.length);
       await updObservers[0]();
@@ -736,7 +950,6 @@ describe('Collab Test Suite', () => {
 
       await persistence.bindState(docName, ydoc, conn, storage);
       assert.deepStrictEqual([true], deleteAllCalled);
-      assert.equal(1, setTimeoutCalled.length, 'SetTimeout should have been called to update the doc');
     } finally {
       globalThis.setTimeout = savedSetTimeout;
     }
@@ -771,10 +984,13 @@ describe('Collab Test Suite', () => {
         globalThis.setTimeout = savedSetTimeout;
         f();
       };
-      persistence.get = async () => '<main><div>myinitial</div></main>';
+      persistence.get = async () => ({
+        guid: '1234-5678-9012',
+        text: '<main><div>myinitial</div></main>'
+      });
 
       await persistence.bindState(docName, ydoc, conn, storage);
-      assert(doc2aem(ydoc).includes('myinitial'));
+      assert(doc2aem(ydoc, '1234-5678-9012').includes('myinitial'));
       assert.equal(2, updObservers.length);
 
       ydoc.getMap('yah').set('a', 'bcd');
@@ -789,7 +1005,7 @@ describe('Collab Test Suite', () => {
       Y.applyUpdate(ydoc2, called[1].docstore);
 
       assert.equal('bcd', ydoc2.getMap('yah').get('a'));
-      assert(doc2aem(ydoc2).includes('myinitial'));
+      assert(doc2aem(ydoc, '1234-5678-9012').includes('myinitial'));
     } finally {
       globalThis.setTimeout = savedSetTimeout;
       persistence.get = savedGet;

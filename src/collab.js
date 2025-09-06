@@ -10,9 +10,9 @@
  * governing permissions and limitations under the License.
  */
 import {
-  prosemirrorToYXmlFragment, yDocToProsemirror,
+  prosemirrorToYXmlFragment, yDocToProsemirrorJSON,
 } from 'y-prosemirror';
-import { DOMParser, DOMSerializer } from 'prosemirror-model';
+import { DOMParser, DOMSerializer, Node } from 'prosemirror-model';
 import { fromHtml } from 'hast-util-from-html';
 import { matches } from 'hast-util-select';
 import { getSchema } from './schema.js';
@@ -142,7 +142,7 @@ function removeComments(node) {
 
 export const EMPTY_DOC = '<body><header></header><main><div></div></main><footer></footer></body>';
 
-export function aem2doc(html, ydoc) {
+export function aem2doc(html, ydoc, guid) {
   if (!html) {
     // eslint-disable-next-line no-param-reassign
     html = EMPTY_DOC;
@@ -280,7 +280,7 @@ export function aem2doc(html, ydoc) {
   };
 
   const json = DOMParser.fromSchema(getSchema()).parse(new Proxy(main || tree, handler2));
-  prosemirrorToYXmlFragment(json, ydoc.getXmlFragment('prosemirror'));
+  prosemirrorToYXmlFragment(json, ydoc.getXmlFragment(`prosemirror-${guid}`));
 }
 
 const getAttrString = (attributes) => Object.entries(attributes).map(([key, value]) => ` ${key}="${value}"`).join('');
@@ -366,9 +366,15 @@ export function tableToBlock(child, fragment) {
   });
 }
 
-export function doc2aem(ydoc) {
+export function doc2aem(ydoc, guid) {
+  if (!guid) {
+    // this is a brand new document
+    return EMPTY_DOC;
+  }
+
   const schema = getSchema();
-  const json = yDocToProsemirror(schema, ydoc);
+  const state = yDocToProsemirrorJSON(ydoc, `prosemirror-${guid}`);
+  const json = Node.fromJSON(schema, state);
 
   const fragment = { type: 'div', children: [], attributes: {} };
   const handler3 = {

@@ -9,7 +9,7 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
-import { invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
+import { deleteFromAdmin, invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
 
 // This is the Edge Worker, built using Durable Objects!
 
@@ -243,7 +243,7 @@ export class DocRoom {
     const api = url.searchParams.get('api');
     switch (api) {
       case 'deleteAdmin':
-        if (await invalidateFromAdmin(baseURL)) {
+        if (await deleteFromAdmin(baseURL)) {
           return new Response(null, { status: 204 });
         } else {
           return new Response('Not Found', { status: 404 });

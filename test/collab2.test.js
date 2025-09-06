@@ -183,8 +183,8 @@ describe('Parsing test suite', () => {
 
     html = collapseWhitespace(html);
     const yDoc = new Y.Doc();
-    aem2doc(html, yDoc);
-    const result = doc2aem(yDoc);
+    aem2doc(html, yDoc, 'my-guid');
+    const result = doc2aem(yDoc, 'my-guid');
     const expected = readFileSync('./test/mocks/expected-table.html', 'utf-8');
     assert.equal(collapseWhitespace(result), collapseWhitespace(expected));
   });
