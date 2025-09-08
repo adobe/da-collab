@@ -39,33 +39,38 @@ const MAX_STORAGE_VALUE_SIZE = 131072;
  * @param {WebSocket} conn - the websocket connection to close.
  */
 export const closeConn = (doc, conn) => {
-  // eslint-disable-next-line no-console
-  console.log('Closing connection', doc.name, doc.conns.size);
-  if (doc.conns.has(conn)) {
-    const controlledIds = doc.conns.get(conn);
-    doc.conns.delete(conn);
-    try {
-      awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('Error removing awareness states', err);
-    }
+  try {
+    // eslint-disable-next-line no-console
+    console.log('Closing connection', doc.name, doc.conns.size);
+    if (doc.conns.has(conn)) {
+      const controlledIds = doc.conns.get(conn);
+      doc.conns.delete(conn);
+      try {
+        awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Error removing awareness states', err);
+      }
 
-    if (doc.conns.size === 0) {
-      // eslint-disable-next-line no-console
-      console.log('No connections left, removing document from local map', doc.name);
-      docs.delete(doc.name);
+      if (doc.conns.size === 0) {
+        // eslint-disable-next-line no-console
+        console.log('No connections left, removing document from local map', doc.name);
+        docs.delete(doc.name);
+      }
     }
+    conn.close();
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('Error closing connection', e);
   }
-  conn.close();
 };
 
 const send = (doc, conn, m) => {
-  if (conn.readyState !== wsReadyStateConnecting && conn.readyState !== wsReadyStateOpen) {
-    closeConn(doc, conn);
-    return;
-  }
   try {
+    if (conn.readyState !== wsReadyStateConnecting && conn.readyState !== wsReadyStateOpen) {
+      closeConn(doc, conn);
+      return;
+    }
     conn.send(m, (err) => err != null && closeConn(doc, conn));
   } catch (e) {
     // eslint-disable-next-line no-console
