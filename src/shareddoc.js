@@ -293,6 +293,8 @@ export const persistence = {
 
       if (guid && curGuid !== guid) {
         // Guid mismatch, need to update the editor to the guid from da-admin
+        // eslint-disable-next-line no-console
+        console.log('Document GUID mismatch, da-admin guid:', guid, 'edited guid:', curGuid);
         resetGuidArray(ydoc, guidArray, guid, createdTS + 1);
         return current;
       }
@@ -301,11 +303,13 @@ export const persistence = {
         // Someone is still editing a document in the browser that has since been deleted
         // we know it's deleted because guid from da-admin is not set.
         // eslint-disable-next-line no-console
-        console.log('Document GUID mismatch, da-admin guid:', guid, 'edited guid:', curGuid);
+        console.log('Document does not exist any more and is not new, ignoring. GUID: ', curGuid);
         showError(ydoc, { message: 'This document has since been deleted, your edits are not persisted' });
         return current;
       }
 
+      // eslint-disable-next-line no-console
+      console.log('Document', ydoc.name, 'has guid:', curGuid);
       const content = doc2aem(ydoc, curGuid);
       if (current !== content) {
         // Only store the document if it was actually changed.
