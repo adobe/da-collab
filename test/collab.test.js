@@ -10,9 +10,11 @@
  * governing permissions and limitations under the License.
  */
 import assert from 'assert';
+import esmock from 'esmock';
 import * as Y from 'yjs';
 import { readFileSync } from 'fs';
 import { aem2doc, doc2aem, tableToBlock, EMPTY_DOC } from '../src/collab.js';
+import { prosemirrorJSONToYXmlFragment, yDocToProsemirrorJSON } from 'y-prosemirror';
 
 const collapseTagWhitespace = (str) => str.replace(/>\s+</g, '><');
 const collapseWhitespace = (str) => collapseTagWhitespace(str.replace(/\s+/g, ' ')).trim();
@@ -153,6 +155,40 @@ describe('Parsing test suite', () => {
       aem2doc(html, yDoc, 'my-guid');
       const result = doc2aem(yDoc, 'my-guid');
       assert.equal(result, html);
+    });
+
+    it('Test simple roundtrip in migration mode', async () => {
+      const html = `
+<body>
+  <header></header>
+  <main><div><p>Hi</p><p>Test</p><p>World</p><p>test</p></div></main>
+  <footer></footer>
+</body>
+`;
+      const yDoc = new Y.Doc();
+      aem2doc(html, yDoc, 'x');
+      const resp = yDocToProsemirrorJSON(yDoc, 'prosemirror-x');
+
+      const yDocToProsemirrorJSONGuids = []
+      const mockYDocToProsemirrorJSON = (yDoc, guid) => {
+        yDocToProsemirrorJSONGuids.push(guid);
+        return resp;
+      };
+
+      const collab = await esmock(
+        '../src/collab.js', {
+          'y-prosemirror': {
+            yDocToProsemirrorJSON: mockYDocToProsemirrorJSON
+          }
+        }
+      )
+
+      collab.doc2aem(yDoc, 'my-guid', true);
+      assert.deepStrictEqual(['prosemirror'], yDocToProsemirrorJSONGuids);
+
+      yDocToProsemirrorJSONGuids.length = 0; // reset it
+      collab.doc2aem(yDoc, 'my-guid', false);
+      assert.deepStrictEqual(['prosemirror-my-guid'], yDocToProsemirrorJSONGuids);
     });
 
     it('Test more complex roundtrip', async () => {

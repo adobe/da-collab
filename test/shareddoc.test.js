@@ -381,7 +381,46 @@ describe('Collab Test Suite', () => {
     await testCloseAllOnAuthFailure(403);
   });
 
-  it('Test no guid array in update does nothing', async () => {
+  // This test is only there for the migration code
+  it('Test if no guid array use the value from da-admin', async () => {
+    const docName = 'http://a.b.c/my/doc.html';
+    const ydoc = new WSSharedDoc(docName);
+
+    const mockDoc2AemCalled = [];
+    const mockDoc2Aem = (ydoc, guid, migration) => {
+      assert.equal(guid, '1234');
+      assert.equal(migration, true);
+      mockDoc2AemCalled.push('doc2aem');
+      return 'Different content';
+    };
+
+    const pss = await esmock(
+      '../src/shareddoc.js', {
+        '../src/collab.js': {
+          doc2aem: mockDoc2Aem
+        }
+      });
+
+    const putCalled = [];
+    pss.persistence.put = async (ydoc, content, guid) => {
+      assert.equal(guid, '1234');
+      assert.equal(content, 'Different content');
+      putCalled.push('put');
+      return { ok: true, status: 200, statusText: 'OK - Stored'};
+    };
+
+    const res = await pss.persistence.update(ydoc, 'My Content', { guid: '1234' });
+    assert.equal(res, 'Different content', 'Should have used the content, as the guid array was not set so this was an old client');
+    assert.equal(1, mockDoc2AemCalled.length, 'doc2aem should have been called');
+    assert.equal(1, putCalled.length, 'put should have been called');
+    const guidArray = [...ydoc.getArray('prosemirror-guids')];
+    assert.equal(1, guidArray.length, 'Should have created the guid array with one entry');
+    assert.equal(guidArray[0].guid, '1234');
+    assert(guidArray[0].ts > Date.now() - 1000, 'Timestamp should be recent');
+  });
+
+  // During the migration period this test should be skipped
+  it.skip('Test no guid array in update does nothing', async () => {
     const docName = 'http://a.b.c/my/doc.html';
     const ydoc = new WSSharedDoc(docName);
 

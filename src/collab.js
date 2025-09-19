@@ -366,14 +366,17 @@ export function tableToBlock(child, fragment) {
   });
 }
 
-export function doc2aem(ydoc, guid) {
+// The migration parameter is only used during the guid migration
+export function doc2aem(ydoc, guid, migration) {
   if (!guid) {
     // this is a brand new document
     return EMPTY_DOC;
   }
 
   const schema = getSchema();
-  const state = yDocToProsemirrorJSON(ydoc, `prosemirror-${guid}`);
+  const state = migration
+    ? yDocToProsemirrorJSON(ydoc, 'prosemirror')
+    : yDocToProsemirrorJSON(ydoc, `prosemirror-${guid}`);
   const json = Node.fromJSON(schema, state);
 
   const fragment = { type: 'div', children: [], attributes: {} };

@@ -282,6 +282,28 @@ export const persistence = {
       // Objects on the guid array may also contain a newDoc flag, which is set to true
       // when the document is just opened in the browser.
       const guidArray = ydoc.getArray('prosemirror-guids');
+
+      // Migration code, if there is not 'prosemirror-guids' array, create one
+      // Migration code start
+      let newDoc = false;
+      let curGuid = null;
+      let createdTS = null;
+      let migration = false;
+      if (guidArray.length === 0) {
+        // eslint-disable-next-line no-console
+        console.log('Migration mode as no guid array found, using guid:', guid);
+        createdTS = Date.now();
+        curGuid = guid;
+        migration = true;
+        resetGuidArray(ydoc, guidArray, guid, createdTS);
+      } else {
+        const copy = [...guidArray];
+        copy.sort((a, b) => a.ts - b.ts);
+        ({ newDoc, guid: curGuid, ts: createdTS } = copy.pop());
+      }
+      // Migration code end, delete the above and reinstate the below after migration
+
+      /* After migration, use the code in this comment block
       const copy = [...guidArray];
       if (copy.length === 0) {
         // eslint-disable-next-line no-console
@@ -290,6 +312,7 @@ export const persistence = {
       }
       copy.sort((a, b) => a.ts - b.ts);
       const { newDoc, guid: curGuid, ts: createdTS } = copy.pop();
+      */
 
       if (guid && curGuid !== guid) {
         // Guid mismatch, need to update the editor to the guid from da-admin
@@ -310,7 +333,7 @@ export const persistence = {
 
       // eslint-disable-next-line no-console
       console.log('Document', ydoc.name, 'has guid:', curGuid);
-      const content = doc2aem(ydoc, curGuid);
+      const content = doc2aem(ydoc, curGuid, migration);
       if (current !== content) {
         // Only store the document if it was actually changed.
         const { ok, status, statusText } = await persistence.put(ydoc, content, curGuid);
