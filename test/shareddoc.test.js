@@ -1237,5 +1237,76 @@ describe('Collab Test Suite', () => {
     assert(errorMap.get('stack').includes('shareddoc.test.js'),
       'The stack trace should contain the name of this test file');
     assert.deepStrictEqual(['transact'], called);
-  })
+  });
+
+  it('test no empty document if daadmin fetch crashes', async () => {
+    const docName = 'https://admin.da.live/source/foo/bar.html';
+
+    const updObservers = [];
+    const ydoc = new Y.Doc();
+    // mock out the 'on' function on the ydoc
+    ydoc.on = (ev, fun) => {
+      if (ev === 'update') {
+        updObservers.push(fun);
+      }
+    };
+    setYDoc(docName, ydoc);
+
+    const conn = {};
+    const called = [];
+    const storage = {
+      deleteAll: async () => called.push('deleteAll'),
+      list: async () => new Map(),
+      put: async (obj) => called.push(obj)
+    };
+
+    const savedSetTimeout = globalThis.setTimeout;
+    const savedGet = persistence.get;
+    try {
+      globalThis.setTimeout = (f) => {
+        // Restore the global function
+        globalThis.setTimeout = savedSetTimeout;
+        f();
+      };
+      let calledGet = 0;
+      persistence.get = async () => {
+        if (calledGet++ > 0 ) {
+          throw new Error('unexpected crash')
+        }
+        return `
+<body>
+  <header></header>
+  <main><div>initial</div></main>
+  <footer></footer>
+</body>
+`;
+      };
+
+      await persistence.bindState(docName, ydoc, conn, storage);
+      // strip line breaks
+      const doc2aemStr = doc2aem(ydoc).replace(/\n\s*/g, '');
+      assert.notEqual(doc2aemStr, EMPTY_DOC);
+      assert(doc2aemStr.includes('initial'), true);
+      assert.equal(2, updObservers.length);
+
+      ydoc.getMap('yah').set('a', 'bcd');
+      await updObservers[0]();
+      await updObservers[1]();
+
+      // check that it was stored
+      assert.equal(2, called.length);
+      assert.equal('deleteAll', called[0]);
+
+      const ydoc2 = new Y.Doc();
+      Y.applyUpdate(ydoc2, called[1].docstore);
+
+      assert.equal('bcd', ydoc2.getMap('yah').get('a'));
+      const doc2aemStr2 = doc2aem(ydoc2).replace(/\n\s*/g, '');
+      assert.notEqual(doc2aemStr2, EMPTY_DOC);
+      assert(doc2aemStr2.includes('initial'), true);
+    } finally {
+      globalThis.setTimeout = savedSetTimeout;
+      persistence.get = savedGet;
+    }
+  });
 });
