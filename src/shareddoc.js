@@ -352,7 +352,7 @@ export const persistence = {
       showError(ydoc, error);
     }
 
-    if (!restored) {
+    if (!restored && current) {
       // The doc was not restored from worker persistence, so read it from da-admin,
       // but do this async to give the ydoc some time to get synced up first. Without
       // this timeout, the ydoc can get confused which may result in duplicated content.
@@ -390,7 +390,7 @@ export const persistence = {
     ydoc.on('update', debounce(async () => {
       // If we receive an update on the document, store it in da-admin, but debounce it
       // to avoid excessive da-admin calls.
-      if (ydoc === docs.get(docName)) {
+      if (current && ydoc === docs.get(docName)) {
         current = await persistence.update(ydoc, current);
       }
     }, 2000, { maxWait: 10000 }));
