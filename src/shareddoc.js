@@ -17,6 +17,7 @@ import * as encoding from 'lib0/encoding.js';
 import * as decoding from 'lib0/decoding.js';
 import debounce from 'lodash/debounce.js';
 import { aem2doc, doc2aem, EMPTY_DOC } from './collab.js';
+import adminFetch from './admin.js';
 
 const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
@@ -199,15 +200,10 @@ export const persistence = {
    * returned.
    * @param {string} docName - The document name
    * @param {string} auth - The authorization header
-   * @param {object} daadmin - The da-admin worker service binding
    * @returns {Promise<string>} - The content of the document
    */
-  get: async (docName, auth, daadmin) => {
-    const initalOpts = {};
-    if (auth) {
-      initalOpts.headers = new Headers({ Authorization: auth });
-    }
-    const initialReq = await daadmin.fetch(docName, initalOpts);
+  get: async (docName, auth, env) => {
+    const initialReq = await adminFetch(docName, 'GET', auth, env);
     if (initialReq.ok) {
       return initialReq.text();
     } else if (initialReq.status === 404) {
@@ -226,13 +222,12 @@ export const persistence = {
    * @param {string} content - The content to store
    * @returns {object} The response from da-admin.
    */
-  put: async (ydoc, content) => {
+  put: async (ydoc, content, env) => {
     const blob = new Blob([content], { type: 'text/html' });
 
     const formData = new FormData();
     formData.append('data', blob);
 
-    const opts = { method: 'PUT', body: formData };
     const keys = Array.from(ydoc.conns.keys());
     const allReadOnly = keys.length > 0 && keys.every((con) => con.readOnly === true);
     if (allReadOnly) {
@@ -244,18 +239,11 @@ export const persistence = {
       .filter((con) => con.readOnly !== true)
       .map((con) => con.auth);
 
-    if (auth.length > 0) {
-      opts.headers = new Headers({
-        Authorization: [...new Set(auth)].join(','),
-        'X-DA-Initiator': 'collab',
-      });
-    }
-
     if (blob.size < 84) {
       // eslint-disable-next-line no-console
       console.warn('Writting back an empty document', ydoc.name, blob.size);
     }
-    const { ok, status, statusText } = await ydoc.daadmin.fetch(ydoc.name, opts);
+    const { ok, status, statusText } = await adminFetch(ydoc.name, 'PUT', auth, env, formData);
 
     return {
       ok,
@@ -271,13 +259,13 @@ export const persistence = {
    * obtained from da-admin
    * @returns {string} - the new content of the document in da-admin.
    */
-  update: async (ydoc, current) => {
+  update: async (ydoc, current, env) => {
     let closeAll = false;
     try {
       const content = doc2aem(ydoc);
       if (current !== content) {
         // Only store the document if it was actually changed.
-        const { ok, status, statusText } = await persistence.put(ydoc, content);
+        const { ok, status, statusText } = await persistence.put(ydoc, content, env);
 
         if (!ok) {
           closeAll = (status === 401 || status === 403);
@@ -306,7 +294,7 @@ export const persistence = {
    * @param {WebSocket} conn - the websocket connection
    * @param {TransactionalStorage} storage - the worker transactional storage object
    */
-  bindState: async (docName, ydoc, conn, storage) => {
+  bindState: async (docName, ydoc, conn, storage, env) => {
     let timingReadStateDuration;
     let timingDaAdminGetDuration;
 
@@ -315,7 +303,7 @@ export const persistence = {
     try {
       let newDoc = false;
       const timingBeforeDaAdminGet = Date.now();
-      current = await persistence.get(docName, conn.auth, ydoc.daadmin);
+      current = await persistence.get(docName, conn.auth, env);
       timingDaAdminGetDuration = Date.now() - timingBeforeDaAdminGet;
 
       const timingBeforeReadState = Date.now();
@@ -397,7 +385,7 @@ export const persistence = {
       // If we receive an update on the document, store it in da-admin, but debounce it
       // to avoid excessive da-admin calls.
       if (current && ydoc === docs.get(docName)) {
-        current = await persistence.update(ydoc, current);
+        current = await persistence.update(ydoc, current, env);
       }
     }, 2000, { maxWait: 10000 }));
 
@@ -477,12 +465,10 @@ export const getYDoc = async (docname, conn, env, storage, timingData, gc = true
     doc.conns.set(conn, new Set());
   }
 
-  // Store the service binding to da-admin which we receive through the environment in the doc
-  doc.daadmin = env.daadmin;
   if (!doc.promise) {
     // The doc is not yet bound to the persistence layer, do so now. The promise will be resolved
     // when bound.
-    doc.promise = persistence.bindState(docname, doc, conn, storage);
+    doc.promise = persistence.bindState(docname, doc, conn, storage, env);
   }
 
   // We wait for the promise, for second and subsequent connections to the same doc, this will

@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 import { invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
+import adminFetch from './admin.js';
 
 // This is the Edge Worker, built using Durable Objects!
 
@@ -61,11 +62,9 @@ async function adminAPI(api, url, request, env) {
 
 // A simple Ping API to check that the worker responds.
 function ping(env) {
-  const adminsb = env.daadmin !== undefined ? '"da-admin"' : '';
-
   const json = `{
   "status": "ok",
-  "service_bindings": [${adminsb}]
+  "admin_api": "${env.DAADMIN_API || ''}"
 }
 `;
   return new Response(json, { status: 200 });
@@ -136,13 +135,8 @@ export async function handleApiRequest(request, env) {
   // Check if we have the authorization for the room (this is a poor man's solution as right now
   // only da-admin knows).
   try {
-    const opts = { method: 'HEAD' };
-    if (auth) {
-      opts.headers = new Headers({ Authorization: auth });
-    }
-
     const timingBeforeDaAdminHead = Date.now();
-    const initialReq = await env.daadmin.fetch(docName, opts);
+    const initialReq = await adminFetch(docName, 'HEAD', auth, env);
 
     // this seems to be required by CloudFlare to consider the request as completed
     await initialReq.text();

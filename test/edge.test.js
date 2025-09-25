@@ -220,8 +220,8 @@ describe('Worker test suite', () => {
 
     try {
       const bindCalled = [];
-      persistence.bindState = async (nm, d, c) => {
-        bindCalled.push({nm, d, c});
+      persistence.bindState = async (docName, ydoc, conn, storage, env) => {
+        bindCalled.push({docName, ydoc, conn, storage, env});
         return new Map();
       }
 
@@ -234,8 +234,8 @@ describe('Worker test suite', () => {
       }
       DocRoom.newWebSocketPair = () => [wsp0, wsp1];
 
-      const daadmin = { blah: 1234 };
-      const dr = new DocRoom({ storage: null }, { daadmin });
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const dr = new DocRoom({ storage: null }, env);
       const headers = new Map();
       headers.set('Upgrade', 'websocket');
       headers.set('Authorization', 'au123');
@@ -249,8 +249,8 @@ describe('Worker test suite', () => {
       assert.equal(306 /* fabricated websocket response code */, resp.status);
 
       assert.equal(1, bindCalled.length);
-      assert.equal('http://foo.bar/1/2/3.html', bindCalled[0].nm);
-      assert.equal('1234', bindCalled[0].d.daadmin.blah);
+      assert.equal('http://foo.bar/1/2/3.html', bindCalled[0].docName);
+      assert.equal('https://admin.da.live', bindCalled[0].env.DAADMIN_API);
 
       assert.equal('au123', wsp1.auth);
 
@@ -313,8 +313,8 @@ describe('Worker test suite', () => {
       };
       DocRoom.newWebSocketPair = () => [wsp0, wsp1];
 
-      const daadmin = { test: 'value' };
-      const dr = new DocRoom({ storage: null }, { daadmin });
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const dr = new DocRoom({ storage: null }, env);
       const headers = new Map();
       headers.set('Upgrade', 'websocket');
       headers.set('Authorization', 'au123');
@@ -414,35 +414,39 @@ describe('Worker test suite', () => {
     }
 
     const mockFetchCalled = [];
-    const mockFetch = async (url, opts) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
       mockFetchCalled.push({ url, opts });
-      return new Response(null, { status: 200 });
-    };
-    const serviceBinding = {
-      fetch: mockFetch
+      const response = new Response(null, { status: 200 });
+      response.headers.set('X-da-actions', 'read=allow');
+      return response;
     };
 
-    const rooms = {
-      idFromName(nm) { return `id${hash(nm)}`; },
-      get(id) { return id === 'id1255893316' ? myRoom : null; }
+    try {
+      const rooms = {
+        idFromName(nm) { return `id${hash(nm)}`; },
+        get(id) { return id === 'id1255893316' ? myRoom : null; }
+      }
+      const env = { rooms, DAADMIN_API: 'https://admin.da.live' };
+
+      const res = await handleApiRequest(req, env);
+      assert.equal(306, res.status);
+
+      assert.equal(1, mockFetchCalled.length);
+      const mfreq = mockFetchCalled[0];
+      assert.equal('https://admin.da.live/laaa.html', mfreq.url);
+      assert.equal('HEAD', mfreq.opts.method);
+
+      assert.equal(1, roomFetchCalled.length);
+
+      const rfreq = roomFetchCalled[0];
+      assert.equal('https://admin.da.live/laaa.html', rfreq.url);
+      assert.equal('qrtoefi', rfreq.headers.get('Authorization'));
+      assert.equal('myval', rfreq.headers.get('myheader'));
+      assert.equal('https://admin.da.live/laaa.html', rfreq.headers.get('X-collab-room'));
+    } finally {
+      globalThis.fetch = originalFetch;
     }
-    const env = { rooms, daadmin: serviceBinding };
-
-    const res = await handleApiRequest(req, env);
-    assert.equal(306, res.status);
-
-    assert.equal(1, mockFetchCalled.length);
-    const mfreq = mockFetchCalled[0];
-    assert.equal('https://admin.da.live/laaa.html', mfreq.url);
-    assert.equal('HEAD', mfreq.opts.method);
-
-    assert.equal(1, roomFetchCalled.length);
-
-    const rfreq = roomFetchCalled[0];
-    assert.equal('https://admin.da.live/laaa.html', rfreq.url);
-    assert.equal('qrtoefi', rfreq.headers.get('Authorization'));
-    assert.equal('myval', rfreq.headers.get('myheader'));
-    assert.equal('https://admin.da.live/laaa.html', rfreq.headers.get('X-collab-room'));
   });
 
   it('Test handleApiRequest via Service Binding', async () => {
@@ -453,21 +457,29 @@ describe('Worker test suite', () => {
       headers
     }
 
-    const mockFetch = async (url, opts) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
       if (opts.method === 'HEAD'
         && url === 'https://admin.da.live/laaa.html'
         && opts.headers.get('Authorization') === 'lala') {
-        return new Response(null, {status: 410});
+        const response = new Response(null, {status: 200});
+        response.headers.set('X-da-actions', 'read=allow');
+        return response;
       }
+      return new Response(null, {status: 200});
     };
 
-    // This is how a service binding is exposed to the program, via env
-    const env = {
-      daadmin: { fetch : mockFetch }
-    };
-
-    const res = await handleApiRequest(req, env);
-    assert.equal(410, res.status);
+    try {
+      const rooms = {
+        idFromName: (name) => `id${hash(name)}`,
+        get: (id) => null
+      };
+      const env = { DAADMIN_API: 'https://admin.da.live', rooms };
+      const res = await handleApiRequest(req, env);
+      assert.equal(500, res.status);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test handleApiRequest wrong host', async () => {
@@ -484,12 +496,16 @@ describe('Worker test suite', () => {
       url: 'http://do.re.mi/https://admin.da.live/hihi.html',
     }
 
-    const mockFetch = async (url, opts) => new Response(null, {status: 401});
-    const daadmin = { fetch: mockFetch };
-    const env = { daadmin };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => new Response(null, {status: 401});
 
-    const res = await handleApiRequest(req, env);
-    assert.equal(401, res.status);
+    try {
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const res = await handleApiRequest(req, env);
+      assert.equal(401, res.status);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test handleApiRequest da-admin fetch exception', async () => {
@@ -497,16 +513,20 @@ describe('Worker test suite', () => {
       url: 'http://do.re.mi/https://admin.da.live/test.html',
     }
 
-    // Mock daadmin.fetch to throw an exception
-    const mockFetch = async (url, opts) => {
+    // Mock fetch to throw an exception
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
       throw new Error('Network error');
     };
-    const daadmin = { fetch: mockFetch };
-    const env = { daadmin };
 
-    const res = await handleApiRequest(req, env);
-    assert.equal(500, res.status);
-    assert.equal('unable to get resource', await res.text());
+    try {
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const res = await handleApiRequest(req, env);
+      assert.equal(500, res.status);
+      assert.equal('unable to get resource', await res.text());
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test handleApiRequest room object fetch exception', async () => {
@@ -514,35 +534,40 @@ describe('Worker test suite', () => {
       url: 'http://do.re.mi/https://admin.da.live/test.html',
     }
 
-    // Mock daadmin.fetch to return a successful response
-    const mockDaAdminFetch = async (url, opts) => {
+    // Mock fetch to return a successful response for adminFetch
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
       const response = new Response(null, { status: 200 });
       response.headers.set('X-da-actions', 'read=allow');
       return response;
     };
 
-    // Mock room object fetch to throw an exception
-    const mockRoomFetch = async (req) => {
-      throw new Error('Room fetch error');
-    };
+    try {
+      // Mock room object fetch to throw an exception
+      const mockRoomFetch = async (req) => {
+        throw new Error('Room fetch error');
+      };
 
-    const mockRoom = {
-      fetch: mockRoomFetch
-    };
+      const mockRoom = {
+        fetch: mockRoomFetch
+      };
 
-    const rooms = {
-      idFromName: (name) => `id${hash(name)}`,
-      get: (id) => mockRoom
-    };
+      const rooms = {
+        idFromName: (name) => `id${hash(name)}`,
+        get: (id) => mockRoom
+      };
 
-    const env = { 
-      daadmin: { fetch: mockDaAdminFetch },
-      rooms 
-    };
+      const env = { 
+        DAADMIN_API: 'https://admin.da.live',
+        rooms 
+      };
 
-    const res = await handleApiRequest(req, env);
-    assert.equal(500, res.status);
-    assert.equal('unable to get resource', await res.text());
+      const res = await handleApiRequest(req, env);
+      assert.equal(500, res.status);
+      assert.equal('unable to get resource', await res.text());
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test DocRoom newWebSocketPair', () => {
@@ -596,7 +621,7 @@ describe('Worker test suite', () => {
     assert.equal(200, res.status);
     const json = await res.json();
     assert.equal('ok', json.status);
-    assert.deepStrictEqual([], json.service_bindings);
+    assert.deepStrictEqual('', json.admin_api);
   });
 
   it('Test ping API with service binding', async () => {
@@ -604,10 +629,10 @@ describe('Worker test suite', () => {
       url: 'http://some.host.name/api/v1/ping',
     }
 
-    const res = await defaultEdge.fetch(req, { daadmin: {}});
+    const res = await defaultEdge.fetch(req, { DAADMIN_API: 'https://admin.da.live' });
     assert.equal(200, res.status);
     const json = await res.json();
     assert.equal('ok', json.status);
-    assert.deepStrictEqual(['da-admin'], json.service_bindings);
+    assert.deepStrictEqual('https://admin.da.live', json.admin_api);
   });
 });
