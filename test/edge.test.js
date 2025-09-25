@@ -467,6 +467,42 @@ describe('Worker test suite', () => {
     assert.equal('unable to get resource', await res.text());
   });
 
+  it('Test handleApiRequest room object fetch exception', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/test.html',
+    }
+
+    // Mock daadmin.fetch to return a successful response
+    const mockDaAdminFetch = async (url, opts) => {
+      const response = new Response(null, { status: 200 });
+      response.headers.set('X-da-actions', 'read=allow');
+      return response;
+    };
+
+    // Mock room object fetch to throw an exception
+    const mockRoomFetch = async (req) => {
+      throw new Error('Room fetch error');
+    };
+
+    const mockRoom = {
+      fetch: mockRoomFetch
+    };
+
+    const rooms = {
+      idFromName: (name) => `id${hash(name)}`,
+      get: (id) => mockRoom
+    };
+
+    const env = { 
+      daadmin: { fetch: mockDaAdminFetch },
+      rooms 
+    };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(500, res.status);
+    assert.equal('unable to get resource', await res.text());
+  });
+
   it('Test ping API', async () => {
     const req = {
       url: 'http://do.re.mi/api/v1/ping',
