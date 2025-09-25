@@ -267,6 +267,7 @@ export function aem2doc(html, ydoc) {
         };
       }
       /* c8 ignore start */
+      // impossible to generate a test scenario for this
       if (prop === 'hasAttribute') {
         return (name) => target.properties && target.properties[name];
       }
