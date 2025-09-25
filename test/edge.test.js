@@ -294,6 +294,48 @@ describe('Worker test suite', () => {
     assert.equal(400, resp.status, 'Expected a document name');
   });
 
+  it('Test DocRoom fetch WebSocket setup exception', async () => {
+    const savedNWSP = DocRoom.newWebSocketPair;
+    const savedBS = persistence.bindState;
+
+    try {
+      // Mock bindState to throw an exception
+      persistence.bindState = async (nm, d, c) => {
+        throw new Error('WebSocket setup error');
+      };
+
+      // Mock WebSocketPair to return valid objects
+      const wsp0 = {};
+      const wsp1 = {
+        accept() {},
+        addEventListener() {},
+        close() {}
+      };
+      DocRoom.newWebSocketPair = () => [wsp0, wsp1];
+
+      const daadmin = { test: 'value' };
+      const dr = new DocRoom({ storage: null }, { daadmin });
+      const headers = new Map();
+      headers.set('Upgrade', 'websocket');
+      headers.set('Authorization', 'au123');
+      headers.set('X-collab-room', 'http://foo.bar/test.html');
+
+      const req = {
+        headers,
+        url: 'http://localhost:4711/'
+      };
+      const resp = await dr.fetch(req);
+      
+      // Should return 500 error due to exception in WebSocket setup
+      assert.equal(500, resp.status);
+      assert.equal('internal server error', await resp.text());
+      
+    } finally {
+      DocRoom.newWebSocketPair = savedNWSP;
+      persistence.bindState = savedBS;
+    }
+  });
+
   it('Test handleErrors success', async () => {
     const f = () => 42;
 
