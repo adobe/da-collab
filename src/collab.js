@@ -266,7 +266,8 @@ export function aem2doc(html, ydoc) {
           return target.properties ? target.properties[name] : undefined;
         };
       }
-
+      /* c8 ignore start */
+      // impossible to generate a test scenario for this
       if (prop === 'hasAttribute') {
         return (name) => target.properties && target.properties[name];
       }
@@ -274,8 +275,8 @@ export function aem2doc(html, ydoc) {
       if (prop === 'style') {
         return {};
       }
-
       return Reflect.get(target, prop);
+      /* c8 ignore end */
     },
   };
 

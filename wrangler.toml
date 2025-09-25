@@ -4,9 +4,8 @@ compatibility_date = "2023-10-30"
 
 main = "src/edge.js"
 
-services = [
-  { binding = "daadmin", service = "da-admin" }
-]
+[vars]
+DAADMIN_API = "https://admin.da.live"
 
 [dev]
 port = 4711
@@ -22,9 +21,6 @@ new_classes = ["DocRoom"]
 
 
 [env.stage]
-services = [
-  { binding = "daadmin", service = "da-admin-stage" }
-]
 
 durable_objects.bindings = [
   { name = "rooms", class_name = "DocRoom" },
