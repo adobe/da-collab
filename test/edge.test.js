@@ -503,6 +503,48 @@ describe('Worker test suite', () => {
     assert.equal('unable to get resource', await res.text());
   });
 
+  it('Test DocRoom newWebSocketPair', () => {
+    // Mock WebSocketPair since it's not available in Node.js test environment
+    const mockWebSocketPair = function() {
+      const pair = [null, null];
+      pair[0] = { // client side
+        readyState: 1,
+        close: () => {},
+        send: () => {}
+      };
+      pair[1] = { // server side
+        accept: () => {},
+        send: () => {},
+        close: () => {}
+      };
+      return pair;
+    };
+    
+    // Mock WebSocketPair globally
+    globalThis.WebSocketPair = mockWebSocketPair;
+    
+    try {
+      const pair = DocRoom.newWebSocketPair();
+      
+      // Verify that newWebSocketPair returns an array-like object
+      assert(Array.isArray(pair));
+      assert.equal(pair.length, 2);
+      
+      // Verify that both elements are objects (WebSocket-like)
+      assert(typeof pair[0] === 'object');
+      assert(typeof pair[1] === 'object');
+      
+      // Verify that the server side has expected methods
+      assert(typeof pair[1].accept === 'function');
+      assert(typeof pair[1].send === 'function');
+      assert(typeof pair[1].close === 'function');
+      
+    } finally {
+      // Clean up the mock
+      delete globalThis.WebSocketPair;
+    }
+  });
+
   it('Test ping API', async () => {
     const req = {
       url: 'http://do.re.mi/api/v1/ping',
