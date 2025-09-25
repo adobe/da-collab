@@ -47,8 +47,8 @@ export const closeConn = (doc, conn) => {
       doc.conns.delete(conn);
       try {
         awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
-      } catch (err) {
         /* c8 ignore start */
+      } catch (err) {
         // eslint-disable-next-line no-console
         console.error('Error removing awareness states', err);
         /* c8 ignore end */
