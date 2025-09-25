@@ -450,6 +450,23 @@ describe('Worker test suite', () => {
     assert.equal(401, res.status);
   });
 
+  it('Test handleApiRequest da-admin fetch exception', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/test.html',
+    }
+
+    // Mock daadmin.fetch to throw an exception
+    const mockFetch = async (url, opts) => {
+      throw new Error('Network error');
+    };
+    const daadmin = { fetch: mockFetch };
+    const env = { daadmin };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(500, res.status);
+    assert.equal('unable to get resource', await res.text());
+  });
+
   it('Test ping API', async () => {
     const req = {
       url: 'http://do.re.mi/api/v1/ping',
