@@ -47,9 +47,12 @@ export const closeConn = (doc, conn) => {
       doc.conns.delete(conn);
       try {
         awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
+        /* c8 ignore start */
       } catch (err) {
+        // we can ignore an exception here, closing the connection will remove the awareness states
         // eslint-disable-next-line no-console
         console.error('Error removing awareness states', err);
+        /* c8 ignore end */
       }
 
       if (doc.conns.size === 0) {
@@ -60,8 +63,11 @@ export const closeConn = (doc, conn) => {
     }
     conn.close();
   } catch (e) {
+    /* c8 ignore start */
+    // we can ignore an exception here, connection will be closed anyway
     // eslint-disable-next-line no-console
     console.error('Error closing connection', e);
+    /* c8 ignore end */
   }
 };
 
