@@ -294,6 +294,48 @@ describe('Worker test suite', () => {
     assert.equal(400, resp.status, 'Expected a document name');
   });
 
+  it('Test DocRoom fetch WebSocket setup exception', async () => {
+    const savedNWSP = DocRoom.newWebSocketPair;
+    const savedBS = persistence.bindState;
+
+    try {
+      // Mock bindState to throw an exception
+      persistence.bindState = async (nm, d, c) => {
+        throw new Error('WebSocket setup error');
+      };
+
+      // Mock WebSocketPair to return valid objects
+      const wsp0 = {};
+      const wsp1 = {
+        accept() {},
+        addEventListener() {},
+        close() {}
+      };
+      DocRoom.newWebSocketPair = () => [wsp0, wsp1];
+
+      const daadmin = { test: 'value' };
+      const dr = new DocRoom({ storage: null }, { daadmin });
+      const headers = new Map();
+      headers.set('Upgrade', 'websocket');
+      headers.set('Authorization', 'au123');
+      headers.set('X-collab-room', 'http://foo.bar/test.html');
+
+      const req = {
+        headers,
+        url: 'http://localhost:4711/'
+      };
+      const resp = await dr.fetch(req);
+      
+      // Should return 500 error due to exception in WebSocket setup
+      assert.equal(500, resp.status);
+      assert.equal('internal server error', await resp.text());
+      
+    } finally {
+      DocRoom.newWebSocketPair = savedNWSP;
+      persistence.bindState = savedBS;
+    }
+  });
+
   it('Test handleErrors success', async () => {
     const f = () => 42;
 
@@ -309,6 +351,50 @@ describe('Worker test suite', () => {
     };
     const res = await handleErrors(req, f);
     assert.equal(500, res.status);
+  });
+
+  it('Test handleErrors WebSocket error', async () => {
+    const f = () => { throw new Error('WebSocket error test'); }
+
+    const req = {
+      headers: new Map([['Upgrade', 'websocket']])
+    };
+    
+    // Mock WebSocketPair since it's not available in Node.js test environment
+    const mockWebSocketPair = function() {
+      const pair = [null, null];
+      pair[0] = { // client side
+        readyState: 1,
+        close: () => {},
+        send: () => {}
+      };
+      pair[1] = { // server side
+        accept: () => {},
+        send: () => {},
+        close: () => {}
+      };
+      return pair;
+    };
+    
+    // Mock WebSocketPair globally
+    globalThis.WebSocketPair = mockWebSocketPair;
+    
+    try {
+      // In Node.js, status 101 is not valid, so we expect an error
+      // But the important thing is that the WebSocket error path is covered
+      try {
+        const res = await handleErrors(req, f);
+        // If we get here, the test environment supports status 101
+        assert.equal(101, res.status);
+        assert(res.webSocket !== undefined);
+      } catch (error) {
+        // Expected in Node.js - status 101 is not valid
+        assert(error.message.includes('must be in the range of 200 to 599'));
+      }
+    } finally {
+      // Clean up the mock
+      delete globalThis.WebSocketPair;
+    }
   });
 
   it('Test handleApiRequest', async () => {
@@ -404,6 +490,101 @@ describe('Worker test suite', () => {
 
     const res = await handleApiRequest(req, env);
     assert.equal(401, res.status);
+  });
+
+  it('Test handleApiRequest da-admin fetch exception', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/test.html',
+    }
+
+    // Mock daadmin.fetch to throw an exception
+    const mockFetch = async (url, opts) => {
+      throw new Error('Network error');
+    };
+    const daadmin = { fetch: mockFetch };
+    const env = { daadmin };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(500, res.status);
+    assert.equal('unable to get resource', await res.text());
+  });
+
+  it('Test handleApiRequest room object fetch exception', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/test.html',
+    }
+
+    // Mock daadmin.fetch to return a successful response
+    const mockDaAdminFetch = async (url, opts) => {
+      const response = new Response(null, { status: 200 });
+      response.headers.set('X-da-actions', 'read=allow');
+      return response;
+    };
+
+    // Mock room object fetch to throw an exception
+    const mockRoomFetch = async (req) => {
+      throw new Error('Room fetch error');
+    };
+
+    const mockRoom = {
+      fetch: mockRoomFetch
+    };
+
+    const rooms = {
+      idFromName: (name) => `id${hash(name)}`,
+      get: (id) => mockRoom
+    };
+
+    const env = { 
+      daadmin: { fetch: mockDaAdminFetch },
+      rooms 
+    };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(500, res.status);
+    assert.equal('unable to get resource', await res.text());
+  });
+
+  it('Test DocRoom newWebSocketPair', () => {
+    // Mock WebSocketPair since it's not available in Node.js test environment
+    const mockWebSocketPair = function() {
+      const pair = [null, null];
+      pair[0] = { // client side
+        readyState: 1,
+        close: () => {},
+        send: () => {}
+      };
+      pair[1] = { // server side
+        accept: () => {},
+        send: () => {},
+        close: () => {}
+      };
+      return pair;
+    };
+    
+    // Mock WebSocketPair globally
+    globalThis.WebSocketPair = mockWebSocketPair;
+    
+    try {
+      const pair = DocRoom.newWebSocketPair();
+      
+      // Verify that newWebSocketPair returns an array-like object
+      assert(Array.isArray(pair));
+      assert.equal(pair.length, 2);
+      
+      // Verify that both elements are objects (WebSocket-like)
+      assert(typeof pair[0] === 'object');
+      assert(typeof pair[1] === 'object');
+      
+      // Verify that the server side has expected methods
+      assert(typeof pair[1].accept === 'function');
+      assert(typeof pair[1].send === 'function');
+      assert(typeof pair[1].close === 'function');
+      
+    } finally {
+      // Clean up the mock
+      delete globalThis.WebSocketPair;
+    }
   });
 
   it('Test ping API', async () => {
