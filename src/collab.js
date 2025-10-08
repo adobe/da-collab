@@ -189,7 +189,6 @@ function convertLocTags(html) {
   return html;
 }
 
-
 /**
  * Wraps elements with da-diff-added attribute in a da-diff-added element
  * If the element is a block-group-start, it will wrap the entire block-group
@@ -261,46 +260,53 @@ export function aem2doc(html, ydoc) {
     html = EMPTY_DOC;
   }
   if (html.includes('<da-loc-added') || html.includes('<da-loc-deleted')) {
+    // eslint-disable-next-line no-param-reassign
     html = convertLocTags(html);
   }
 
   const tree = fromHtml(html, { fragment: true });
-
   const main = tree.children.find((child) => child.tagName === 'main');
-  if (html.includes('da-diff-added')) {
-    processDaDiffAdded(main);
-  }
-  fixImageLinks(main);
-  removeComments(main);
-  (main.children || []).forEach((parent) => {
-    if (parent.tagName === 'div' && parent.children) {
-      const children = [];
-      let modified = false;
-      parent.children.forEach((child) => {
-        if (child.tagName === 'div' && child.properties.className?.length > 0) {
-          modified = true;
-          blockToTable(child, children);
-        } else if (['da-diff-deleted', 'da-diff-added'].includes(child.tagName)) {
-          modified = true;
-          const locChildren = [];
-          child.children.forEach((locChild) => {
-            if (locChild.tagName === 'div' && locChild.properties.className?.length > 0) {
-              blockToTable(locChild, locChildren);
-            } else {
-              locChildren.push(locChild);
-            }
-          });
+  if (main) {
+    if (html.includes('da-diff-added')) {
+      processDaDiffAdded(main);
+    }
+    fixImageLinks(main);
+    removeComments(main);
+    (main.children || []).forEach((parent) => {
+      if (parent.tagName === 'div' && parent.children) {
+        const children = [];
+        let modified = false;
+        parent.children.forEach((child) => {
+          if (child.tagName === 'div' && child.properties.className?.length > 0) {
+            modified = true;
+            blockToTable(child, children);
+          } else if (['da-diff-deleted', 'da-diff-added'].includes(child.tagName)) {
+            modified = true;
+            const locChildren = [];
+            child.children.forEach((locChild) => {
+              if (locChild.tagName === 'div' && locChild.properties.className?.length > 0) {
+                blockToTable(locChild, locChildren);
+              } else {
+                locChildren.push(locChild);
+              }
+            });
+            // eslint-disable-next-line no-param-reassign
+            parent.children = children;
+
+            // eslint-disable-next-line no-param-reassign
+            child.children = locChildren;
+            children.push(child);
+          } else {
+            children.push(child);
+          }
+        });
+        if (modified) {
           // eslint-disable-next-line no-param-reassign
           parent.children = children;
+        }
+      }
+    });
 
-          // eslint-disable-next-line no-param-reassign
-      child.children = locChildren;
-      children.push(child);
-    } else {
-      children.push(child);
-    }
-  });
-  if (modified) {
     convertSectionBreak(main);
     let count = 0;
     main.children = main.children.flatMap((node) => {
@@ -336,6 +342,7 @@ export function aem2doc(html, ydoc) {
       return result;
     });
   }
+
   const handler2 = {
     get(target, prop) {
       const source = target;
