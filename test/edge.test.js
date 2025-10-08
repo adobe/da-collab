@@ -315,6 +315,7 @@ describe('Worker test suite', () => {
 
       const env = { DAADMIN_API: 'https://admin.da.live' };
       const dr = new DocRoom({ storage: null }, env);
+
       const headers = new Map();
       headers.set('Upgrade', 'websocket');
       headers.set('Authorization', 'au123');
@@ -568,6 +569,101 @@ describe('Worker test suite', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('Test DocRoom newWebSocketPair', () => {
+    // Mock WebSocketPair since it's not available in Node.js test environment
+    const mockWebSocketPair = function() {
+      const pair = [null, null];
+      pair[0] = { // client side
+        readyState: 1,
+        close: () => {},
+        send: () => {}
+      };
+      pair[1] = { // server side
+        accept: () => {},
+        send: () => {},
+        close: () => {}
+      };
+      return pair;
+    };
+    
+    // Mock WebSocketPair globally
+    globalThis.WebSocketPair = mockWebSocketPair;
+    
+    try {
+      const pair = DocRoom.newWebSocketPair();
+      
+      // Verify that newWebSocketPair returns an array-like object
+      assert(Array.isArray(pair));
+      assert.equal(pair.length, 2);
+      
+      // Verify that both elements are objects (WebSocket-like)
+      assert(typeof pair[0] === 'object');
+      assert(typeof pair[1] === 'object');
+      
+      // Verify that the server side has expected methods
+      assert(typeof pair[1].accept === 'function');
+      assert(typeof pair[1].send === 'function');
+      assert(typeof pair[1].close === 'function');
+      
+    } finally {
+      // Clean up the mock
+      delete globalThis.WebSocketPair;
+    }
+  });
+
+  it('Test handleApiRequest da-admin fetch exception', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/test.html',
+    }
+
+    // Mock daadmin.fetch to throw an exception
+    const mockFetch = async (url, opts) => {
+      throw new Error('Network error');
+    };
+    const daadmin = { fetch: mockFetch };
+    const env = { daadmin };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(500, res.status);
+    assert.equal('unable to get resource', await res.text());
+  });
+
+  it('Test handleApiRequest room object fetch exception', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/test.html',
+    }
+
+    // Mock daadmin.fetch to return a successful response
+    const mockDaAdminFetch = async (url, opts) => {
+      const response = new Response(null, { status: 200 });
+      response.headers.set('X-da-actions', 'read=allow');
+      return response;
+    };
+
+    // Mock room object fetch to throw an exception
+    const mockRoomFetch = async (req) => {
+      throw new Error('Room fetch error');
+    };
+
+    const mockRoom = {
+      fetch: mockRoomFetch
+    };
+
+    const rooms = {
+      idFromName: (name) => `id${hash(name)}`,
+      get: (id) => mockRoom
+    };
+
+    const env = { 
+      daadmin: { fetch: mockDaAdminFetch },
+      rooms 
+    };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(500, res.status);
+    assert.equal('unable to get resource', await res.text());
   });
 
   it('Test DocRoom newWebSocketPair', () => {
