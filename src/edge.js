@@ -52,7 +52,7 @@ async function adminAPI(api, url, request, env) {
   const id = env.rooms.idFromName(doc);
 
   // eslint-disable-next-line no-console
-  console.log('AdminAPI - Document and room id', doc, id.toString());
+  console.log('[worker] - Admin API', doc);
 
   const roomObject = env.rooms.get(id);
 
@@ -127,12 +127,6 @@ export async function handleApiRequest(request, env) {
     return new Response('unable to get resource', { status: 404 });
   }
 
-  // temporary log: HEAD request appears twice in the logs
-  // using Math.random() to understand if it is the same request and CF logging issue
-  // or if we enter here twice
-  // eslint-disable-next-line no-console
-  console.log('da-collab#handleApiRequest', docName, Math.random());
-
   // Check if we have the authorization for the room (this is a poor man's solution as right now
   // only da-admin knows).
   try {
@@ -151,7 +145,7 @@ export async function handleApiRequest(request, env) {
 
     if (!initialReq.ok && initialReq.status !== 404) {
       // eslint-disable-next-line no-console
-      console.log(`Unable to get resource ${docName}: ${initialReq.status} - ${initialReq.statusText}`);
+      console.log(`[worker] Unable to get resource ${docName}: ${initialReq.status} - ${initialReq.statusText}`);
       return new Response('unable to get resource', { status: initialReq.status });
     }
 
@@ -159,7 +153,7 @@ export async function handleApiRequest(request, env) {
     [, authActions] = daActions.split('=');
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error(`Unable to handle API request ${docName}`, err);
+    console.error(`[worker] Unable to handle API request ${docName}`, err);
     return new Response('unable to get resource', { status: 500 });
   }
 
@@ -178,9 +172,7 @@ export async function handleApiRequest(request, env) {
     const timingDocRoomGetDuration = Date.now() - timingBeforeDocRoomGet;
 
     // eslint-disable-next-line no-console
-    console.log(`Fetching: ${docName} ${id}`);
-    // eslint-disable-next-line no-console
-    console.log('Document and room id', docName, id.toString());
+    console.log('[worker] Fecthing', docName);
 
     const headers = [...request.headers,
       ['X-collab-room', docName],
@@ -199,7 +191,7 @@ export async function handleApiRequest(request, env) {
     return roomObject.fetch(req);
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error(`Error fetching the doc from the room ${docName}`, err);
+    console.error(`[worker] Error fetching the doc from the room ${docName}`, err);
     return new Response('unable to get resource', { status: 500 });
   }
 }
@@ -227,9 +219,6 @@ export class DocRoom {
     // `env` is our environment bindings (discussed earlier).
     this.env = env;
     this.id = controller?.id?.toString() || `no-controller-${new Date().getTime()}`;
-
-    // eslint-disable-next-line no-console
-    console.log('DocRoom created with id', this.id);
   }
 
   // Handle the API calls. Supported API calls right now are to sync the doc with the da-admin
@@ -314,14 +303,11 @@ export class DocRoom {
       respheaders.set('X-7-timing-setup-websocket-duration', timingSetupWebSocketDuration);
       respheaders.set('X-9-timing-full-duration', Date.now() - reqHeaders.get('X-timing-start'));
 
-      // eslint-disable-next-line no-console
-      console.log('DocRoom fetched for document with id', docName, this.id);
-
       // Now we return the other end of the pair to the client.
       return new Response(null, { status: successCode, headers: respheaders, webSocket: pair[0] });
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('Error in DocRoom fetch', err);
+      console.error('[docroom] Error while fetching', err);
       return new Response('internal server error', { status: 500 });
     }
   }
@@ -344,11 +330,8 @@ export class DocRoom {
       webSocket.readOnly = true;
     }
     // eslint-disable-next-line no-console
-    console.log(`Setting up WSConnection for ${docName} with auth(${webSocket.auth
+    console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${webSocket.auth
       ? webSocket.auth.substring(0, webSocket.auth.indexOf(' ')) : 'none'})`);
-
-    // eslint-disable-next-line no-console
-    console.log('DocRoom setting up WSConnection for document with id', docName, this.id);
 
     const timingData = await setupWSConnection(webSocket, docName, this.env, this.storage);
     return timingData;
