@@ -26,7 +26,13 @@ export default async function adminFetch(docName, method, auth, env, body) {
       headers.set('Authorization', auth);
     }
   }
-  const url = new URL(docName, DAADMIN_API);
+
+  // if docname is a full url, we need to extract the pathname
+  let pathname = docName;
+  if (docName.startsWith('https://')) {
+    pathname = new URL(docName).pathname;
+  }
+  const url = new URL(pathname, DAADMIN_API);
   const opts = { method, headers };
   if (body) {
     opts.body = body;
