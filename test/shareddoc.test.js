@@ -260,7 +260,7 @@ describe('Collab Test Suite', () => {
   });
 
   it('Test persistence put auth no perm', async () => {
-    const fetchCalled = []
+    const fetchCalled = [];
     const daadmin = {};
     daadmin.fetch = async (url, opts) => {
       fetchCalled.push('true');
@@ -401,7 +401,7 @@ describe('Collab Test Suite', () => {
   });
 
   it('Test close connection', async () => {
-    const awarenessEmitted = []
+    const awarenessEmitted = [];
     const mockDoc = {
       awareness: {
         emit(_, chg) { awarenessEmitted.push(chg); },
@@ -504,7 +504,7 @@ describe('Collab Test Suite', () => {
     testYDoc.on = (ev, f) => { if (ev === 'update') ydocUpdateCB.push(f); }
     pss.setYDoc(docName, testYDoc);
 
-    const called = []
+    const called = [];
     const mockStorage = {
       deleteAll: async () => called.push('deleteAll'),
       list: async () => new Map(),
@@ -516,7 +516,7 @@ describe('Collab Test Suite', () => {
     pss.persistence.update = async (_, cur)  => updateCalled.push(cur);
 
     const savedSetTimeout = globalThis.setTimeout;
-    const setTimeoutCalls = []
+    const setTimeoutCalls = [];
     try {
       globalThis.setTimeout = () => setTimeoutCalls.push('setTimeout');
 
@@ -633,7 +633,7 @@ describe('Collab Test Suite', () => {
       };
 
       pss.persistence.get = async () => '<main><div>oldcontent</div></main>';
-      const putCalls = []
+      const putCalls = [];
       pss.persistence.put = async (yd, c) => {
         if (yd === ydoc && c.includes('newcontent')) {
           putCalls.push(c);
@@ -966,13 +966,13 @@ describe('Collab Test Suite', () => {
   });
 
   it('Test Sync Step1', () => {
-    const connSent = []
+    const connSent = [];
     const conn = {
       readyState: 0, // wsReadyState
       send(m, r) { connSent.push({m, r}); }
     };
 
-    const emitted = []
+    const emitted = [];
     const doc = new Y.Doc();
     doc.emit = (t, e) => emitted.push({t, e});
     doc.getMap('foo').set('bar', 'hello');
@@ -989,14 +989,14 @@ describe('Collab Test Suite', () => {
   });
 
   it('Test Sync Step1 readonly connection', () => {
-    const connSent = []
+    const connSent = [];
     const conn = {
       readyState: 0, // wsReadyState
       send(m, r) { connSent.push({m, r}); },
       readOnly: true,
     };
 
-    const emitted = []
+    const emitted = [];
     const doc = new Y.Doc();
     doc.emit = (t, e) => emitted.push({t, e});
     doc.getMap('foo').set('bar', 'hello');
