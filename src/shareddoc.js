@@ -469,7 +469,7 @@ export const getYDoc = async (docname, conn, env, storage, timingData, gc = true
     doc.conns.set(conn, new Set());
   }
 
-  const uniqueConnections = new Set(new Array(doc.conns.keys()).map((c) => c.auth));
+  const uniqueConnections = new Set(doc.conns.keys().toArray().map((c) => c.auth || 'none'));
   // eslint-disable-next-line no-console
   console.log(`[docroom] Getting ydoc ${docname}`, `Connections (unique / total): ${uniqueConnections.size} / ${doc.conns.size}`);
 
