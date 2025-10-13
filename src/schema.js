@@ -26,6 +26,15 @@ import { Schema } from 'prosemirror-model';
 import { addListNodes } from 'prosemirror-schema-list';
 import { tableNodes } from 'prosemirror-tables';
 
+function parseLocDOM(locTag) {
+  return [
+    {
+      tag: locTag,
+      contentElement: (dom) => dom,
+    },
+  ];
+}
+
 const topLevelAttrs = {
   dataId: { default: null, validate: 'string|null' },
   daDiffAdded: { default: null, validate: 'string|null' },
@@ -123,34 +132,29 @@ const baseNodes = {
     },
     group: 'inline',
     draggable: true,
-    parseDOM: [
-      {
-        tag: 'img[src]',
-        getAttrs(dom) {
-          return {
-            src: dom.getAttribute('src'),
-            title: dom.getAttribute('title'),
-            alt: dom.getAttribute('alt'),
-            href: dom.getAttribute('href'),
-            ...getTopLevelParseAttrs(dom),
-          };
-        },
+    parseDOM: [{
+      tag: 'img[src]',
+      getAttrs(dom) {
+        return {
+          src: dom.getAttribute('src'),
+          title: dom.getAttribute('title'),
+          alt: dom.getAttribute('alt'),
+          href: dom.getAttribute('href'),
+          ...getTopLevelParseAttrs(dom),
+        };
       },
-    ],
+    }],
     toDOM(node) {
       const {
         src, alt, title, href,
       } = node.attrs;
-      return [
-        'img',
-        {
-          src,
-          alt,
-          title,
-          href,
-          ...getTopLevelToDomAttrs(node),
-        },
-      ];
+      return ['img', {
+        src,
+        alt,
+        title,
+        href,
+        ...getTopLevelToDomAttrs(node),
+      }];
     },
   },
   hard_break: {
@@ -161,6 +165,14 @@ const baseNodes = {
     toDOM() {
       return ['br'];
     },
+  },
+  loc_added: {
+    group: 'block',
+    content: 'block+',
+    atom: true,
+    isolating: true,
+    parseDOM: parseLocDOM('da-loc-added'),
+    toDOM: () => ['da-loc-added', { contenteditable: false }, 0],
   },
   diff_added: {
     group: 'block',
@@ -194,6 +206,14 @@ const baseNodes = {
       },
     ],
     toDOM: () => ['da-diff-added', { contenteditable: false }, 0],
+  },
+  loc_deleted: {
+    group: 'block',
+    content: 'block+',
+    atom: true,
+    isolating: true,
+    parseDOM: parseLocDOM('da-loc-deleted'),
+    toDOM: () => ['da-loc-deleted', { contenteditable: false }, 0],
   },
   diff_deleted: {
     group: 'block',

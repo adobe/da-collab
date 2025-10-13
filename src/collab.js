@@ -193,13 +193,13 @@ function convertLocTags(html) {
  * Wraps elements with da-diff-added attribute in a da-diff-added element
  * If the element is a block-group-start, it will wrap the entire block-group
  */
-function processDaDiffAdded(main) {
+function processDaDiffAdded(main, hasLegacyLocTags) {
   if (!main?.children) return;
 
   // Helper function to create wrapper element
   const createWrapper = (children) => ({
     type: 'element',
-    tagName: 'da-diff-added',
+    tagName: hasLegacyLocTags ? 'da-loc-added' : 'da-diff-added',
     properties: {},
     children,
   });
@@ -259,16 +259,18 @@ export function aem2doc(html, ydoc) {
     // eslint-disable-next-line no-param-reassign
     html = EMPTY_DOC;
   }
+  let hasLegacyLocTags = false;
   if (html.includes('<da-loc-added') || html.includes('<da-loc-deleted')) {
     // eslint-disable-next-line no-param-reassign
     html = convertLocTags(html);
+    hasLegacyLocTags = true;
   }
 
   const tree = fromHtml(html, { fragment: true });
   const main = tree.children.find((child) => child.tagName === 'main');
   if (main) {
     if (html.includes('da-diff-added')) {
-      processDaDiffAdded(main);
+      processDaDiffAdded(main, hasLegacyLocTags);
     }
     fixImageLinks(main);
     removeComments(main);
@@ -281,6 +283,10 @@ export function aem2doc(html, ydoc) {
             modified = true;
             blockToTable(child, children);
           } else if (['da-diff-deleted', 'da-diff-added'].includes(child.tagName)) {
+            if (hasLegacyLocTags) {
+              // eslint-disable-next-line no-param-reassign
+              child.tagName = child.tagName.replace('da-diff-', 'da-loc-');
+            }
             modified = true;
             const locChildren = [];
             child.children.forEach((locChild) => {
@@ -309,28 +315,18 @@ export function aem2doc(html, ydoc) {
 
     convertSectionBreak(main);
     let count = 0;
+
+    const getEl = (tagName) => ({
+      type: 'element', tagName, children: [], properties: {},
+    });
+
     main.children = main.children.flatMap((node) => {
       const result = [];
       if (node.tagName === 'div') {
         if (count > 0) {
-          result.push({
-            type: 'element',
-            tagName: 'p',
-            children: [],
-            properties: {},
-          });
-          result.push({
-            type: 'element',
-            tagName: 'hr',
-            children: [],
-            properties: {},
-          });
-          result.push({
-            type: 'element',
-            tagName: 'p',
-            children: [],
-            properties: {},
-          });
+          result.push(getEl('p'));
+          result.push(getEl('hr'));
+          result.push(getEl('p'));
           result.push(...node.children);
         } else {
           result.push(node);
@@ -547,7 +543,9 @@ export function doc2aem(ydoc) {
   children.forEach((child) => {
     if (child.type === 'table') {
       tableToBlock(child, fragment);
-    } else if (child.type === 'da-diff-deleted') {
+    } else if (child.type === 'da-diff-deleted'
+      // da-loc-* temporary code to support old regional edits
+      || child.type === 'da-loc-deleted' || child.type === 'da-loc-added') {
       // eslint-disable-next-line no-param-reassign
       delete child.attributes.contenteditable;
       const locChildren = child.children;
@@ -575,8 +573,8 @@ export function doc2aem(ydoc) {
       fragment.children.push(child);
     }
   });
-  // convert sections
 
+  // convert sections
   const section = { type: 'div', attributes: {}, children: [] };
   const sections = [...fragment.children].reduce((acc, child) => {
     if (child.type === 'hr') {
