@@ -266,7 +266,7 @@ assert.equal(result, html);
     const expected = `
 <body>
   <header></header>
-  <main><div><da-diff-deleted data-mdast="ignore"><h1>Deleted H1 Here</h1></da-diff-deleted><h1 da-diff-added="">Added H1 Here</h1></div></main>
+  <main><div><da-loc-deleted><h1>Deleted H1 Here</h1></da-loc-deleted><da-loc-added><h1>Added H1 Here</h1></da-loc-added></div></main>
   <footer></footer>
 </body>
 `;
@@ -600,7 +600,7 @@ assert.equal(result, html);
     const result = doc2aem(yDoc);
     assert.equal(collapseWhitespace(result), collapseWhitespace(html));
   });
-  
+
   it('can parse empty doc', async () => {
     const html = EMPTY_DOC;
     const yDoc = new Y.Doc();
@@ -641,7 +641,7 @@ assert.equal(result, html);
         title: 'Test'
       }
     };
-    
+
     const proxy = new Proxy(mockElement, {
       get(target, prop) {
         if (prop === 'getAttribute') {
@@ -686,7 +686,7 @@ assert.equal(result, html);
     const mockElement = {
       properties: undefined
     };
-    
+
     const proxy = new Proxy(mockElement, {
       get(target, prop) {
         if (prop === 'getAttribute') {
@@ -711,15 +711,15 @@ assert.equal(result, html);
     // Create HTML that will trigger the img tag processing path
     const html = '<a href="/test-link" title="Test Title"><img src="/test-image.jpg" alt="Test Image"></a>';
     const yDoc = new Y.Doc();
-    
+
     // Mock the fixImageLinks function to capture the processing
     let imgProcessed = false;
     const originalFixImageLinks = global.fixImageLinks;
-    
+
     try {
       aem2doc(html, yDoc);
       const result = doc2aem(yDoc);
-      
+
       // Verify the processing worked
       assert(result.length > 0);
       assert(result.includes('img') || result.includes('picture'));
@@ -733,7 +733,7 @@ assert.equal(result, html);
       properties: { href: '/test' },
       customProp: 'customValue'
     };
-    
+
     const proxy = new Proxy(mockElement, {
       get(target, prop) {
         if (prop === 'getAttribute') {
@@ -758,11 +758,11 @@ assert.equal(result, html);
     // Create HTML that will trigger the specific img tag processing path
     const html = '<a href="/test-link" title="Test Title"><img src="/test-image.jpg" alt="Test Image"></a>';
     const yDoc = new Y.Doc();
-    
+
     // This should trigger the linkChild.tagName === 'img' path
     aem2doc(html, yDoc);
     const result = doc2aem(yDoc);
-    
+
     // Verify the processing worked
     assert(result.length > 0);
   });
@@ -773,7 +773,7 @@ assert.equal(result, html);
       customProp: 'customValue',
       anotherProp: 'anotherValue'
     };
-    
+
     const proxy = new Proxy(mockElement, {
       get(target, prop) {
         if (prop === 'getAttribute') {
@@ -813,10 +813,10 @@ assert.equal(result, html);
         </main>
       </body>
     `;
-    
+
     const yDoc = new Y.Doc();
     aem2doc(html, yDoc);
-    
+
     // The fixImageLinks function should have moved href and title to the img properties
     // We can verify this by checking that the conversion worked without errors
     const result = doc2aem(yDoc);
@@ -844,10 +844,10 @@ assert.equal(result, html);
         </main>
       </body>
     `;
-    
+
     const yDoc = new Y.Doc();
     aem2doc(html, yDoc);
-    
+
     // Verify the conversion worked - tables get converted to blocks, so check for div
     const result = doc2aem(yDoc);
     assert(result.includes('<div>'));
@@ -865,10 +865,10 @@ assert.equal(result, html);
         </main>
       </body>
     `;
-    
+
     const yDoc = new Y.Doc();
     aem2doc(html, yDoc);
-    
+
     // Verify the conversion worked
     const result = doc2aem(yDoc);
     assert(result.includes('<div>'));
@@ -886,10 +886,10 @@ assert.equal(result, html);
         </main>
       </body>
     `;
-    
+
     const yDoc = new Y.Doc();
     aem2doc(html, yDoc);
-    
+
     // Verify the conversion worked
     const result = doc2aem(yDoc);
     assert(result.includes('<div>'));
@@ -907,10 +907,10 @@ assert.equal(result, html);
         </main>
       </body>
     `;
-    
+
     const yDoc = new Y.Doc();
     aem2doc(html, yDoc);
-    
+
     // Verify the conversion worked
     const result = doc2aem(yDoc);
     assert(result.includes('<div>'));
@@ -929,10 +929,10 @@ assert.equal(result, html);
         </main>
       </body>
     `;
-    
+
     const yDoc = new Y.Doc();
     aem2doc(html, yDoc);
-    
+
     // Verify the conversion worked
     const result = doc2aem(yDoc);
     assert(result.includes('<div>'));
@@ -970,10 +970,10 @@ assert.equal(result, html);
         </main>
       </body>
     `;
-    
+
     const yDoc = new Y.Doc();
     aem2doc(html, yDoc);
-    
+
     // Verify the conversion worked
     const result = doc2aem(yDoc);
     assert(result.includes('<div>'));
@@ -998,10 +998,10 @@ assert.equal(result, html);
         </main>
       </body>
     `;
-    
+
     const yDoc = new Y.Doc();
     aem2doc(html, yDoc);
-    
+
     // Verify the conversion worked
     const result = doc2aem(yDoc);
     assert(result.includes('<div>'));
@@ -1024,10 +1024,10 @@ assert.equal(result, html);
         </main>
       </body>
     `;
-    
+
     const yDoc = new Y.Doc();
     aem2doc(html, yDoc);
-    
+
     // Verify the conversion worked
     const result = doc2aem(yDoc);
     assert(result.includes('<div>'));
