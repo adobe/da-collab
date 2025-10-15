@@ -266,7 +266,7 @@ assert.equal(result, html);
     const expected = `
 <body>
   <header></header>
-  <main><div><da-loc-deleted><h1>Deleted H1 Here</h1></da-loc-deleted><da-loc-added><h1>Added H1 Here</h1></da-loc-added></div></main>
+  <main><div><da-diff-deleted data-mdast="ignore"><h1>Deleted H1 Here</h1></da-diff-deleted><h1 da-diff-added="">Added H1 Here</h1></div></main>
   <footer></footer>
 </body>
 `;
