@@ -193,13 +193,13 @@ function convertLocTags(html) {
  * Wraps elements with da-diff-added attribute in a da-diff-added element
  * If the element is a block-group-start, it will wrap the entire block-group
  */
-function processDaDiffAdded(main, hasLegacyLocTags) {
+function processDaDiffAdded(main) {
   if (!main?.children) return;
 
   // Helper function to create wrapper element
   const createWrapper = (children) => ({
     type: 'element',
-    tagName: hasLegacyLocTags ? 'da-loc-added' : 'da-diff-added',
+    tagName: 'da-diff-added',
     properties: {},
     children,
   });
@@ -259,18 +259,16 @@ export function aem2doc(html, ydoc) {
     // eslint-disable-next-line no-param-reassign
     html = EMPTY_DOC;
   }
-  let hasLegacyLocTags = false;
   if (html.includes('<da-loc-added') || html.includes('<da-loc-deleted')) {
     // eslint-disable-next-line no-param-reassign
     html = convertLocTags(html);
-    hasLegacyLocTags = true;
   }
 
   const tree = fromHtml(html, { fragment: true });
   const main = tree.children.find((child) => child.tagName === 'main');
   if (main) {
     if (html.includes('da-diff-added')) {
-      processDaDiffAdded(main, hasLegacyLocTags);
+      processDaDiffAdded(main);
     }
     fixImageLinks(main);
     removeComments(main);
@@ -283,10 +281,6 @@ export function aem2doc(html, ydoc) {
             modified = true;
             blockToTable(child, children);
           } else if (['da-diff-deleted', 'da-diff-added'].includes(child.tagName)) {
-            if (hasLegacyLocTags) {
-              // eslint-disable-next-line no-param-reassign
-              child.tagName = child.tagName.replace('da-diff-', 'da-loc-');
-            }
             modified = true;
             const locChildren = [];
             child.children.forEach((locChild) => {
