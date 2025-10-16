@@ -254,6 +254,25 @@ function processDaDiffAdded(main) {
   });
 }
 
+const getMetadata = (metadataTree) => {
+  const attrs = {};
+  if (metadataTree?.children) {
+    metadataTree.children.forEach((rowDiv) => {
+      if (rowDiv.tagName === 'div') {
+        const divChildren = rowDiv.children?.filter((child) => child.tagName === 'div') || [];
+        if (divChildren.length === 2) {
+          const key = divChildren[0].children?.[0]?.value;
+          const value = divChildren[1].children?.[0]?.value || null;
+          if (key) {
+            attrs[key] = value;
+          }
+        }
+      }
+    });
+  }
+  return attrs;
+};
+
 export function aem2doc(html, ydoc) {
   if (!html) {
     // eslint-disable-next-line no-param-reassign
@@ -265,6 +284,11 @@ export function aem2doc(html, ydoc) {
   }
 
   const tree = fromHtml(html, { fragment: true });
+  const daMetadataEl = tree.children.find(
+    (child) => child.tagName === 'div' && child.properties?.className?.includes('da-metadata'),
+  );
+  const daMetadata = getMetadata(daMetadataEl);
+
   const main = tree.children.find((child) => child.tagName === 'main');
   if (main) {
     if (html.includes('da-diff-added')) {
@@ -404,7 +428,19 @@ export function aem2doc(html, ydoc) {
     },
   };
 
-  const json = DOMParser.fromSchema(getSchema()).parse(new Proxy(main || tree, handler2));
+  const schema = getSchema();
+  const json = DOMParser.fromSchema(schema).parse(new Proxy(main || tree, handler2));
+
+  // Store da attributes in yMap since y-prosemirror doesn't preserve doc-level attrs
+  const mdMap = ydoc.getMap('daMetadata');
+  Object.entries(daMetadata).forEach(([key, value]) => {
+    if (value !== null) {
+      mdMap.set(key, value);
+    } else {
+      mdMap.delete(key);
+    }
+  });
+
   prosemirrorToYXmlFragment(json, ydoc.getXmlFragment('prosemirror'));
 }
 
@@ -501,7 +537,15 @@ export function tableToBlock(child, fragment) {
 
 export function doc2aem(ydoc) {
   const schema = getSchema();
-  const json = yDocToProsemirror(schema, ydoc);
+  let json = yDocToProsemirror(schema, ydoc);
+
+  // Restore da attributes from yMap since y-prosemirror doesn't preserve doc-level attrs
+  const mdMap = ydoc.getMap('daMetadata');
+  const daMetadata = {};
+  mdMap.forEach((value, key) => {
+    daMetadata[key] = value;
+  });
+  json = json.type.create({ ...json.attrs, ...daMetadata }, json.content);
 
   const fragment = { type: 'div', children: [], attributes: {} };
   const handler3 = {
@@ -580,11 +624,20 @@ export function doc2aem(ydoc) {
   }, [section]);
 
   const text = sections.map((s) => tohtml(s)).join('');
+
+  let daHTML = '';
+  if (Object.keys(daMetadata).length > 0) {
+    const daRows = Object.entries(daMetadata)
+      .map(([key, value]) => `<div><div>${key}</div><div>${value}</div></div>`)
+      .join('');
+    daHTML = `\n  <div class="da-metadata">${daRows}</div>`;
+  }
+
   return `
 <body>
   <header></header>
   <main>${text}</main>
-  <footer></footer>
+  <footer></footer>${daHTML}
 </body>
 `;
 }

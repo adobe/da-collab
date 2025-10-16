@@ -1033,6 +1033,330 @@ assert.equal(result, html);
     assert(result.includes('<div>'));
   });
 
+  it('delHashes is read from HTML and stored in doc attrs', () => {
+    const html = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <p>Test content</p>
+    </div>
+  </main>
+  <footer></footer>
+  <div class="da-metadata">
+    <div>
+      <div>delHashes</div>
+      <div>hash1,hash2,hash3</div>
+    </div>
+  </div>
+</body>
+    `;
+
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+
+    // Verify delHashes is stored in yDoc
+    const yMap = yDoc.getMap('daMetadata');
+    assert.strictEqual(yMap.get('delHashes'), 'hash1,hash2,hash3');
+  });
+
+  it('delHashes is written back to HTML in doc2aem', () => {
+    const html = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <p>Test content</p>
+    </div>
+  </main>
+  <footer></footer>
+  <div class="da-metadata">
+    <div>
+      <div>delHashes</div>
+      <div>abc123,def456</div>
+    </div>
+  </div>
+</body>
+    `;
+
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+    const result = doc2aem(yDoc);
+
+    // Verify delHashes is in the output
+    assert(result.includes('<div class="da-metadata"><div><div>delHashes</div><div>abc123,def456</div></div></div>'));
+  });
+
+  it('delHashes round-trip conversion preserves value', () => {
+    const delHashesValue = 'hash1,hash2,hash3,hash4';
+    const html = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <h1>Title</h1>
+      <p>Some content</p>
+    </div>
+  </main>
+  <footer></footer>
+  <div class="da-metadata">
+    <div>
+      <div>delHashes</div>
+      <div>${delHashesValue}</div>
+    </div>
+  </div>
+</body>
+    `;
+
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+
+    // Verify it's stored correctly
+    const yMap = yDoc.getMap('daMetadata');
+    assert.strictEqual(yMap.get('delHashes'), delHashesValue);
+
+    // Verify it's written back correctly
+    const result = doc2aem(yDoc);
+    assert(result.includes(`<div class="da-metadata"><div><div>delHashes</div><div>${delHashesValue}</div></div></div>`));
+
+    // Do another round-trip to ensure consistency
+    const yDoc2 = new Y.Doc();
+    aem2doc(result, yDoc2);
+    const result2 = doc2aem(yDoc2);
+
+    assert(result2.includes(`<div class="da-metadata"><div><div>delHashes</div><div>${delHashesValue}</div></div></div>`));
+  });
+
+  it('missing delHashes results in null and no da element in output', () => {
+    const html = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <p>Test content without delHashes</p>
+    </div>
+  </main>
+  <footer></footer>
+</body>
+    `;
+
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+
+    // Verify delHashes is undefined (not set in yMap)
+    const yMap = yDoc.getMap('daMetadata');
+    assert.strictEqual(yMap.get('delHashes'), undefined);
+
+    // Verify no da-metadata element in output
+    const result = doc2aem(yDoc);
+    assert(!result.includes('da-metadata'));
+  });
+
+  it('empty delHashes element results in empty string', () => {
+    const html = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <p>Test content</p>
+    </div>
+  </main>
+  <footer></footer>
+  <div class="da-metadata">
+    <div>
+      <div>delHashes</div>
+      <div></div>
+    </div>
+  </div>
+</body>
+    `;
+
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+
+    // Verify delHashes is undefined (empty element has no text node)
+    const yMap = yDoc.getMap('daMetadata');
+    assert.strictEqual(yMap.get('delHashes'), undefined);
+  });
+
+  it('delHashes with special characters is preserved', () => {
+    const delHashesValue = 'hash-1_2.3,hash:4;5';
+    const html = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <p>Test content</p>
+    </div>
+  </main>
+  <footer></footer>
+  <div class="da-metadata">
+    <div>
+      <div>delHashes</div>
+      <div>${delHashesValue}</div>
+    </div>
+  </div>
+</body>
+    `;
+
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+
+    const yMap = yDoc.getMap('daMetadata');
+    assert.strictEqual(yMap.get('delHashes'), delHashesValue);
+
+    const result = doc2aem(yDoc);
+    assert(result.includes(`<div class="da-metadata"><div><div>delHashes</div><div>${delHashesValue}</div></div></div>`));
+  });
+
+  it('delHashes location in body is at the end after footer', () => {
+    const html = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <p>Content</p>
+    </div>
+  </main>
+  <footer></footer>
+  <div class="da-metadata">
+    <div>
+      <div>delHashes</div>
+      <div>test123</div>
+    </div>
+  </div>
+</body>
+    `;
+
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+    const result = doc2aem(yDoc);
+
+    // Verify da-metadata element comes after footer
+    const footerIndex = result.indexOf('</footer>');
+    const daIndex = result.indexOf('da-metadata');
+    assert(daIndex > footerIndex, 'da-metadata element should come after footer');
+  });
+
+  it('da-loc-keys is read from HTML and stored as locKeys', () => {
+    const html = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <p>Test content</p>
+    </div>
+  </main>
+  <footer></footer>
+  <div class="da-metadata">
+    <div>
+      <div>locKeys</div>
+      <div>key1,key2,key3</div>
+    </div>
+  </div>
+</body>
+    `;
+
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+
+    const yMap = yDoc.getMap('daMetadata');
+    assert.strictEqual(yMap.get('locKeys'), 'key1,key2,key3');
+  });
+
+  it('locKeys is written back to HTML as da-loc-keys', () => {
+    const yDoc = new Y.Doc();
+    const yMap = yDoc.getMap('daMetadata');
+    yMap.set('locKeys', 'test-key-1,test-key-2');
+
+    const html = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <p>Content</p>
+    </div>
+  </main>
+  <footer></footer>
+</body>
+    `;
+
+    aem2doc(html, yDoc);
+    const result = doc2aem(yDoc);
+
+    assert(result.includes('<div><div>locKeys</div><div>test-key-1,test-key-2</div></div>'));
+  });
+
+  it('multiple da elements are handled correctly', () => {
+    const html = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <p>Test content</p>
+    </div>
+  </main>
+  <footer></footer>
+  <div class="da-metadata">
+    <div>
+      <div>delHashes</div>
+      <div>hash123</div>
+    </div>
+    <div>
+      <div>locKeys</div>
+      <div>key1,key2</div>
+    </div>
+    <div>
+      <div>someValue</div>
+      <div>testValue</div>
+    </div>
+  </div>
+</body>
+    `;
+
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+
+    const yMap = yDoc.getMap('daMetadata');
+    assert.strictEqual(yMap.get('delHashes'), 'hash123');
+    assert.strictEqual(yMap.get('locKeys'), 'key1,key2');
+    assert.strictEqual(yMap.get('someValue'), 'testValue');
+
+    const result = doc2aem(yDoc);
+    assert(result.includes('<div><div>delHashes</div><div>hash123</div></div>'));
+    assert(result.includes('<div><div>locKeys</div><div>key1,key2</div></div>'));
+    assert(result.includes('<div><div>someValue</div><div>testValue</div></div>'));
+  });
+
+  it('element without da- prefix is handled correctly', () => {
+    const html = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <p>Test content</p>
+    </div>
+  </main>
+  <footer></footer>
+  <div class="da-metadata">
+    <div>
+      <div>customElement</div>
+      <div>value123</div>
+    </div>
+  </div>
+</body>
+    `;
+
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+
+    const yMap = yDoc.getMap('daMetadata');
+    assert.strictEqual(yMap.get('customElement'), 'value123');
+
+    const result = doc2aem(yDoc);
+    assert(result.includes('<div><div>customElement</div><div>value123</div></div>'));
+  });
+
 });
 
 
