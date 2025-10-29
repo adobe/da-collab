@@ -188,4 +188,38 @@ describe('Parsing test suite', () => {
     const expected = readFileSync('./test/mocks/expected-table.html', 'utf-8');
     assert.equal(collapseWhitespace(result), collapseWhitespace(expected));
   });
+
+  it('handles lists with diff edits', async () => {
+  let html = `
+    <body>
+      <header></header>
+      <main>
+        <div>
+          <h1>List Test</h1>
+          <ul>
+            <da-diff-deleted data-mdast="ignore">
+              <li>Item 3</li>
+            </da-diff-deleted>
+            <li da-diff-added="">
+              <p>Item 3 - Modified</p>
+              <p>Blah blah blah</p>
+            </li>
+            <li>No change here</li>
+            <da-diff-deleted data-mdast="ignore">
+              <li>Item 4</li>
+            </da-diff-deleted>
+            <li da-diff-added="">Item 5 - New</li>
+          </ul>
+          <p>Some text after the list</p>
+        </div>
+      </main>
+      <footer></footer>
+    </body>`;
+  html = collapseWhitespace(html);
+  const yDoc = new Y.Doc();
+  aem2doc(html, yDoc);
+  const result = doc2aem(yDoc);
+  assert.equal(collapseWhitespace(result), collapseWhitespace(html));
+  });
+
 });

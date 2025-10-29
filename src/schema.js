@@ -348,6 +348,13 @@ export function getSchema() {
   let { nodes } = baseSchema.spec;
   const { marks } = baseSchema.spec;
   nodes = addListNodeSchema(nodes);
+
+  // Update diff nodes to allow list_item after list nodes are added
+  nodes = nodes.update('diff_deleted', { ...nodes.get('diff_deleted'), content: '(block | list_item)+' });
+  nodes = nodes.update('diff_added', { ...nodes.get('diff_added'), content: '(block | list_item)+' });
+  nodes = nodes.update('loc_deleted', { ...nodes.get('loc_deleted'), content: '(block | list_item)+' });
+  nodes = nodes.update('loc_added', { ...nodes.get('loc_added'), content: '(block | list_item)+' });
+
   nodes = nodes.append(getTableNodeSchema());
   const customMarks = addCustomMarks(marks);
   return new Schema({ nodes, marks: customMarks });
