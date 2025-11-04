@@ -17,7 +17,7 @@ import {
   closeConn, getYDoc, invalidateFromAdmin, messageListener, persistence,
   readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
-import { aem2doc, doc2aem } from '../src/collab.js';
+import { aem2doc, doc2aem, EMPTY_DOC } from '../src/collab.js';
 
 function isSubArray(full, sub) {
   if (sub.length === 0) {
@@ -260,7 +260,7 @@ describe('Collab Test Suite', () => {
   });
 
   it('Test persistence put auth no perm', async () => {
-    const fetchCalled = []
+    const fetchCalled = [];
     const daadmin = {};
     daadmin.fetch = async (url, opts) => {
       fetchCalled.push('true');
@@ -401,7 +401,7 @@ describe('Collab Test Suite', () => {
   });
 
   it('Test close connection', async () => {
-    const awarenessEmitted = []
+    const awarenessEmitted = [];
     const mockDoc = {
       awareness: {
         emit(_, chg) { awarenessEmitted.push(chg); },
@@ -486,7 +486,7 @@ describe('Collab Test Suite', () => {
     assert.equal(2, aem2DocCalled.length);
     assert.equal('Get: http://lalala.com/ha/ha/ha.html-myauth-daadmin', aem2DocCalled[0]);
     assert.equal(testYDoc, aem2DocCalled[1]);
-  }).timeout(5000);
+  });
 
   it('Test bindState gets empty doc on da-admin 404', async() => {
     const mockdebounce = (f) => async () => await f();
@@ -504,7 +504,7 @@ describe('Collab Test Suite', () => {
     testYDoc.on = (ev, f) => { if (ev === 'update') ydocUpdateCB.push(f); }
     pss.setYDoc(docName, testYDoc);
 
-    const called = []
+    const called = [];
     const mockStorage = {
       deleteAll: async () => called.push('deleteAll'),
       list: async () => new Map(),
@@ -516,7 +516,7 @@ describe('Collab Test Suite', () => {
     pss.persistence.update = async (_, cur)  => updateCalled.push(cur);
 
     const savedSetTimeout = globalThis.setTimeout;
-    const setTimeoutCalls = []
+    const setTimeoutCalls = [];
     try {
       globalThis.setTimeout = () => setTimeoutCalls.push('setTimeout');
 
@@ -534,7 +534,7 @@ describe('Collab Test Suite', () => {
 
     await ydocUpdateCB[0]();
     await ydocUpdateCB[1]();
-    assert.deepStrictEqual(['<main></main>'], updateCalled);
+    assert.deepStrictEqual([EMPTY_DOC], updateCalled);
   });
 
   it('Test bindstate read from worker storage', async () => {
@@ -633,7 +633,7 @@ describe('Collab Test Suite', () => {
       };
 
       pss.persistence.get = async () => '<main><div>oldcontent</div></main>';
-      const putCalls = []
+      const putCalls = [];
       pss.persistence.put = async (yd, c) => {
         if (yd === ydoc && c.includes('newcontent')) {
           putCalls.push(c);
@@ -966,13 +966,13 @@ describe('Collab Test Suite', () => {
   });
 
   it('Test Sync Step1', () => {
-    const connSent = []
+    const connSent = [];
     const conn = {
       readyState: 0, // wsReadyState
       send(m, r) { connSent.push({m, r}); }
     };
 
-    const emitted = []
+    const emitted = [];
     const doc = new Y.Doc();
     doc.emit = (t, e) => emitted.push({t, e});
     doc.getMap('foo').set('bar', 'hello');
@@ -989,14 +989,14 @@ describe('Collab Test Suite', () => {
   });
 
   it('Test Sync Step1 readonly connection', () => {
-    const connSent = []
+    const connSent = [];
     const conn = {
       readyState: 0, // wsReadyState
       send(m, r) { connSent.push({m, r}); },
       readOnly: true,
     };
 
-    const emitted = []
+    const emitted = [];
     const doc = new Y.Doc();
     doc.emit = (t, e) => emitted.push({t, e});
     doc.getMap('foo').set('bar', 'hello');
@@ -1237,5 +1237,76 @@ describe('Collab Test Suite', () => {
     assert(errorMap.get('stack').includes('shareddoc.test.js'),
       'The stack trace should contain the name of this test file');
     assert.deepStrictEqual(['transact'], called);
-  })
+  });
+
+  it('test no empty document if daadmin fetch crashes', async () => {
+    const docName = 'https://admin.da.live/source/foo/bar.html';
+
+    const updObservers = [];
+    const ydoc = new Y.Doc();
+    // mock out the 'on' function on the ydoc
+    ydoc.on = (ev, fun) => {
+      if (ev === 'update') {
+        updObservers.push(fun);
+      }
+    };
+    setYDoc(docName, ydoc);
+
+    const conn = {};
+    const called = [];
+    const storage = {
+      deleteAll: async () => called.push('deleteAll'),
+      list: async () => new Map(),
+      put: async (obj) => called.push(obj)
+    };
+
+    const savedSetTimeout = globalThis.setTimeout;
+    const savedGet = persistence.get;
+    try {
+      globalThis.setTimeout = (f) => {
+        // Restore the global function
+        globalThis.setTimeout = savedSetTimeout;
+        f();
+      };
+      let calledGet = 0;
+      persistence.get = async () => {
+        if (calledGet++ > 0 ) {
+          throw new Error('unexpected crash')
+        }
+        return `
+<body>
+  <header></header>
+  <main><div>initial</div></main>
+  <footer></footer>
+</body>
+`;
+      };
+
+      await persistence.bindState(docName, ydoc, conn, storage);
+      // strip line breaks
+      const doc2aemStr = doc2aem(ydoc).replace(/\n\s*/g, '');
+      assert.notEqual(doc2aemStr, EMPTY_DOC);
+      assert(doc2aemStr.includes('initial'), true);
+      assert.equal(2, updObservers.length);
+
+      ydoc.getMap('yah').set('a', 'bcd');
+      await updObservers[0]();
+      await updObservers[1]();
+
+      // check that it was stored
+      assert.equal(2, called.length);
+      assert.equal('deleteAll', called[0]);
+
+      const ydoc2 = new Y.Doc();
+      Y.applyUpdate(ydoc2, called[1].docstore);
+
+      assert.equal('bcd', ydoc2.getMap('yah').get('a'));
+      const doc2aemStr2 = doc2aem(ydoc2).replace(/\n\s*/g, '');
+      assert.notEqual(doc2aemStr2, EMPTY_DOC);
+      assert(doc2aemStr2.includes('initial'), true);
+    } finally {
+      globalThis.setTimeout = savedSetTimeout;
+      persistence.get = savedGet;
+    }
+  });
 });

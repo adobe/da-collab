@@ -16,7 +16,7 @@ import * as awarenessProtocol from 'y-protocols/awareness.js';
 import * as encoding from 'lib0/encoding.js';
 import * as decoding from 'lib0/decoding.js';
 import debounce from 'lodash/debounce.js';
-import { aem2doc, doc2aem } from './collab.js';
+import { aem2doc, doc2aem, EMPTY_DOC } from './collab.js';
 
 const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
@@ -27,7 +27,6 @@ const gcEnabled = false;
 // The local cache of ydocs
 const docs = new Map();
 
-const EMPTY_DOC = '<main></main>';
 const messageSync = 0;
 const messageAwareness = 1;
 const MAX_STORAGE_KEYS = 128;
@@ -40,26 +39,44 @@ const MAX_STORAGE_VALUE_SIZE = 131072;
  * @param {WebSocket} conn - the websocket connection to close.
  */
 export const closeConn = (doc, conn) => {
-  if (doc.conns.has(conn)) {
-    const controlledIds = doc.conns.get(conn);
-    doc.conns.delete(conn);
-    awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
+  try {
+    if (doc.conns.has(conn)) {
+      const controlledIds = doc.conns.get(conn);
+      doc.conns.delete(conn);
+      try {
+        awarenessProtocol.removeAwarenessStates(doc.awareness, Array.from(controlledIds), null);
+        /* c8 ignore start */
+      } catch (err) {
+        // we can ignore an exception here, closing the connection will remove the awareness states
+        // eslint-disable-next-line no-console
+        console.error('[docroom] Error while removing awareness states', err);
+        /* c8 ignore end */
+      }
 
-    if (doc.conns.size === 0) {
-      docs.delete(doc.name);
+      if (doc.conns.size === 0) {
+        docs.delete(doc.name);
+      }
     }
+    conn.close();
+  } catch (e) {
+    /* c8 ignore start */
+    // we can ignore an exception here, connection will be closed anyway
+    // eslint-disable-next-line no-console
+    console.error('[docroom] Error while closing connection', e);
+    /* c8 ignore end */
   }
-  conn.close();
 };
 
 const send = (doc, conn, m) => {
-  if (conn.readyState !== wsReadyStateConnecting && conn.readyState !== wsReadyStateOpen) {
-    closeConn(doc, conn);
-    return;
-  }
   try {
+    if (conn.readyState !== wsReadyStateConnecting && conn.readyState !== wsReadyStateOpen) {
+      closeConn(doc, conn);
+      return;
+    }
     conn.send(m, (err) => err != null && closeConn(doc, conn));
   } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[docroom] Error while sending message', e);
     closeConn(doc, conn);
   }
 };
@@ -75,18 +92,20 @@ export const readState = async (docName, storage) => {
   const stored = await storage.list();
   if (stored.size === 0) {
     // eslint-disable-next-line no-console
-    console.log('No stored doc in persistence');
+    console.log('[docroom] No stored doc in persistence');
     return undefined;
   }
 
   if (stored.get('doc') !== docName) {
     // eslint-disable-next-line no-console
-    console.log('Docname mismatch in persistence. Expected:', docName, 'found:', stored.get('doc'), 'Deleting storage');
+    console.log('[docroom] Docname mismatch in persistence. Expected:', docName, 'found:', stored.get('doc'), 'Deleting storage');
     await storage.deleteAll();
     return undefined;
   }
 
   if (stored.has('docstore')) {
+    // eslint-disable-next-line no-console
+    console.log('[docroom] Document found in persistence');
     return stored.get('docstore');
   }
 
@@ -100,6 +119,8 @@ export const readState = async (docName, storage) => {
       data.push(chunk[j]);
     }
   }
+  // eslint-disable-next-line no-console
+  console.log('[docroom] Document data read');
   return new Uint8Array(data);
 };
 
@@ -138,6 +159,8 @@ export const storeState = async (docName, state, storage, chunkSize = MAX_STORAG
     }
 
     if (j >= MAX_STORAGE_KEYS) {
+      // eslint-disable-next-line no-console
+      console.error('[docroom] Object too big for worker storage', docName, j, MAX_STORAGE_KEYS);
       throw new Error('Object too big for worker storage');
     }
 
@@ -149,14 +172,19 @@ export const storeState = async (docName, state, storage, chunkSize = MAX_STORAG
 };
 
 export const showError = (ydoc, err) => {
-  const em = ydoc.getMap('error');
+  try {
+    const em = ydoc.getMap('error');
 
-  // Perform the change in a transaction to avoid seeing a partial error
-  ydoc.transact(() => {
-    em.set('timestamp', Date.now());
-    em.set('message', err.message);
-    em.set('stack', err.stack);
-  });
+    // Perform the change in a transaction to avoid seeing a partial error
+    ydoc.transact(() => {
+      em.set('timestamp', Date.now());
+      em.set('message', err.message);
+      em.set('stack', err.stack);
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[docroom] Error while showing error', e, err);
+  }
 };
 
 export const persistence = {
@@ -182,7 +210,7 @@ export const persistence = {
       return null;
     } else {
       // eslint-disable-next-line no-console
-      console.log(`unable to get resource: ${initialReq.status} - ${initialReq.statusText}`);
+      console.error(`[docroom] Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`);
       throw new Error(`unable to get resource - status: ${initialReq.status}`);
     }
   },
@@ -205,7 +233,7 @@ export const persistence = {
     const allReadOnly = keys.length > 0 && keys.every((con) => con.readOnly === true);
     if (allReadOnly) {
       // eslint-disable-next-line no-console
-      console.log('All connections are read only, not storing');
+      console.log('[docroom] All connections are read only, not storing');
       return { ok: true };
     }
     const auth = keys
@@ -219,7 +247,19 @@ export const persistence = {
       });
     }
 
-    const { ok, status, statusText } = await ydoc.daadmin.fetch(ydoc.name, opts);
+    if (blob.size < 84) {
+      // eslint-disable-next-line no-console
+      console.warn('[docroom] Writting back an empty document', ydoc.name, blob.size);
+    }
+
+    const {
+      ok, status, statusText, body,
+    } = await ydoc.daadmin.fetch(ydoc.name, opts);
+
+    if (body) {
+      // tell CloudFlare to consider the request as completed
+      body.cancel();
+    }
 
     return {
       ok,
@@ -247,14 +287,12 @@ export const persistence = {
           closeAll = (status === 401 || status === 403);
           throw new Error(`${status} - ${statusText}`);
         }
-        // eslint-disable-next-line no-console
-        console.log(content);
 
         return content;
       }
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error(err);
+      console.error('[docroom] Failed to update document', err);
       showError(ydoc, err);
     }
     if (closeAll) {
@@ -309,7 +347,7 @@ export const persistence = {
           restored = true;
 
           // eslint-disable-next-line no-console
-          console.log('Restored from worker persistence', docName);
+          console.log('[docroom] Restored from worker persistence', docName);
         }
       }
 
@@ -320,14 +358,16 @@ export const persistence = {
       }
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.log('Problem restoring state from worker storage', error);
+      console.error('[docroom] Problem restoring state from worker storage', error);
       showError(ydoc, error);
     }
 
-    if (!restored) {
+    if (!restored && current) {
       // The doc was not restored from worker persistence, so read it from da-admin,
       // but do this async to give the ydoc some time to get synced up first. Without
       // this timeout, the ydoc can get confused which may result in duplicated content.
+      // eslint-disable-next-line no-console
+      console.log('[docroom] Could not be restored, trying to restore from da-admin', docName);
       setTimeout(() => {
         if (ydoc === docs.get(docName)) {
           const rootType = ydoc.getXmlFragment('prosemirror');
@@ -339,10 +379,10 @@ export const persistence = {
               aem2doc(current, ydoc);
 
               // eslint-disable-next-line no-console
-              console.log('Restored from da-admin', docName);
+              console.log('[docroom] Restored from da-admin', docName);
             } catch (error) {
               // eslint-disable-next-line no-console
-              console.log('Problem restoring state from da-admin', error);
+              console.error('[docroom] Problem restoring state from da-admin', error, current);
               showError(ydoc, error);
             }
           });
@@ -360,7 +400,7 @@ export const persistence = {
     ydoc.on('update', debounce(async () => {
       // If we receive an update on the document, store it in da-admin, but debounce it
       // to avoid excessive da-admin calls.
-      if (ydoc === docs.get(docName)) {
+      if (current && ydoc === docs.get(docName)) {
         current = await persistence.update(ydoc, current);
       }
     }, 2000, { maxWait: 10000 }));
@@ -441,6 +481,10 @@ export const getYDoc = async (docname, conn, env, storage, timingData, gc = true
     doc.conns.set(conn, new Set());
   }
 
+  const uniqueConnections = new Set(doc.conns.keys().toArray().map((c) => c.auth || 'none'));
+  // eslint-disable-next-line no-console
+  console.log(`[docroom] Getting ydoc ${docname}`, `Connections (unique / total): ${uniqueConnections.size} / ${doc.conns.size}`);
+
   // Store the service binding to da-admin which we receive through the environment in the doc
   doc.daadmin = env.daadmin;
   if (!doc.promise) {
@@ -481,10 +525,11 @@ const readSyncMessage = (decoder, encoder, doc, readOnly, transactionOrigin) => 
 };
 
 export const messageListener = (conn, doc, message) => {
+  let messageType;
   try {
     const encoder = encoding.createEncoder();
     const decoder = decoding.createDecoder(message);
-    const messageType = decoding.readVarUint(decoder);
+    messageType = decoding.readVarUint(decoder);
     switch (messageType) {
       case messageSync:
         encoding.writeVarUint(encoder, messageSync);
@@ -507,7 +552,7 @@ export const messageListener = (conn, doc, message) => {
     }
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error(err);
+    console.error('[docroom] messageListener - Message', err.stack, err);
     showError(doc, err);
   }
 };
@@ -522,7 +567,7 @@ export const messageListener = (conn, doc, message) => {
  */
 export const invalidateFromAdmin = async (docName) => {
   // eslint-disable-next-line no-console
-  console.log('Invalidate from Admin received', docName);
+  console.log('[worker] Invalidate from Admin received', docName);
   const ydoc = docs.get(docName);
   if (ydoc) {
     // As we are closing all connections, the ydoc will be removed from the docs map
@@ -531,7 +576,7 @@ export const invalidateFromAdmin = async (docName) => {
     return true;
   } else {
     // eslint-disable-next-line no-console
-    console.log('Document not found', docName);
+    console.log('[worker] Document not found', docName);
   }
   return false;
 };
@@ -561,7 +606,7 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
   });
   // put the following in a variables in a block so the interval handlers don't keep in in
   // scope
-  {
+  try {
     // send sync step 1
     let encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, messageSync);
@@ -575,6 +620,9 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
         .encodeAwarenessUpdate(doc.awareness, Array.from(awarenessStates.keys())));
       send(doc, conn, encoding.toUint8Array(encoder));
     }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[docroom] Error while setting up WSConnection', docName, err);
   }
 
   return timingData;
