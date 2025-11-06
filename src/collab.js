@@ -149,6 +149,7 @@ export function aem2doc(html, ydoc) {
   const main = tree.children.find((child) => child.tagName === 'main');
   fixImageLinks(main);
   removeComments(main);
+  escapeBracketsInText(main);
   (main.children || []).forEach((parent) => {
     if (parent.tagName === 'div' && parent.children) {
       const children = [];
