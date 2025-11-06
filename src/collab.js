@@ -144,19 +144,9 @@ function removeComments(node) {
   return node;
 }
 
-// function escapeBracketsInText(node) {
-//   if (!node) return node;
-//   if (node.type === 'text' && node.value) {
-//     // eslint-disable-next-line no-param-reassign
-//     node.value = escapeBrackets(node.value);
-//   }
-// }
-
-// For every node of type element which is not a 'div' or a 'p', replace the node in its parent
-// with a text node with the name of the tag
-// and add all the children of the node as siblings
 function convertCustomTagsIntoText(node, parent) {
   if (!node) return node;
+  // TODO add other known tags to the exclude list...
   if (node.type === 'element' && node.tagName !== 'div' && node.tagName !== 'p' && node.tagName !== 'main') {
     const textNode = { type: 'text', value: `<${node.tagName}>` };
     const idx = parent.children.indexOf(node);
@@ -177,7 +167,6 @@ export function aem2doc(html, ydoc) {
   const main = tree.children.find((child) => child.tagName === 'main');
   fixImageLinks(main);
   removeComments(main);
-  // escapeBracketsInText(main);
   convertCustomTagsIntoText(main);
   (main.children || []).forEach((parent) => {
     if (parent.tagName === 'div' && parent.children) {
