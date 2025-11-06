@@ -1035,12 +1035,12 @@ assert.equal(result, html);
 
   it('Escapes brackets as needed in text', () => {
     const htmlIn = `
-      <body>
-        <header></header>
-        <main><div><p>AAAA</p><p>&lt;hihi&gt;hoho&lt;/hihi&gt;aha&lt;p&gt;yes&lt;/p&gt;</p><p>ZZ &amp; ZZ</p></div></main>
-        <footer></footer>
-      </body>
-      `;
+<body>
+  <header></header>
+  <main><div><p>AAAA</p><p>&lt;hihi&gt;hoho&lt;/hihi&gt;aha&lt;p&gt;yes&lt;/p&gt;</p><p>ZZ &amp; ZZ</p></div></main>
+  <footer></footer>
+</body>
+`;
 
     const yDoc = new Y.Doc();
     aem2doc(htmlIn, yDoc);
