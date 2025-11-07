@@ -1054,4 +1054,74 @@ assert.equal(result, html);
     assert.equal(result, htmlIn,
       'The escaping of brackets in text should have been applied');
   });
+
+  it('Test conversion of old custom tags into text', () => {
+    const htmlIn = `
+
+    <body>
+    <header></header>
+    <main>
+      <div>
+        <p>This <foo> is </bar> text</p>
+        <ul>
+          <li><hello blurb="yes"> list item</li>
+        </ul>
+        <p>Normal text</p>
+        <blockquote><p><hi there> Block text </p></blockquote>
+        <p>Normal again</p>
+        <pre><code><yoho/>! Code text </code></pre>
+        <p>More normal text</p>
+        <div class="myblock">
+          <div>
+            <div><p>key: <key></p></div>
+            <div><p>val: <val></p></div>
+          </div>
+        </div>
+        <p>normal again</p>
+        <picture><source srcset="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg"><source srcset="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg" media="(min-width: 600px)"><img src="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg" loading="lazy"></picture>
+        <p>And a link: <a href="https://example.com/" title="Foo Title">https://example.com/ <My> Text</a></p>
+        <p>More text</p>
+        <p>This is < 6 but > 7</p><p>This is > 7 but < 5.</p>
+        <p>This is <6 but>7</p><p>This is >7 but <5.</p>
+      </div>
+    </main>
+    <footer></footer>
+  </body>`;
+
+  const yDoc = new Y.Doc();
+  aem2doc(htmlIn, yDoc);
+  const result = doc2aem(yDoc);
+
+  const htmlOut = `
+<body>
+  <header></header>
+  <main>
+    <div>
+      <p>This &lt;foo&gt; is text</p>
+      <ul>
+        <li>&lt;hello blurb="yes"&gt; list item</li>
+      </ul>
+      <p>Normal text</p>
+      <blockquote><p>&lt;hi there=""&gt; Block text</p></blockquote>
+      <p>Normal again</p>
+      <pre><code>&lt;yoho&gt;! Code text </code></pre>
+      <p>More normal text</p>
+      <div class="myblock">
+        <div>
+          <div><p>key: &lt;key&gt;</p></div>
+          <div><p>val: &lt;val&gt;</p></div>
+        </div>
+      </div>
+      <p>normal again</p>
+      <picture><source srcset="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg"><source srcset="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg" media="(min-width: 600px)"><img src="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg" loading="lazy"></picture>
+      <p>And a link: <a href="https://example.com/" title="Foo Title">https://example.com/ &lt;my&gt; Text</a></p><p>More text</p>
+      <p>This is &lt; 6 but &gt; 7</p><p>This is &gt; 7 but &lt; 5.</p>
+      <p>This is &lt;6 but&gt;7</p><p>This is &gt;7 but &lt;5.</p>
+    </div>
+  </main>
+  <footer></footer>
+</body>`;
+  assert.equal(collapseWhitespace(result), collapseWhitespace(htmlOut),
+    'The custom tags should have been converted into text');
+  });
 });
