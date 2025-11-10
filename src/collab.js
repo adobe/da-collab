@@ -17,7 +17,11 @@ import {
 import { DOMParser, DOMSerializer } from 'prosemirror-model';
 import { fromHtml } from 'hast-util-from-html';
 import { matches } from 'hast-util-select';
-import { getSchema } from './schema.js';
+import { getSchema, isKnownHTMLTag } from './schema.js';
+
+function escapeBrackets(text) {
+  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
 
 function convertSectionBreak(node) {
   if (!node) return;
@@ -289,6 +293,25 @@ function processDiffTags(main) {
   });
 }
 
+const getAttrString = (attributes) => Object.entries(attributes).map(([key, value]) => ` ${key}="${value}"`).join('');
+
+function convertCustomTagsIntoText(node, parent) {
+  if (!node) return node;
+  if (node.type === 'element' && !isKnownHTMLTag(node.tagName)) {
+    const textNode = { type: 'text', value: `<${node.tagName}${getAttrString(node.properties)}>` };
+    const idx = parent.children.indexOf(node);
+    if (idx >= 0) {
+      parent.children.splice(idx, 1, textNode);
+      parent.children.push(...node.children);
+    }
+  }
+  if (node.children) {
+    const children = [...node.children]; // Take a copy as next line might modify the children array
+    children.forEach((n) => convertCustomTagsIntoText(n, node));
+  }
+  return node;
+}
+
 export function aem2doc(html, ydoc) {
   if (!html) {
     html = EMPTY_DOC;
@@ -305,6 +328,7 @@ export function aem2doc(html, ydoc) {
     }
     fixImageLinks(main);
     removeComments(main);
+    convertCustomTagsIntoText(main);
     (main.children || []).forEach((section) => {
       if (section.tagName === 'div' && section.children) {
         const children = [];
@@ -436,14 +460,12 @@ export function aem2doc(html, ydoc) {
   prosemirrorToYXmlFragment(json, ydoc.getXmlFragment('prosemirror'));
 }
 
-const getAttrString = (attributes) => Object.entries(attributes).map(([key, value]) => ` ${key}="${value}"`).join('');
-
 function tohtml(node) {
   const { attributes } = node;
   let attrString = getAttrString(attributes);
   if (!node.children || node.children.length === 0) {
     if (node.type === 'text') {
-      return node.text;
+      return escapeBrackets(node.text);
     }
     if (node.type === 'p') return '';
     if (node.type === 'img') {

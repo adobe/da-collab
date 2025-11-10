@@ -359,3 +359,16 @@ export function getSchema() {
   const customMarks = addCustomMarks(marks);
   return new Schema({ nodes, marks: customMarks });
 }
+
+const KNOWN_HTML_TAGS = [
+  'div', 'p', 'hr', 'body', 'header', 'main', 'footer',
+  'em', 'strong', 's', 'u', 'i', 'b',
+  'blockquote', 'picture', 'source', 'img', 'a',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'pre', 'code', 'img', 'br', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'td', 'th',
+  'sup', 'sub', 'da-loc-added', 'da-loc-deleted', 'da-diff-added', 'da-diff-deleted',
+];
+
+export function isKnownHTMLTag(tag) {
+  return KNOWN_HTML_TAGS.includes(tag);
+}
