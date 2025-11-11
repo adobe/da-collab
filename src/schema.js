@@ -362,7 +362,7 @@ export function getSchema() {
 
 const KNOWN_HTML_TAGS = [
   'div', 'p', 'hr', 'body', 'header', 'main', 'footer',
-  'em', 'strong', 's', 'u', 'i', 'b',
+  'em', 'strong', 's', 'u', 'i', 'b', 'span',
   'blockquote', 'picture', 'source', 'img', 'a',
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'pre', 'code', 'img', 'br', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'td', 'th',
