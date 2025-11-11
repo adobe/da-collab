@@ -1081,6 +1081,7 @@ assert.equal(result, html);
         <picture><source srcset="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg"><source srcset="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg" media="(min-width: 600px)"><img src="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg" loading="lazy"></picture>
         <p>And a link: <a href="https://example.com/" title="Foo Title">https://example.com/ <My> Text</a></p>
         <p>More text</p>
+        <span className="highlighted-context">hihihi</span>
         <p>This is < 6 but > 7</p><p>This is > 7 but < 5.</p>
         <p>This is <6 but>7</p><p>This is >7 but <5.</p>
       </div>
@@ -1114,7 +1115,9 @@ assert.equal(result, html);
       </div>
       <p>normal again</p>
       <picture><source srcset="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg"><source srcset="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg" media="(min-width: 600px)"><img src="https://content.da.live/da-sites/da-status/bosschae/.page9c/lm.jpeg" loading="lazy"></picture>
-      <p>And a link: <a href="https://example.com/" title="Foo Title">https://example.com/ &lt;my&gt; Text</a></p><p>More text</p>
+      <p>And a link: <a href="https://example.com/" title="Foo Title">https://example.com/ &lt;my&gt; Text</a></p>
+      <p>More text</p>
+      <p>hihihi</p>
       <p>This is &lt; 6 but &gt; 7</p><p>This is &gt; 7 but &lt; 5.</p>
       <p>This is &lt;6 but&gt;7</p><p>This is &gt;7 but &lt;5.</p>
     </div>
