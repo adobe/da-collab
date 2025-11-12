@@ -348,7 +348,27 @@ export function getSchema() {
   let { nodes } = baseSchema.spec;
   const { marks } = baseSchema.spec;
   nodes = addListNodeSchema(nodes);
+
+  // Update diff nodes to allow list_item after list nodes are added
+  nodes = nodes.update('diff_deleted', { ...nodes.get('diff_deleted'), content: '(block | list_item)+' });
+  nodes = nodes.update('diff_added', { ...nodes.get('diff_added'), content: '(block | list_item)+' });
+  nodes = nodes.update('loc_deleted', { ...nodes.get('loc_deleted'), content: '(block | list_item)+' });
+  nodes = nodes.update('loc_added', { ...nodes.get('loc_added'), content: '(block | list_item)+' });
+
   nodes = nodes.append(getTableNodeSchema());
   const customMarks = addCustomMarks(marks);
   return new Schema({ nodes, marks: customMarks });
+}
+
+const KNOWN_HTML_TAGS = [
+  'div', 'p', 'hr', 'body', 'header', 'main', 'footer',
+  'em', 'strong', 's', 'u', 'i', 'b', 'span',
+  'blockquote', 'picture', 'source', 'img', 'a',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'pre', 'code', 'img', 'br', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'td', 'th',
+  'sup', 'sub', 'da-loc-added', 'da-loc-deleted', 'da-diff-added', 'da-diff-deleted',
+];
+
+export function isKnownHTMLTag(tag) {
+  return KNOWN_HTML_TAGS.includes(tag);
 }

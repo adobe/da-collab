@@ -9,13 +9,19 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
+/* eslint-disable no-param-reassign */
+
 import {
   prosemirrorToYXmlFragment, yDocToProsemirror,
 } from 'y-prosemirror';
 import { DOMParser, DOMSerializer } from 'prosemirror-model';
 import { fromHtml } from 'hast-util-from-html';
 import { matches } from 'hast-util-select';
-import { getSchema } from './schema.js';
+import { getSchema, isKnownHTMLTag } from './schema.js';
+
+function escapeBrackets(text) {
+  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
 
 function convertSectionBreak(node) {
   if (!node) return;
@@ -24,9 +30,7 @@ function convertSectionBreak(node) {
   }
   if (node.tagName === 'p' && node.children && node.children.length === 1) {
     if (node.children[0].type === 'text' && node.children[0].value === '---') {
-      // eslint-disable-next-line no-param-reassign
       node.children.length = 0;
-      // eslint-disable-next-line no-param-reassign
       node.tagName = 'hr';
     }
   }
@@ -119,7 +123,6 @@ function fixImageLinks(node) {
             hasImages = true;
             linkChild.children.forEach((pictureChild) => {
               if (pictureChild.tagName === 'img') {
-                // eslint-disable-next-line no-param-reassign
                 pictureChild.properties = {
                   ...pictureChild.properties,
                   ...propsToAdd,
@@ -128,7 +131,6 @@ function fixImageLinks(node) {
             });
           } else if (linkChild.tagName === 'img') {
             hasImages = true;
-            // eslint-disable-next-line no-param-reassign
             linkChild.properties = {
               ...linkChild.properties,
               ...propsToAdd,
@@ -161,7 +163,6 @@ function fixImageLinks(node) {
         }
       });
 
-      // eslint-disable-next-line no-param-reassign
       node.children = newChildren;
     }
   }
@@ -171,7 +172,6 @@ function fixImageLinks(node) {
 
 function removeComments(node) {
   if (!node) return node;
-  // eslint-disable-next-line no-param-reassign
   node.children = node.children?.filter((child) => child.type !== 'comment') || [];
   node.children.forEach(removeComments);
   return node;
@@ -181,7 +181,6 @@ export const EMPTY_DOC = '<body><header></header><main><div></div></main><footer
 
 function convertLocTags(html) {
   // TODO: Remove this once we no longer support old regional edits
-  // eslint-disable-next-line no-param-reassign
   html = html.replaceAll('<da-loc-added', '<da-diff-added')
     .replaceAll('<da-loc-deleted', '<da-diff-deleted')
     .replaceAll('</da-loc-added', '</da-diff-added')
@@ -189,53 +188,92 @@ function convertLocTags(html) {
   return html;
 }
 
-/**
- * Wraps elements with da-diff-added attribute in a da-diff-added element
- * If the element is a block-group-start, it will wrap the entire block-group
- */
-function processDaDiffAdded(main) {
-  if (!main?.children) return;
+const createWrapper = (children) => ({
+  type: 'element',
+  tagName: 'da-diff-added',
+  properties: {},
+  children,
+});
 
-  // Helper function to create wrapper element
-  const createWrapper = (children) => ({
-    type: 'element',
-    tagName: 'da-diff-added',
-    properties: {},
-    children,
+const hasDaDiffAdded = (child) => child.type === 'element' && child.properties?.['da-diff-added'] !== undefined;
+
+const isBlockGroupStart = (child) => child.tagName === 'div' && child.properties?.className?.includes('block-group-start');
+
+const isBlockGroupEnd = (child) => child.tagName === 'div' && child.properties?.className?.includes('block-group-end');
+
+const collectBlockGroup = (children, startIndex) => {
+  const endIndex = children.findIndex(
+    (child, index) => index > startIndex && isBlockGroupEnd(child),
+  );
+
+  return {
+    elementsToWrap: children.slice(startIndex, endIndex === -1 ? children.length : endIndex + 1),
+    endIndex: endIndex === -1 ? children.length - 1 : endIndex,
+  };
+};
+
+function wrapDiffDeletedListTags(listNode) {
+  if (!listNode?.children) return listNode;
+
+  const newChildren = [];
+  let hasDeletedMarkers = false;
+
+  listNode.children.forEach((child) => {
+    if (child.tagName === 'da-diff-deleted' && child.children[0]?.tagName === 'li') {
+      hasDeletedMarkers = true;
+      // Unwrap da-diff-deleted from around li, move it inside
+      const li = child.children[0];
+      delete child.properties['data-mdast'];
+      delete child.properties.contenteditable;
+      // Wrap all li children with da-diff-deleted
+      li.children = [{
+        type: 'element',
+        tagName: 'da-diff-deleted',
+        properties: child.properties,
+        children: li.children,
+      }];
+      newChildren.push(li);
+    } else {
+      newChildren.push(child);
+    }
   });
 
-  const hasDaDiffAdded = (child) => child.type === 'element'
-    && child.properties?.['da-diff-added'] !== undefined;
+  if (hasDeletedMarkers) {
+    listNode.children = newChildren;
+  }
 
-  const isBlockGroupStart = (child) => child.tagName === 'div'
-    && child.properties?.className?.includes('block-group-start');
+  return listNode;
+}
 
-  const isBlockGroupEnd = (child) => child.tagName === 'div'
-    && child.properties?.className?.includes('block-group-end');
+function unwrapDiffAddedListTags(listNode) {
+  if (!listNode?.children) return listNode;
 
-  const collectBlockGroup = (children, startIndex) => {
-    const endIndex = children.findIndex(
-      (child, index) => index > startIndex && isBlockGroupEnd(child),
-    );
+  listNode.children.forEach((child) => {
+    if (child.tagName === 'li' && child.properties?.['da-diff-added'] !== undefined) {
+      delete child.properties['da-diff-added'];
+      child.children = [createWrapper(child.children)];
+    }
+  });
+  return listNode;
+}
 
-    return {
-      elementsToWrap: children.slice(
-        startIndex,
-        endIndex === -1 ? children.length : endIndex + 1,
-      ),
-      endIndex: endIndex === -1 ? children.length - 1 : endIndex,
-    };
-  };
+/**
+ * Processes diff tags (da-diff-added and da-diff-deleted) in the document
+ * - Wraps elements with da-diff-added attribute in a da-diff-added element
+ * - Transforms list items with diff markers
+ * - If the element is a block-group-start, it will wrap the entire block-group
+ */
+function processDiffTags(main) {
+  if (!main?.children) return;
 
-  main.children.forEach((divChild) => {
-    if (divChild.tagName !== 'div' || !divChild.children) return;
+  main.children.forEach((sectionDiv) => {
+    if (sectionDiv.tagName !== 'div' || !sectionDiv.children) return;
 
-    const children = [...divChild.children];
+    const children = [...sectionDiv.children];
     const newChildren = [];
 
     for (let i = 0; i < children.length; i += 1) {
       const child = children[i];
-
       if (hasDaDiffAdded(child)) {
         if (isBlockGroupStart(child)) {
           const { elementsToWrap, endIndex } = collectBlockGroup(children, i);
@@ -244,13 +282,14 @@ function processDaDiffAdded(main) {
         } else {
           newChildren.push(createWrapper([child]));
         }
+      } else if (child.tagName === 'ul' || child.tagName === 'ol') {
+        newChildren.push(unwrapDiffAddedListTags(wrapDiffDeletedListTags(child)));
       } else {
         newChildren.push(child);
       }
     }
 
-    // eslint-disable-next-line no-param-reassign
-    divChild.children = newChildren;
+    sectionDiv.children = newChildren;
   });
 }
 
@@ -273,13 +312,30 @@ const getMetadata = (metadataTree) => {
   return attrs;
 };
 
+const getAttrString = (attributes) => Object.entries(attributes).map(([key, value]) => ` ${key}="${value}"`).join('');
+
+function convertCustomTagsIntoText(node, parent) {
+  if (!node) return node;
+  if (node.type === 'element' && !isKnownHTMLTag(node.tagName)) {
+    const textNode = { type: 'text', value: `<${node.tagName}${getAttrString(node.properties)}>` };
+    const idx = parent.children.indexOf(node);
+    if (idx >= 0) {
+      parent.children.splice(idx, 1, textNode);
+      parent.children.push(...node.children);
+    }
+  }
+  if (node.children) {
+    const children = [...node.children]; // Take a copy as next line might modify the children array
+    children.forEach((n) => convertCustomTagsIntoText(n, node));
+  }
+  return node;
+}
+
 export function aem2doc(html, ydoc) {
   if (!html) {
-    // eslint-disable-next-line no-param-reassign
     html = EMPTY_DOC;
   }
   if (html.includes('<da-loc-added') || html.includes('<da-loc-deleted')) {
-    // eslint-disable-next-line no-param-reassign
     html = convertLocTags(html);
   }
 
@@ -291,16 +347,17 @@ export function aem2doc(html, ydoc) {
 
   const main = tree.children.find((child) => child.tagName === 'main');
   if (main) {
-    if (html.includes('da-diff-added')) {
-      processDaDiffAdded(main);
+    if (html.includes('da-diff-added') || html.includes('da-diff-deleted')) {
+      processDiffTags(main);
     }
     fixImageLinks(main);
     removeComments(main);
-    (main.children || []).forEach((parent) => {
-      if (parent.tagName === 'div' && parent.children) {
+    convertCustomTagsIntoText(main);
+    (main.children || []).forEach((section) => {
+      if (section.tagName === 'div' && section.children) {
         const children = [];
         let modified = false;
-        parent.children.forEach((child) => {
+        section.children.forEach((child) => {
           if (child.tagName === 'div' && child.properties.className?.length > 0) {
             modified = true;
             blockToTable(child, children);
@@ -314,10 +371,8 @@ export function aem2doc(html, ydoc) {
                 locChildren.push(locChild);
               }
             });
-            // eslint-disable-next-line no-param-reassign
-            parent.children = children;
+            section.children = children;
 
-            // eslint-disable-next-line no-param-reassign
             child.children = locChildren;
             children.push(child);
           } else {
@@ -325,8 +380,7 @@ export function aem2doc(html, ydoc) {
           }
         });
         if (modified) {
-          // eslint-disable-next-line no-param-reassign
-          parent.children = children;
+          section.children = children;
         }
       }
     });
@@ -404,11 +458,9 @@ export function aem2doc(html, ydoc) {
           // that then calls fromParse5 in hast-util-from-parse5
           // which converts the `colspan`/`rowspan` attribute to `colSpan`/`rowSpan`
           if (name === 'colspan') {
-            // eslint-disable-next-line no-param-reassign
             name = 'colSpan';
           }
           if (name === 'rowspan') {
-            // eslint-disable-next-line no-param-reassign
             name = 'rowSpan';
           }
           return target.properties ? target.properties[name] : undefined;
@@ -444,14 +496,12 @@ export function aem2doc(html, ydoc) {
   prosemirrorToYXmlFragment(json, ydoc.getXmlFragment('prosemirror'));
 }
 
-const getAttrString = (attributes) => Object.entries(attributes).map(([key, value]) => ` ${key}="${value}"`).join('');
-
 function tohtml(node) {
   const { attributes } = node;
   let attrString = getAttrString(attributes);
   if (!node.children || node.children.length === 0) {
     if (node.type === 'text') {
-      return node.text;
+      return escapeBrackets(node.text);
     }
     if (node.type === 'p') return '';
     if (node.type === 'img') {
@@ -479,6 +529,7 @@ function tohtml(node) {
     return result;
   }
   let { children } = node;
+  // Collapse single <p> wrapper in list items (regardless of diff markers)
   if (node.type === 'li' && children.length === 1 && children[0].type === 'p') {
     children = children[0].children;
   }
@@ -515,6 +566,50 @@ function toBlockCSSClassNames(text) {
     .replace(/^-+/, '')
     .replace(/-+$/, ''))
     .filter((name) => !!name);
+}
+
+function convertDiffAddedListTags(listNode) {
+  if (!listNode?.children) return listNode;
+
+  const newChildren = [];
+  let hasMarkers = false;
+
+  listNode.children.forEach((child) => {
+    if (child.type === 'li' && child.children[0]?.type === 'da-diff-added') {
+      hasMarkers = true;
+      child.attributes['da-diff-added'] = '';
+      child.children = child.children[0].children;
+      child.children.forEach((node) => {
+        if (node.attributes?.['da-diff-added'] !== undefined) {
+          delete node.attributes['da-diff-added'];
+        }
+      });
+      newChildren.push(child);
+    } else if (child.type === 'li' && child.children[0]?.type === 'da-diff-deleted') {
+      hasMarkers = true;
+      // Wrap li with da-diff-deleted and add data-mdast attribute
+      const deletedWrapper = {
+        type: 'da-diff-deleted',
+        attributes: { 'data-mdast': 'ignore' },
+        children: [],
+      };
+      // unwrap the da-diff-deleted from inside the li
+      const deletedContent = child.children[0];
+      delete deletedContent.attributes.contenteditable;
+      child.children = deletedContent.children;
+      deletedWrapper.children.push(child);
+      newChildren.push(deletedWrapper);
+    } else {
+      newChildren.push(child);
+    }
+  });
+
+  // Only reassign if we actually found markers
+  if (hasMarkers) {
+    listNode.children = newChildren;
+  }
+
+  return listNode;
 }
 
 export function tableToBlock(child, fragment) {
@@ -581,13 +676,14 @@ export function doc2aem(ydoc) {
   children.forEach((child) => {
     if (child.type === 'table') {
       tableToBlock(child, fragment);
+    } else if (child.type === 'ul' || child.type === 'ol') {
+      const updateList = convertDiffAddedListTags(child);
+      fragment.children.push(updateList);
     } else if (child.type === 'da-diff-deleted'
       // da-loc-* temporary code to support old regional edits
       || child.type === 'da-loc-deleted' || child.type === 'da-loc-added') {
-      // eslint-disable-next-line no-param-reassign
       delete child.attributes.contenteditable;
       const locChildren = child.children;
-      // eslint-disable-next-line no-param-reassign
       child.children = [];
       locChildren.forEach((locChild) => {
         if (locChild.type === 'table') {
