@@ -375,6 +375,14 @@ export const persistence = {
             try {
               // clear document
               rootType.delete(0, rootType.length);
+
+              // clear all maps
+              ydoc.share.forEach((type) => {
+                if (type instanceof Y.Map) {
+                  type.clear();
+                }
+              });
+
               // restore from da-admin
               aem2doc(current, ydoc);
 
