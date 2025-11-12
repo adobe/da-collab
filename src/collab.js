@@ -623,8 +623,14 @@ export function doc2aem(ydoc) {
     },
   };
 
-  DOMSerializer.fromSchema(schema)
-    .serializeFragment(json.content, { document: new Proxy({}, handler3) });
+  const nodes = DOMSerializer.nodesFromSchema(schema);
+  const marks = DOMSerializer.marksFromSchema(schema);
+
+  // Remove contextHighlightingMark so it doesn't render any wrapper
+  delete marks.contextHighlightingMark;
+
+  const serializer = new DOMSerializer(nodes, marks);
+  serializer.serializeFragment(json.content, { document: new Proxy({}, handler3) });
 
   // convert table to blocks
   const { children } = fragment;
