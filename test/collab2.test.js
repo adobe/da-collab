@@ -222,4 +222,72 @@ describe('Parsing test suite', () => {
   assert.equal(collapseWhitespace(result), collapseWhitespace(html));
   });
 
+  it('strips contextHighlightingMark span wrapper', async () => {
+    // Create a ydoc with contextHighlightingMark applied to text programmatically
+    const yDoc = new Y.Doc();
+
+    // First create a basic document structure
+    const baseHtml = `
+    <body>
+      <header></header>
+      <main>
+        <div>
+          <p>Normal text before</p>
+          <p>This is some text in a paragraph.</p>
+          <p>Entire paragraph here</p>
+          <p>Normal text after</p>
+        </div>
+      </main>
+      <footer></footer>
+    </body>`;
+
+    aem2doc(baseHtml, yDoc);
+
+    // Now manually apply the contextHighlightingMark to some text in the ydoc
+    // We need to import the necessary ProseMirror utilities
+    const { prosemirrorToYXmlFragment, yDocToProsemirror } = await import('y-prosemirror');
+    const { getSchema } = await import('../src/schema.js');
+
+    const schema = getSchema();
+    const pmDoc = yDocToProsemirror(schema, yDoc);
+
+    // Apply the contextHighlightingMark to "some text" in the second paragraph
+    const markType = schema.marks.contextHighlightingMark;
+    const tr = pmDoc.type.schema.node('doc', null, [
+      pmDoc.content.child(0), // first paragraph: "Normal text before"
+      schema.nodes.paragraph.create(null, [
+        schema.text('This is '),
+        schema.text('some text', [markType.create()]), // Apply the mark here
+        schema.text(' in a paragraph.'),
+      ]),
+      schema.nodes.paragraph.create(null, [
+        schema.text('Entire paragraph here', [markType.create()]), // Apply to entire paragraph
+      ]),
+      pmDoc.content.child(3), // last paragraph: "Normal text after"
+    ]);
+
+    // Write the modified document back to the ydoc
+    prosemirrorToYXmlFragment(tr, yDoc.getXmlFragment('prosemirror'));
+
+    // Now convert back to HTML - the mark should be stripped
+    const result = doc2aem(yDoc);
+
+    const expectedOut = `
+    <body>
+      <header></header>
+      <main>
+        <div>
+          <p>Normal text before</p>
+          <p>This is some text in a paragraph.</p>
+          <p>Entire paragraph here</p>
+          <p>Normal text after</p>
+        </div>
+      </main>
+      <footer></footer>
+    </body>`;
+
+    assert.equal(collapseWhitespace(result), collapseWhitespace(expectedOut),
+      'The contextHighlightingMark should be stripped during doc2aem, leaving only the text');
+  });
+
 });
