@@ -139,139 +139,191 @@ describe('Collab Test Suite', () => {
   });
 
   it('Test persistence get ok', async () => {
-    const daadmin = {};
-    daadmin.fetch = async (url, opts) => {
-      assert.equal(url, 'foo');
-      assert.equal(opts.method, undefined);
-      assert(opts.headers === undefined);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      assert.equal(url, 'https://admin.da.live/foo');
+      assert.equal(opts.method, 'GET');
+      assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
       return { ok: true, text: async () => 'content', status: 200, statusText: 'OK' };
     };
-    const result = await persistence.get('foo', undefined, daadmin);
-    assert.equal(result, 'content');
+
+    try {
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const result = await persistence.get('foo', undefined, env);
+      assert.equal(result, 'content');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test persistence get auth', async () => {
-    const daadmin = {};
-    daadmin.fetch = async (url, opts) => {
-      assert.equal(url, 'foo');
-      assert.equal(opts.method, undefined);
-      assert.equal(opts.headers.get('authorization'), 'auth');
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      assert.equal(url, 'https://admin.da.live/foo');
+      assert.equal(opts.method, 'GET');
+      assert.equal(opts.headers.get('Authorization'), 'auth');
+      assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
       return { ok: true, text: async () => 'content', status: 200, statusText: 'OK' };
     };
-    const result = await persistence.get('foo', 'auth', daadmin);
-    assert.equal(result, 'content');
+
+    try {
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const result = await persistence.get('foo', 'auth', env);
+      assert.equal(result, 'content');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test persistence get 404', async () => {
-    const daadmin = {};
-    daadmin.fetch = async (url, opts) => {
-      assert.equal(url, 'foo');
-      assert.equal(opts.method, undefined);
-      assert.equal(opts.headers.get('authorization'), 'auth');
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      assert.equal(url, 'https://admin.da.live/foo');
+      assert.equal(opts.method, 'GET');
+      assert.equal(opts.headers.get('Authorization'), 'auth');
+      assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
       return { ok: false, text: async () => { throw new Error(); }, status: 404, statusText: 'Not Found' };
     };
-    const result = await persistence.get('foo', 'auth', daadmin);
-    assert.equal(result, null);
+
+    try {
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const result = await persistence.get('foo', 'auth', env);
+      assert.equal(result, null);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test persistence get throws', async () => {
-    const daadmin = {};
-    daadmin.fetch = async (url, opts) => {
-      assert.equal(url, 'foo');
-      assert.equal(opts.method, undefined);
-      assert.equal(opts.headers.get('authorization'), 'auth');
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      assert.equal(url, 'https://admin.da.live/foo');
+      assert.equal(opts.method, 'GET');
+      assert.equal(opts.headers.get('Authorization'), 'auth');
+      assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
       return { ok: false, text: async () => { throw new Error(); }, status: 500, statusText: 'Error' };
     };
+
     try {
-      const result = await persistence.get('foo', 'auth', daadmin);
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const result = await persistence.get('foo', 'auth', env);
       assert.fail("Expected get to throw");
     } catch (error) {
       // expected
       assert(error.toString().includes('unable to get resource - status: 500'));
+    } finally {
+      globalThis.fetch = originalFetch;
     }
   });
 
   it('Test persistence put ok', async () => {
-    const daadmin = {};
-    daadmin.fetch = async (url, opts) => {
-      assert.equal(url, 'foo');
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      assert.equal(url, 'https://admin.da.live/foo');
       assert.equal(opts.method, 'PUT');
-      assert(opts.headers === undefined);
+      assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
       assert.equal(await opts.body.get('data').text(), 'test');
       return { ok: true, status: 200, statusText: 'OK - Stored'};
     };
-    const conns = new Map();
-    // conns.set({}, new Set());
-    const result = await persistence.put({ name: 'foo', conns, daadmin }, 'test');
-    assert(result.ok);
-    assert.equal(result.status, 200);
-    assert.equal(result.statusText, 'OK - Stored');
+
+    try {
+      const conns = new Map();
+      const ydoc = { name: 'foo', conns };
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const result = await persistence.put(ydoc, 'test', env);
+      assert(result.ok);
+      assert.equal(result.status, 200);
+      assert.equal(result.statusText, 'OK - Stored');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test persistence put ok with auth', async () => {
-    const daadmin = {};
-    daadmin.fetch = async (url, opts) => {
-      assert.equal(url, 'foo');
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      assert.equal(url, 'https://admin.da.live/foo');
       assert.equal(opts.method, 'PUT');
       assert.equal('myauth', opts.headers.get('Authorization'));
       assert.equal('collab', opts.headers.get('X-DA-Initiator'));
       assert.equal(await opts.body.get('data').text(), 'test');
       return { ok: true, status: 200, statusText: 'OK - Stored too'};
     };
-    const conns = new Map();
-    conns.set({ auth: 'myauth' }, new Set());
-    const result = await persistence.put({ name: 'foo', conns, daadmin }, 'test');
-    assert(result.ok);
-    assert.equal(result.status, 200);
-    assert.equal(result.statusText, 'OK - Stored too');
+
+    try {
+      const conns = new Map();
+      conns.set({ auth: 'myauth' }, new Set());
+      const ydoc = { name: 'foo', conns };
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const result = await persistence.put(ydoc, 'test', env);
+      assert(result.ok);
+      assert.equal(result.status, 200);
+      assert.equal(result.statusText, 'OK - Stored too');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test persistence readonly does not put but is ok', async () => {
-    const daadmin = {};
-    daadmin.fetch = async (url, opts) => {
-      assert.equal(url, 'foo');
-      assert.equal(opts.method, 'PUT');
-      assert(opts.headers === undefined);
-      assert.equal(await opts.body.get('data').text(), 'test');
-      return { ok: true, status: 200, statusText: 'OK'};
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      assert.fail('Should not be called for readonly connections');
     };
-    const result = await persistence.put({ name: 'foo', conns: new Map(), daadmin }, 'test');
-    assert(result.ok);
+
+    try {
+      const conns = new Map();
+      const readonlyConn = { readOnly: true };
+      conns.set(readonlyConn, new Set());
+      const ydoc = { name: 'foo', conns };
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const result = await persistence.put(ydoc, 'test', env);
+      assert(result.ok);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test persistence put auth', async () => {
-    const daadmin = {};
-    daadmin.fetch = async (url, opts) => {
-      assert.equal(url, 'foo');
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      assert.equal(url, 'https://admin.da.live/foo');
       assert.equal(opts.method, 'PUT');
-      assert.equal(opts.headers.get('authorization'), 'auth');
+      assert.equal(opts.headers.get('Authorization'), 'auth');
       assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
       assert.equal(await opts.body.get('data').text(), 'test');
       return { ok: true, status: 200, statusText: 'okidoki'};
     };
-    const result = await persistence.put({
-      name: 'foo',
-      conns: new Map().set({ auth: 'auth', authActions: ['read', 'write'] }, new Set()),
-      daadmin
-    }, 'test');
-    assert(result.ok);
-    assert.equal(result.status, 200);
-    assert.equal(result.statusText, 'okidoki');
+
+    try {
+      const conns = new Map().set({ auth: 'auth', authActions: ['read', 'write'] }, new Set());
+      const ydoc = { name: 'foo', conns };
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const result = await persistence.put(ydoc, 'test', env);
+      assert(result.ok);
+      assert.equal(result.status, 200);
+      assert.equal(result.statusText, 'okidoki');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test persistence put auth no perm', async () => {
     const fetchCalled = [];
-    const daadmin = {};
-    daadmin.fetch = async (url, opts) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
       fetchCalled.push('true');
     };
-    const result = await persistence.put({
-      name: 'bar',
-      conns: new Map().set({ auth: 'auth', readOnly: true }, new Set()),
-      daadmin
-    }, 'toast');
-    assert(result.ok);
-    assert.equal(fetchCalled.length, 0, 'Should not have called fetch');
+
+    try {
+      const conns = new Map().set({ auth: 'auth', readOnly: true }, new Set());
+      const ydoc = { name: 'bar', conns };
+      const env = { DAADMIN_API: 'https://admin.da.live' };
+      const result = await persistence.put(ydoc, 'toast', env);
+      assert(result.ok);
+      assert.equal(fetchCalled.length, 0, 'Should not have called fetch');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('Test persistence update does not put if no change', async () => {
@@ -462,7 +514,6 @@ describe('Collab Test Suite', () => {
 
     const docName = 'http://lalala.com/ha/ha/ha.html';
     const testYDoc = new Y.Doc();
-    testYDoc.daadmin = 'daadmin';
     const mockConn = {
       auth: 'myauth',
       authActions: ['read']
@@ -470,13 +521,14 @@ describe('Collab Test Suite', () => {
     pss.setYDoc(docName, testYDoc);
 
     const mockStorage = { list: () => new Map() };
+    const mockEnv = { DAADMIN_API: 'https://admin.da.live' };
 
-    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    pss.persistence.get = async (nm, au, env) => `Get: ${nm}-${au}-${env.DAADMIN_API}`;
     const updated = new Map();
     pss.persistence.update = async (d, v) => updated.set(d, v);
 
     assert.equal(0, updated.size, 'Precondition');
-    await pss.persistence.bindState(docName, testYDoc, mockConn, mockStorage);
+    await pss.persistence.bindState(docName, testYDoc, mockConn, mockStorage, mockEnv);
 
     assert.equal(0, aem2DocCalled.length, 'Precondition, it\'s important to handle the doc setting async');
 
@@ -484,7 +536,7 @@ describe('Collab Test Suite', () => {
     await wait(1500);
 
     assert.equal(2, aem2DocCalled.length);
-    assert.equal('Get: http://lalala.com/ha/ha/ha.html-myauth-daadmin', aem2DocCalled[0]);
+    assert.equal('Get: http://lalala.com/ha/ha/ha.html-myauth-https://admin.da.live', aem2DocCalled[0]);
     assert.equal(testYDoc, aem2DocCalled[1]);
   });
 
@@ -701,18 +753,18 @@ describe('Collab Test Suite', () => {
   it('test bind to empty doc that was stored before updates ydoc', async () => {
     const docName = 'https://admin.da.live/source/foo.html';
 
-    const serviceBinding = {
-      fetch: async (u) => {
-        if (u === docName) {
-          return { status: 404 };
-        }
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      if (url.toString() === 'https://admin.da.live/source/foo.html' && opts.method === 'GET') {
+        return { ok: false, status: 404, statusText: 'Not Found' };
       }
+      return { ok: true, status: 200, statusText: 'OK', text: async () => 'content' };
     };
 
     const ydoc = new Y.Doc();
-    ydoc.daadmin = serviceBinding;
     setYDoc(docName, ydoc);
     const conn = {};
+    const env = { DAADMIN_API: 'https://admin.da.live' };
 
     const deleteAllCalled = [];
     const stored = new Map();
@@ -734,11 +786,12 @@ describe('Collab Test Suite', () => {
         f();
       };
 
-      await persistence.bindState(docName, ydoc, conn, storage);
-      assert.deepStrictEqual([true], deleteAllCalled);
+      await persistence.bindState(docName, ydoc, conn, storage, env);
+      assert.deepStrictEqual(deleteAllCalled, [true]);
       assert.equal(1, setTimeoutCalled.length, 'SetTimeout should have been called to update the doc');
     } finally {
       globalThis.setTimeout = savedSetTimeout;
+      globalThis.fetch = originalFetch;
     }
   });
 
@@ -815,12 +868,12 @@ describe('Collab Test Suite', () => {
       assert.equal(bsCalls[0].d, doc);
       assert.equal(bsCalls[0].c, mockConn);
 
-      const daadmin = { foo: 'bar' }
-      const env = { daadmin };
+      const env = { DAADMIN_API: 'https://admin.da.live' };
       const doc2 = await getYDoc(docName, mockConn, env, {});
       assert.equal(1, bsCalls.length, 'Should not have called bindstate again');
       assert.equal(doc, doc2);
-      assert.equal('bar', doc.daadmin.foo, 'Should have bound daadmin now');
+      // Note: In the new implementation, the environment is not bound to the document object
+      // The environment is passed to functions but not stored on the document
     } finally {
       persistence.bindState = savedBS;
     }
@@ -883,8 +936,8 @@ describe('Collab Test Suite', () => {
 
     try {
       const bindCalls = [];
-      persistence.bindState = async (nm, d, c, s) => {
-        bindCalls.push({nm, d, c, s});
+      persistence.bindState = async (nm, d, c, s, env) => {
+        bindCalls.push({nm, d, c, s, env});
         return new Map();
       }
 
@@ -898,8 +951,7 @@ describe('Collab Test Suite', () => {
         send() {}
       };
 
-      const daadmin = { a: 'b' };
-      const env = { daadmin };
+      const env = { DAADMIN_API: 'https://admin.da.live' };
       const storage = { foo: 'bar' };
 
       assert.equal(0, bindCalls.length, 'Precondition');
@@ -910,7 +962,9 @@ describe('Collab Test Suite', () => {
       assert.equal(1, bindCalls.length);
       assert.equal(docName, bindCalls[0].nm);
       assert.equal(docName, bindCalls[0].d.name);
-      assert.equal('b', bindCalls[0].d.daadmin.a);
+      // Note: In the new implementation, the environment is not bound to the document object
+      // The environment is passed to functions but not stored on the document
+      assert.equal('https://admin.da.live', bindCalls[0].env.DAADMIN_API);
       assert.equal(mockConn, bindCalls[0].c);
       assert.deepStrictEqual(storage, bindCalls[0].s)
 
