@@ -170,8 +170,12 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.headers.get('authorization'), 'auth');
       return { ok: false, text: async () => { throw new Error(); }, status: 404, statusText: 'Not Found' };
     };
-    const result = await persistence.get('foo', 'auth', daadmin);
-    assert.equal(result, null);
+    try {
+      await persistence.get('foo', 'auth', daadmin);
+      assert.fail('Should have thrown an error');
+    } catch (error) {
+      assert(error.toString().includes('unable to get resource - status: 404'));
+    }
   });
 
   it('Test persistence get throws', async () => {
@@ -196,7 +200,7 @@ describe('Collab Test Suite', () => {
     daadmin.fetch = async (url, opts) => {
       assert.equal(url, 'foo');
       assert.equal(opts.method, 'PUT');
-      assert(opts.headers === undefined);
+      assert.equal(opts.headers.get('If-Match'), '*', 'Should include If-Match: * header');
       assert.equal(await opts.body.get('data').text(), 'test');
       return { ok: true, status: 200, statusText: 'OK - Stored'};
     };
@@ -215,6 +219,7 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, 'PUT');
       assert.equal('myauth', opts.headers.get('Authorization'));
       assert.equal('collab', opts.headers.get('X-DA-Initiator'));
+      assert.equal('*', opts.headers.get('If-Match'));
       assert.equal(await opts.body.get('data').text(), 'test');
       return { ok: true, status: 200, statusText: 'OK - Stored too'};
     };
@@ -231,7 +236,7 @@ describe('Collab Test Suite', () => {
     daadmin.fetch = async (url, opts) => {
       assert.equal(url, 'foo');
       assert.equal(opts.method, 'PUT');
-      assert(opts.headers === undefined);
+      assert.equal(opts.headers.get('If-Match'), '*');
       assert.equal(await opts.body.get('data').text(), 'test');
       return { ok: true, status: 200, statusText: 'OK'};
     };
@@ -246,6 +251,7 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, 'PUT');
       assert.equal(opts.headers.get('authorization'), 'auth');
       assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
+      assert.equal(opts.headers.get('If-Match'), '*');
       assert.equal(await opts.body.get('data').text(), 'test');
       return { ok: true, status: 200, statusText: 'okidoki'};
     };
@@ -375,6 +381,225 @@ describe('Collab Test Suite', () => {
     await testCloseAllOnAuthFailure(403);
   });
 
+  it('Test persistence update closes all and cleans storage on 412', async () => {
+    const docName = 'https://admin.da.live/source/foo.html';
+    const ydoc = new WSSharedDoc(docName);
+
+    const storageDeleteAllCalled = [];
+    ydoc.storage = {
+      deleteAll: async () => storageDeleteAllCalled.push('deleteAll'),
+    };
+
+    const closeCalled = [];
+    const conn1 = { close: () => closeCalled.push('close1'), readOnly: false };
+    const conn2 = { close: () => closeCalled.push('close2'), readOnly: false };
+    ydoc.conns.set(conn1, new Set(['client1']));
+    ydoc.conns.set(conn2, new Set(['client2']));
+
+    // Register the doc in the global map
+    const docs = setYDoc(docName, ydoc);
+    assert(docs.has(docName), 'Precondition: doc should be in global map');
+
+    ydoc.daadmin = {
+      fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
+    };
+
+    aem2doc('<main><div><p>test content</p></div></main>', ydoc);
+
+    const result = await persistence.update(ydoc, '<main><div><p>old content</p></div></main>');
+
+    // Should have cleaned storage
+    assert.equal(storageDeleteAllCalled.length, 1, 'Should have called storage.deleteAll');
+
+    // Should have closed all connections
+    assert.equal(closeCalled.length, 2, 'Should have closed both connections');
+
+    // Connections should be removed from ydoc.conns
+    assert.equal(ydoc.conns.size, 0, 'All connections should be removed from ydoc.conns');
+
+    // Doc should be removed from global docs map when last connection closes
+    assert(!docs.has(docName), 'Doc should be removed from global docs map');
+
+    // Should return the original content (update failed)
+    assert.equal(result, '<main><div><p>old content</p></div></main>');
+  });
+
+  it('Test 412 cleanup allows fresh connection attempt', async () => {
+    const docName = 'https://admin.da.live/source/bar.html';
+
+    // First connection and 412 scenario
+    const ydoc = new WSSharedDoc(docName);
+    ydoc.storage = {
+      deleteAll: async () => {},
+    };
+
+    const conn1 = { close: () => {}, readOnly: false };
+    ydoc.conns.set(conn1, new Set(['client1']));
+
+    const docs = setYDoc(docName, ydoc);
+    assert(docs.has(docName), 'Precondition');
+
+    ydoc.daadmin = {
+      fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
+    };
+
+    aem2doc('<main><div><p>content</p></div></main>', ydoc);
+
+    // Trigger 412 - should close all connections and remove from global map
+    await persistence.update(ydoc, '<main><div><p>old</p></div></main>');
+
+    assert.equal(ydoc.conns.size, 0, 'All connections should be closed');
+    assert(!docs.has(docName), 'Doc should be removed from global map after last connection closes');
+
+    // Now simulate a fresh connection attempt
+    // This should create a NEW ydoc since the old one was removed from the global map
+    const conn2 = { close: () => {}, readOnly: false };
+    const newYdoc = docs.get(docName);
+    assert.equal(newYdoc, undefined, 'Old ydoc should not be in map');
+  });
+
+  it('Test ydoc error map is set on 412', async () => {
+    const docName = 'https://admin.da.live/source/baz.html';
+    const ydoc = new WSSharedDoc(docName);
+    ydoc.storage = { deleteAll: async () => {} };
+
+    const conn1 = { close: () => {}, readOnly: false };
+    ydoc.conns.set(conn1, new Set());
+    setYDoc(docName, ydoc);
+
+    ydoc.daadmin = {
+      fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
+    };
+
+    aem2doc('<main><div><p>content</p></div></main>', ydoc);
+
+    // Before 412, error map should be empty
+    const errorMap = ydoc.getMap('error');
+    assert.equal(errorMap.size, 0, 'Precondition: error map should be empty');
+
+    await persistence.update(ydoc, '<main><div><p>old</p></div></main>');
+
+    // After 412, error map should contain error details
+    assert(errorMap.size > 0, 'Error map should have entries');
+    assert(errorMap.has('timestamp'), 'Should have timestamp');
+    assert(errorMap.has('message'), 'Should have message');
+    assert(errorMap.has('stack'), 'Should have stack');
+    assert(errorMap.get('message').includes('412'), 'Error message should mention 412');
+  });
+
+  it('Test update handlers stop after 412 cleanup', async () => {
+    const mockdebounce = (f) => {
+      let debounced = async () => await f();
+      debounced.cancel = () => {};
+      return debounced;
+    };
+    const pss = await esmock(
+      '../src/shareddoc.js', {
+        'lodash/debounce.js': {
+          default: mockdebounce
+        }
+      });
+
+    const docName = 'https://admin.da.live/source/qux.html';
+    const ydoc = new pss.WSSharedDoc(docName);
+    ydoc.storage = { deleteAll: async () => {} };
+
+    const conn1 = { close: () => {}, readOnly: false };
+    ydoc.conns.set(conn1, new Set());
+
+    const docs = pss.setYDoc(docName, ydoc);
+    assert(docs.has(docName), 'Precondition');
+
+    // Mock da-admin to return 412
+    ydoc.daadmin = {
+      fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
+    };
+
+    const updateHandlers = [];
+    const originalOn = ydoc.on.bind(ydoc);
+    ydoc.on = (event, handler) => {
+      if (event === 'update') {
+        updateHandlers.push(handler);
+      }
+      return originalOn(event, handler);
+    };
+
+    // Set up bindState which registers update handlers
+    const storage = {
+      list: async () => new Map(),
+      deleteAll: async () => {},
+      put: async () => {}
+    };
+    pss.persistence.get = async () => '<main><div><p>initial</p></div></main>';
+
+    await pss.persistence.bindState(docName, ydoc, conn1, storage);
+
+    assert.equal(updateHandlers.length, 2, 'Should have two update handlers registered');
+
+    // Modify document
+    aem2doc('<main><div><p>modified</p></div></main>', ydoc);
+
+    // Trigger 412 which closes all connections and removes from global map
+    await pss.persistence.update(ydoc, '<main><div><p>initial</p></div></main>');
+
+    assert(!docs.has(docName), 'Doc should be removed from global map');
+
+    // Now try to call the update handlers - they should not execute because ydoc is no longer in global map
+    const putCalls = [];
+    pss.persistence.put = async () => {
+      putCalls.push('put');
+      return { ok: true };
+    };
+
+    // Simulate another update after 412
+    aem2doc('<main><div><p>another change</p></div></main>', ydoc);
+
+    // Call the debounced update handler
+    if (updateHandlers[1]) {
+      await updateHandlers[1]();
+    }
+
+    // Put should NOT have been called because ydoc is not in global map anymore
+    assert.equal(putCalls.length, 0, 'PUT should not be called after doc removed from global map');
+  });
+
+  it('Test 412 closes all clients including readonly', async () => {
+    const docName = 'https://admin.da.live/source/multi.html';
+    const ydoc = new WSSharedDoc(docName);
+    ydoc.storage = { deleteAll: async () => {} };
+
+    const closeCalled = [];
+    const conn1 = { close: () => closeCalled.push('conn1'), readOnly: false, auth: 'auth1' };
+    const conn2 = { close: () => closeCalled.push('conn2'), readOnly: false, auth: 'auth2' };
+    const conn3 = { close: () => closeCalled.push('conn3'), readOnly: true, auth: 'auth3' };
+
+    ydoc.conns.set(conn1, new Set(['client1']));
+    ydoc.conns.set(conn2, new Set(['client2']));
+    ydoc.conns.set(conn3, new Set(['client3']));
+
+    const docs = setYDoc(docName, ydoc);
+
+    ydoc.daadmin = {
+      fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
+    };
+
+    aem2doc('<main><div><p>content</p></div></main>', ydoc);
+
+    await persistence.update(ydoc, '<main><div><p>old</p></div></main>');
+
+    // All connections should be closed (including readonly)
+    assert.equal(closeCalled.length, 3, 'Should have closed all 3 connections');
+    assert(closeCalled.includes('conn1'), 'Should close conn1');
+    assert(closeCalled.includes('conn2'), 'Should close conn2');
+    assert(closeCalled.includes('conn3'), 'Should close readonly conn3');
+
+    // All connections removed from ydoc
+    assert.equal(ydoc.conns.size, 0, 'All connections should be removed');
+
+    // Doc removed from global map
+    assert(!docs.has(docName), 'Doc should be removed from global map');
+  });
+
   it('Test invalidateFromAdmin', async () => {
     const docName = 'http://blah.di.blah/a/ha.html';
 
@@ -486,55 +711,6 @@ describe('Collab Test Suite', () => {
     assert.equal(2, aem2DocCalled.length);
     assert.equal('Get: http://lalala.com/ha/ha/ha.html-myauth-daadmin', aem2DocCalled[0]);
     assert.equal(testYDoc, aem2DocCalled[1]);
-  });
-
-  it('Test bindState gets empty doc on da-admin 404', async() => {
-    const mockdebounce = (f) => async () => await f();
-    const pss = await esmock(
-      '../src/shareddoc.js', {
-        'lodash/debounce.js': {
-          default: mockdebounce
-        }
-      });
-
-    const docName = 'http://foobar.com/mydoc.html';
-
-    const ydocUpdateCB = [];
-    const testYDoc = new Y.Doc();
-    testYDoc.on = (ev, f) => { if (ev === 'update') ydocUpdateCB.push(f); }
-    pss.setYDoc(docName, testYDoc);
-
-    const called = [];
-    const mockStorage = {
-      deleteAll: async () => called.push('deleteAll'),
-      list: async () => new Map(),
-    };
-
-    // When da-admin returns 404, get returns null
-    pss.persistence.get = async () => null;
-    const updateCalled = [];
-    pss.persistence.update = async (_, cur)  => updateCalled.push(cur);
-
-    const savedSetTimeout = globalThis.setTimeout;
-    const setTimeoutCalls = [];
-    try {
-      globalThis.setTimeout = () => setTimeoutCalls.push('setTimeout');
-
-      await pss.persistence.bindState(docName, testYDoc, {}, mockStorage);
-    } finally {
-      globalThis.setTimeout = savedSetTimeout;
-    }
-
-    assert.deepStrictEqual(['deleteAll'], called);
-    assert.equal(0, setTimeoutCalls.length,
-      'Should not have called setTimeout as there is no document to restore from da-admin');
-
-    assert.equal(0, updateCalled.length, 'Precondition');
-    assert.equal(2, ydocUpdateCB.length);
-
-    await ydocUpdateCB[0]();
-    await ydocUpdateCB[1]();
-    assert.deepStrictEqual([EMPTY_DOC], updateCalled);
   });
 
   it('Test bindstate read from worker storage', async () => {
@@ -658,87 +834,6 @@ describe('Collab Test Suite', () => {
       globalThis.setTimeout = savedSetTimeout;
       pss.persistence.get = savedGet;
       pss.persistence.put = savedPut;
-    }
-  });
-
-  it('test bind to new doc doesnt set empty server content', async () => {
-    const docName = 'https://admin.da.live/source/foo.html';
-
-    const serviceBinding = {
-      fetch: async (u) => {
-        if (u === docName) {
-          return { status: 404 };
-        }
-      }
-    };
-
-    const ydoc = new Y.Doc();
-    ydoc.daadmin = serviceBinding;
-    setYDoc(docName, ydoc);
-    const conn = {};
-    const storage = {
-      deleteAll: async () => {},
-      list: async () => new Map(),
-    };
-
-    const setTimeoutCalled = [];
-    const savedSetTimeout = globalThis.setTimeout;
-    try {
-      globalThis.setTimeout = (f) => {
-        // Restore the global function
-        globalThis.setTimeout = savedSetTimeout;
-        setTimeoutCalled.push('setTimeout');
-        f();
-      };
-
-      await persistence.bindState(docName, ydoc, conn, storage);
-      assert.equal(0, setTimeoutCalled.length, 'SetTimeout should not have been called');
-    } finally {
-      globalThis.setTimeout = savedSetTimeout;
-    }
-  });
-
-  it('test bind to empty doc that was stored before updates ydoc', async () => {
-    const docName = 'https://admin.da.live/source/foo.html';
-
-    const serviceBinding = {
-      fetch: async (u) => {
-        if (u === docName) {
-          return { status: 404 };
-        }
-      }
-    };
-
-    const ydoc = new Y.Doc();
-    ydoc.daadmin = serviceBinding;
-    setYDoc(docName, ydoc);
-    const conn = {};
-
-    const deleteAllCalled = [];
-    const stored = new Map();
-    stored.set('docstore', new Uint8Array([254, 255]));
-    stored.set('chunks', 17); // should be ignored
-    stored.set('doc', docName);
-    const storage = {
-      deleteAll: async () => deleteAllCalled.push(true),
-      list: async () => stored,
-    };
-
-    const setTimeoutCalled = [];
-    const savedSetTimeout = globalThis.setTimeout;
-    try {
-      globalThis.setTimeout = (f) => {
-        // Restore the global function
-        globalThis.setTimeout = savedSetTimeout;
-        setTimeoutCalled.push('setTimeout');
-        f();
-      };
-
-      await persistence.bindState(docName, ydoc, conn, storage);
-      assert.deepStrictEqual([true], deleteAllCalled);
-      assert.equal(1, setTimeoutCalled.length, 'SetTimeout should have been called to update the doc');
-    } finally {
-      globalThis.setTimeout = savedSetTimeout;
     }
   });
 
