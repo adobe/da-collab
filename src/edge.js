@@ -143,7 +143,7 @@ export async function handleApiRequest(request, env) {
 
     timingDaAdminHeadDuration = Date.now() - timingBeforeDaAdminHead;
 
-    if (!initialReq.ok && initialReq.status !== 404) {
+    if (!initialReq.ok) {
       // eslint-disable-next-line no-console
       console.log(`[worker] Unable to get resource ${docName}: ${initialReq.status} - ${initialReq.statusText}`);
       return new Response('unable to get resource', { status: initialReq.status });
