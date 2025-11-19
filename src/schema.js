@@ -151,7 +151,9 @@ const baseNodes = {
       },
     ],
     toDOM(node) {
-      const { src, alt, title, href, dataFocalX, dataFocalY } = node.attrs;
+      const {
+        src, alt, title, href, dataFocalX, dataFocalY,
+      } = node.attrs;
       const attrs = {
         src,
         alt,
