@@ -16,7 +16,7 @@ import * as awarenessProtocol from 'y-protocols/awareness.js';
 import * as encoding from 'lib0/encoding.js';
 import * as decoding from 'lib0/decoding.js';
 import debounce from 'lodash/debounce.js';
-import { aem2doc, doc2aem, EMPTY_DOC } from './collab.js';
+import { aem2doc, doc2aem } from './collab.js';
 
 const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
@@ -191,12 +191,12 @@ export const persistence = {
   closeConn: closeConn.bind(this),
 
   /**
-   * Get the document from da-admin. If da-admin doesn't have the doc, a new empty doc is
-   * returned.
+   * Get the document from da-admin.
    * @param {string} docName - The document name
    * @param {string} auth - The authorization header
    * @param {object} daadmin - The da-admin worker service binding
    * @returns {Promise<string>} - The content of the document
+   * @throws {Error} - If the document cannot be retrieved (including 404)
    */
   get: async (docName, auth, daadmin) => {
     const initalOpts = {};
@@ -206,8 +206,6 @@ export const persistence = {
     const initialReq = await daadmin.fetch(docName, initalOpts);
     if (initialReq.ok) {
       return initialReq.text();
-    } else if (initialReq.status === 404) {
-      return null;
     } else {
       // eslint-disable-next-line no-console
       console.error(`[docroom] Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`);
@@ -236,16 +234,21 @@ export const persistence = {
       console.log('[docroom] All connections are read only, not storing');
       return { ok: true };
     }
+
+    const headers = {
+      'If-Match': '*',
+      'X-DA-Initiator': 'collab',
+    };
+
     const auth = keys
       .filter((con) => con.readOnly !== true)
       .map((con) => con.auth);
 
     if (auth.length > 0) {
-      opts.headers = new Headers({
-        Authorization: [...new Set(auth)].join(','),
-        'X-DA-Initiator': 'collab',
-      });
+      headers.Authorization = [...new Set(auth)].join(',');
     }
+
+    opts.headers = new Headers(headers);
 
     if (blob.size < 84) {
       // eslint-disable-next-line no-console
@@ -284,7 +287,20 @@ export const persistence = {
         const { ok, status, statusText } = await persistence.put(ydoc, content);
 
         if (!ok) {
-          closeAll = (status === 401 || status === 403);
+          if (status === 412) {
+            // Document doesn't exist - clean up cached state
+            if (ydoc.storage) {
+              try {
+                await ydoc.storage.deleteAll();
+                // eslint-disable-next-line no-console
+                console.log('[docroom] Cleaned worker storage after 412 (document deleted)');
+              } catch (storageErr) {
+                // eslint-disable-next-line no-console
+                console.error('[docroom] Failed to clean storage', storageErr);
+              }
+            }
+          }
+          closeAll = (status === 401 || status === 403 || status === 412);
           throw new Error(`${status} - ${statusText}`);
         }
 
@@ -312,31 +328,26 @@ export const persistence = {
    */
   bindState: async (docName, ydoc, conn, storage) => {
     let timingReadStateDuration;
-    let timingDaAdminGetDuration;
+
+    // Store storage reference for later use in persistence.update
+    // eslint-disable-next-line no-param-reassign
+    ydoc.storage = storage;
 
     let current;
     let restored = false; // True if restored from worker storage
-    try {
-      let newDoc = false;
-      const timingBeforeDaAdminGet = Date.now();
-      current = await persistence.get(docName, conn.auth, ydoc.daadmin);
-      timingDaAdminGetDuration = Date.now() - timingBeforeDaAdminGet;
 
+    // Get document from da-admin (throws on error including 404)
+    const timingBeforeDaAdminGet = Date.now();
+    current = await persistence.get(docName, conn.auth, ydoc.daadmin);
+    const timingDaAdminGetDuration = Date.now() - timingBeforeDaAdminGet;
+
+    // Read the stored state from internal worker storage (errors are non-fatal)
+    try {
       const timingBeforeReadState = Date.now();
-      // Read the stored state from internal worker storage
       const stored = await readState(docName, storage);
       timingReadStateDuration = Date.now() - timingBeforeReadState;
 
-      if (current === null) {
-        if (!stored) {
-          // This is a new document, it wasn't present in local storage
-          newDoc = true;
-        }
-        // if stored has a value, the document previously existed but was deleted
-
-        current = EMPTY_DOC;
-        await storage.deleteAll();
-      } else if (stored && stored.length > 0) {
+      if (stored && stored.length > 0) {
         Y.applyUpdate(ydoc, stored);
 
         // Check if the state from the worker storage is the same as the current state in da-admin.
@@ -349,12 +360,6 @@ export const persistence = {
           // eslint-disable-next-line no-console
           console.log('[docroom] Restored from worker persistence', docName);
         }
-      }
-
-      if (newDoc === true) {
-        // There is no stored state and the document is empty, which means
-        // we have a new doc here, which doesn't need to be restored from da-admin
-        restored = true;
       }
     } catch (error) {
       // eslint-disable-next-line no-console
