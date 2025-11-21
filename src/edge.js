@@ -138,9 +138,6 @@ export async function handleApiRequest(request, env) {
     const timingBeforeDaAdminHead = Date.now();
     const initialReq = await env.daadmin.fetch(docName, opts);
 
-    // this seems to be required by CloudFlare to consider the request as completed
-    await initialReq.text();
-
     timingDaAdminHeadDuration = Date.now() - timingBeforeDaAdminHead;
 
     if (!initialReq.ok) {
@@ -148,6 +145,9 @@ export async function handleApiRequest(request, env) {
       console.log(`[worker] Unable to get resource ${docName}: ${initialReq.status} - ${initialReq.statusText}`);
       return new Response('unable to get resource', { status: initialReq.status });
     }
+
+    // this seems to be required by CloudFlare to consider the request as completed
+    await initialReq.text();
 
     const daActions = initialReq.headers.get('X-da-actions') ?? '';
     [, authActions] = daActions.split('=');

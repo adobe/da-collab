@@ -234,21 +234,21 @@ export const persistence = {
       console.log('[docroom] All connections are read only, not storing');
       return { ok: true };
     }
+
+    const headers = {
+      'If-Match': '*',
+      'X-DA-Initiator': 'collab',
+    };
+
     const auth = keys
       .filter((con) => con.readOnly !== true)
       .map((con) => con.auth);
 
     if (auth.length > 0) {
-      opts.headers = new Headers({
-        Authorization: [...new Set(auth)].join(','),
-        'X-DA-Initiator': 'collab',
-        'If-Match': '*',
-      });
-    } else {
-      opts.headers = new Headers({
-        'If-Match': '*',
-      });
+      headers.Authorization = [...new Set(auth)].join(',');
     }
+
+    opts.headers = new Headers(headers);
 
     if (blob.size < 84) {
       // eslint-disable-next-line no-console
