@@ -128,33 +128,45 @@ const baseNodes = {
       alt: { default: null, validate: 'string|null' },
       title: { default: null, validate: 'string|null' },
       href: { default: null, validate: 'string|null' },
+      dataFocalX: { default: null, validate: 'string|null' },
+      dataFocalY: { default: null, validate: 'string|null' },
       ...topLevelAttrs,
     },
     group: 'inline',
     draggable: true,
-    parseDOM: [{
-      tag: 'img[src]',
-      getAttrs(dom) {
-        return {
-          src: dom.getAttribute('src'),
-          title: dom.getAttribute('title'),
-          alt: dom.getAttribute('alt'),
-          href: dom.getAttribute('href'),
-          ...getTopLevelParseAttrs(dom),
-        };
+    parseDOM: [
+      {
+        tag: 'img[src]',
+        getAttrs(dom) {
+          return {
+            src: dom.getAttribute('src'),
+            title: dom.getAttribute('title'),
+            alt: dom.getAttribute('alt'),
+            href: dom.getAttribute('href'),
+            dataFocalX: dom.getAttribute('data-focal-x'),
+            dataFocalY: dom.getAttribute('data-focal-y'),
+            ...getTopLevelParseAttrs(dom),
+          };
+        },
       },
-    }],
+    ],
     toDOM(node) {
       const {
-        src, alt, title, href,
+        src, alt, title, href, dataFocalX, dataFocalY,
       } = node.attrs;
-      return ['img', {
+      const attrs = {
         src,
         alt,
         title,
         href,
         ...getTopLevelToDomAttrs(node),
-      }];
+      };
+      if (dataFocalX != null) attrs['data-focal-x'] = dataFocalX;
+      if (dataFocalY != null) attrs['data-focal-y'] = dataFocalY;
+      // TODO: This is temp code to store the focal data in the title attribute
+      // Once helix properly supports data-focal-x and data-focal-y, we can remove this code
+      if (dataFocalX != null) attrs.title = `data-focal:${dataFocalX},${dataFocalY}`;
+      return ['img', attrs];
     },
   },
   hard_break: {
