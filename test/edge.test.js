@@ -294,6 +294,47 @@ describe('Worker test suite', () => {
     assert.equal(400, resp.status, 'Expected a document name');
   });
 
+  it('Test DocRoom fetch fails when document deleted after auth', async () => {
+    const savedNWSP = DocRoom.newWebSocketPair;
+    const savedBS = persistence.bindState;
+
+    try {
+      // Mock bindState to throw 404 error (simulating document deleted between auth and bindState)
+      persistence.bindState = async () => {
+        throw new Error('unable to get resource - status: 404');
+      };
+
+      const wsp0 = {};
+      const wsp1 = {
+        accept() {},
+        addEventListener() {},
+        close() {}
+      };
+      DocRoom.newWebSocketPair = () => [wsp0, wsp1];
+
+      const daadmin = { fetch: async () => ({ ok: true }) };
+      const dr = new DocRoom({ storage: null }, { daadmin });
+      const headers = new Map();
+      headers.set('Upgrade', 'websocket');
+      headers.set('X-collab-room', 'http://foo.bar/test.html');
+      headers.set('X-auth-actions', 'read=allow,write=allow');
+
+      const req = {
+        headers,
+        url: 'http://localhost:4711/'
+      };
+
+      const resp = await dr.fetch(req, {}, 306);
+
+      // Should return 500 error when bindState fails
+      assert.equal(500, resp.status);
+      assert.equal('internal server error', await resp.text());
+    } finally {
+      DocRoom.newWebSocketPair = savedNWSP;
+      persistence.bindState = savedBS;
+    }
+  });
+
   it('Test DocRoom fetch WebSocket setup exception', async () => {
     const savedNWSP = DocRoom.newWebSocketPair;
     const savedBS = persistence.bindState;
@@ -477,6 +518,20 @@ describe('Worker test suite', () => {
 
     const res = await handleApiRequest(req, {});
     assert.equal(404, res.status);
+  });
+
+  it('Test handleApiRequest document not found (404)', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/nonexistent.html',
+    }
+
+    const mockFetch = async (url, opts) => new Response(null, {status: 404});
+    const daadmin = { fetch: mockFetch };
+    const env = { daadmin };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(404, res.status);
+    assert.equal('unable to get resource', await res.text());
   });
 
   it('Test handleApiRequest not authorized', async () => {
