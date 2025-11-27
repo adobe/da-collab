@@ -10,7 +10,8 @@
     "dev": "wrangler dev src/edge.js",
     "deploy": "wrangler deploy src/edge.js",
     "deploy:stage": "wrangler deploy --env stage src/edge.js",
-    "test": "c8 mocha --inline-diffs --exit # --exit is needed because some test code triggers async listeners"
+    "test": "c8 mocha --inline-diffs --exit # --exit is needed because some test code triggers async listeners",
+    "prepare": "husky"
   },
   "mocha": {
     "reporter": "mocha-multi-reporters",
