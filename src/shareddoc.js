@@ -54,6 +54,8 @@ export const closeConn = (doc, conn) => {
       }
 
       if (doc.conns.size === 0) {
+        // clear event handlers
+        doc.destroy();
         docs.delete(doc.name);
       }
     }

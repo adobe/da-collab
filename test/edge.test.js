@@ -223,6 +223,7 @@ describe('Worker test suite', () => {
     assert.equal(204, resp.status);
     assert(!m.has(ydocName), 'Doc should have been removed');
     assert.deepStrictEqual(['close'], connCalled);
+    testYdoc.destroy();
   });
 
   it('Docroom deleteFromAdmin not found', async () => {
@@ -257,6 +258,7 @@ describe('Worker test suite', () => {
     assert.equal(200, resp.status);
     assert(!m.has(ydocName), 'Doc should have been removed');
     assert.deepStrictEqual(['close'], connCalled);
+    testYdoc.destroy();
   });
 
   it('Unknown doc update request gives 404', async () => {
