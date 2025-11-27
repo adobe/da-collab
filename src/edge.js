@@ -11,18 +11,24 @@
  */
 import { invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
 
-// This is the Edge Worker, built using Durable Objects!
+/**
+ * This is the Edge Worker, built using Durable Objects!
+ * ===============================
+ * Required Environment
+ * ===============================
+ *
+ * This worker, when deployed, must be configured with an environment binding:
+ * - rooms: A Durable Object namespace binding mapped to the DocRoom class.
+ */
 
-// ===============================
-// Required Environment
-// ===============================
-//
-// This worker, when deployed, must be configured with an environment binding:
-// * rooms: A Durable Object namespace binding mapped to the DocRoom class.
-
-// `handleErrors()` is a little utility function that can wrap an HTTP request handler in a
-// try/catch and return errors to the client. You probably wouldn't want to use this in production
-// code but it is convenient when debugging and iterating.
+/**
+ * A little utility function that can wrap an HTTP request handler in a
+ * try/catch and return errors to the client. You probably wouldn't want to use this in production
+ * code but it is convenient when debugging and iterating.
+ *
+ * @param {Request} request
+ * @param {function} func
+ */
 export async function handleErrors(request, func) {
   try {
     return func();
@@ -41,12 +47,26 @@ export async function handleErrors(request, func) {
     return new Response(err.stack, { status: 500 });
   }
 }
-// Admin APIs are forwarded to the durable object. They need the doc name as a query
-// parameter on the url.
+
+/**
+ * Admin APIs are forwarded to the durable object. They need the doc name as a query
+ * parameter on the url.
+ * @param {string} api
+ * @param {URL} url
+ * @param {Request} request
+ * @param {Env} env
+ */
 async function adminAPI(api, url, request, env) {
   const doc = url.searchParams.get('doc');
   if (!doc) {
     return new Response('Bad', { status: 400 });
+  }
+
+  // check if shared token is configured and validate
+  if (env.COLLAB_SHARED_SECRET) {
+    if (request.headers.get('authorization') !== `token ${env.COLLAB_SHARED_SECRET}`) {
+      return new Response('Unauthorized', { status: 401 });
+    }
   }
 
   const id = env.rooms.idFromName(doc);
@@ -55,11 +75,14 @@ async function adminAPI(api, url, request, env) {
   console.log('[worker] - Admin API', doc);
 
   const roomObject = env.rooms.get(id);
-
-  return roomObject.fetch(new URL(`${doc}?api=${api}`));
+  // TODO: check for roomObject === null ?
+  return roomObject.handleApiCall(api, doc, request);
 }
 
-// A simple Ping API to check that the worker responds.
+/**
+ * A simple Ping API to check that the worker responds.
+ * @param {Env} env
+ */
 function ping(env) {
   const adminsb = env.daadmin !== undefined ? '"da-admin"' : '';
 
@@ -93,8 +116,14 @@ async function handleApiCall(url, request, env) {
   }
 }
 
-// This is where the requests for the worker come in. They can either be pure API requests or
-// requests to set up a session with a Durable Object through a Yjs WebSocket.
+/**
+ * This is where the requests for the worker come in. They can either be pure API requests or
+ * requests to set up a session with a Durable Object through a Yjs WebSocket.
+ *
+ * @param request
+ * @param env
+ * @returns {Promise<*|Response>}
+ */
 export async function handleApiRequest(request, env) {
   let timingDaAdminHeadDuration;
   const timingStartTime = Date.now();
@@ -188,7 +217,7 @@ export async function handleApiRequest(request, env) {
     // Send the request to the Durable Object. The `fetch()` method of a Durable Object stub has the
     // same signature as the global `fetch()` function, but the request is always sent to the
     // object, regardless of the hostname in the request's URL.
-    return roomObject.fetch(req);
+    return await roomObject.fetch(req);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`[worker] Error fetching the doc from the room ${docName}`, err);
@@ -207,9 +236,13 @@ export default {
 // =======================================================================================
 // The Durable Object Class
 
-// Implements a Durable Object that coordinates an individual doc room. Participants
-// connect to the room using WebSockets, and the room broadcasts messages from each participant
-// to all others.
+/**
+ * Implements a Durable Object that coordinates an individual doc room. Participants
+ * connect to the room using WebSockets, and the room broadcasts messages from each participant
+ * to all others.
+ *
+ * @tpye {Fetcher}
+ */
 export class DocRoom {
   constructor(controller, env) {
     // `controller.storage` provides access to our durable storage. It provides a simple KV
@@ -221,24 +254,26 @@ export class DocRoom {
     this.id = controller?.id?.toString() || `no-controller-${new Date().getTime()}`;
   }
 
-  // Handle the API calls. Supported API calls right now are to sync the doc with the da-admin
-  // state or to indicate that the document has been deleted from da-admin.
-  // The implementation of these two is currently identical.
+  /**
+   * Handle the API calls. Supported API calls right now are to sync the doc with the da-admin
+   * state or to indicate that the document has been deleted from da-admin.
+   * The implementation of these two is currently identical.
+   * @param {string} api
+   * @param {string} docName
+   * @param {Request} request
+   * @returns {Promise<*>}
+   */
   // eslint-disable-next-line class-methods-use-this
-  async handleApiCall(url, request) {
-    const qidx = request.url.indexOf('?');
-    const baseURL = request.url.substring(0, qidx);
-
-    const api = url.searchParams.get('api');
+  async handleApiCall(api, docName, request) {
     switch (api) {
       case 'deleteAdmin':
-        if (await invalidateFromAdmin(baseURL)) {
+        if (await invalidateFromAdmin(docName)) {
           return new Response(null, { status: 204 });
         } else {
           return new Response('Not Found', { status: 404 });
         }
       case 'syncAdmin':
-        if (await invalidateFromAdmin(baseURL)) {
+        if (await invalidateFromAdmin(docName)) {
           return new Response('OK', { status: 200 });
         } else {
           return new Response('Not Found', { status: 404 });
@@ -254,24 +289,23 @@ export class DocRoom {
     return new WebSocketPair();
   }
 
-  // The system will call fetch() whenever an HTTP request is sent to this Object. Such requests
-  // can only be sent from other Worker code, such as the code above; these requests don't come
-  // directly from the internet. In the future, we will support other formats than HTTP for these
-  // communications, but we started with HTTP for its familiarity.
-  //
-  // Note that strangely enough in a unit testing env returning a Response with status 101 isn't
-  // allowed by the runtime, so we can set an alternative 'success' code here for testing.
+  /**
+   * The system will call fetch() whenever an HTTP request is sent to this Object. Such requests
+   * can only be sent from other Worker code, such as the code above; these requests don't come
+   * directly from the internet. In the future, we will support other formats than HTTP for these
+   * communications, but we started with HTTP for its familiarity.
+   *
+   * Note that strangely enough in a unit testing env returning a Response with status 101 isn't
+   * allowed by the runtime, so we can set an alternative 'success' code here for testing.
+   * @param {Request} request
+   * @param {object} _opts
+   * @param {Number} successCode
+   * @returns {Promise<Response>}
+   */
   async fetch(request, _opts, successCode = 101) {
     try {
-      const url = new URL(request.url);
-
-      // If it's a pure API call then handle it and return.
-      if (url.search.startsWith('?api=')) {
-        return this.handleApiCall(url, request);
-      }
-
       // If we get here, we're expecting this to be a WebSocket request.
-      if (request.headers.get('Upgrade') !== 'websocket') {
+      if (request.headers?.get('Upgrade') !== 'websocket') {
         return new Response('expected websocket', { status: 400 });
       }
       const auth = request.headers.get('Authorization');
@@ -317,6 +351,7 @@ export class DocRoom {
    * @param {WebSocket} webSocket - The WebSocket connection to the client
    * @param {string} docName - The document name
    * @param {string} auth - The authorization header
+   * @param {string} authActions
    */
   async handleSession(webSocket, docName, auth, authActions) {
     // Accept our end of the WebSocket. This tells the runtime that we'll be terminating the

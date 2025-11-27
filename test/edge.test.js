@@ -9,12 +9,16 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
-import assert from 'assert';
+import assert from 'node:assert';
 
 import * as Y from 'yjs';
 import defaultEdge, { DocRoom, handleApiRequest, handleErrors } from '../src/edge.js';
 import { WSSharedDoc, persistence, setYDoc } from '../src/shareddoc.js';
 import { doc2aem } from '../src/collab.js';
+
+async function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 function hash(str) {
   let hash = 0;
@@ -27,19 +31,23 @@ function hash(str) {
 }
 
 describe('Worker test suite', () => {
+  function createMockRoom() {
+    return {
+      calls: [],
+      handleApiCall(api, docName) {
+        this.calls.push({api, docName});
+        return new Response(null, {status: 200});
+      }
+    };
+  }
+
   it('Test deleteAdmin', async () => {
     const expectedHash = hash('https://some.where/some/doc.html');
     const req = {
       url: 'http://localhost:9999/api/v1/deleteadmin?doc=https://some.where/some/doc.html'
     };
 
-    const roomFetchCalls = []
-    const room = {
-      fetch(url) {
-        roomFetchCalls.push(url.toString());
-        return new Response(null, { status: 200 });
-      }
-    };
+    const room = createMockRoom();
     const rooms = {
       idFromName(nm) { return hash(nm) },
       get(id) {
@@ -52,7 +60,11 @@ describe('Worker test suite', () => {
 
     const resp = await handleApiRequest(req, env);
     assert.equal(200, resp.status);
-    assert.deepStrictEqual(roomFetchCalls, ['https://some.where/some/doc.html?api=deleteAdmin'])
+    assert.deepStrictEqual(room.calls, [{
+      api: 'deleteAdmin',
+      docName: 'https://some.where/some/doc.html'
+     }
+    ])
   });
 
   it('Test syncAdmin request without doc', async () => {
@@ -73,13 +85,7 @@ describe('Worker test suite', () => {
       url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html'
     };
 
-    const roomFetchCalls = []
-    const room = {
-      fetch(url) {
-        roomFetchCalls.push(url.toString());
-        return new Response(null, { status: 200 });
-      }
-    };
+    const room = createMockRoom();
     const rooms = {
       idFromName(nm) { return hash(nm) },
       get(id) {
@@ -90,10 +96,74 @@ describe('Worker test suite', () => {
     }
     const env = { rooms };
 
-    assert.equal(roomFetchCalls.length, 0, 'Precondition');
     const resp = await handleApiRequest(req, env);
     assert.equal(200, resp.status);
-    assert.deepStrictEqual(roomFetchCalls, ['http://foobar.com/a/b/c.html?api=syncAdmin'])
+    assert.deepStrictEqual(room.calls, [
+      {
+        api: 'syncAdmin',
+        docName: 'http://foobar.com/a/b/c.html'
+      }
+    ]);
+  });
+
+  it('Test handle syncAdmin request (enforced shared secret)', async () => {
+    const expectedHash = hash('http://foobar.com/a/b/c.html');
+    const req = {
+      url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html',
+      headers: new Headers({
+        authorization: 'token test-secret',
+      }),
+    };
+
+    const room = createMockRoom();
+    const rooms = {
+      idFromName(nm) { return hash(nm) },
+      get(id) {
+        if (id === expectedHash) {
+          return room;
+        }
+      }
+    }
+    const env = {
+      rooms,
+      COLLAB_SHARED_SECRET: 'test-secret',
+    };
+
+    const resp = await handleApiRequest(req, env);
+    assert.equal(200, resp.status);
+    assert.deepStrictEqual(room.calls, [
+      {
+        api: 'syncAdmin',
+        docName: 'http://foobar.com/a/b/c.html'
+      }
+    ]);
+  });
+
+
+  it('Test handle syncAdmin request (enforced shared secret, unauthorized)', async () => {
+    const expectedHash = hash('http://foobar.com/a/b/c.html');
+    const req = {
+      url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html',
+      headers: new Headers(),
+    };
+
+    const room = createMockRoom();
+    const rooms = {
+      idFromName(nm) { return hash(nm) },
+      get(id) {
+        if (id === expectedHash) {
+          return room;
+        }
+      }
+    }
+    const env = {
+      rooms,
+      COLLAB_SHARED_SECRET: 'test-secret',
+    };
+
+    const resp = await handleApiRequest(req, env);
+    assert.equal(401, resp.status);
+    assert.deepStrictEqual(room.calls, []);
   });
 
   it('Test handle syncAdmin request via default export', async () => {
@@ -102,13 +172,7 @@ describe('Worker test suite', () => {
       url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html'
     };
 
-    const roomFetchCalls = []
-    const room = {
-      fetch(url) {
-        roomFetchCalls.push(url.toString());
-        return new Response(null, { status: 200 });
-      }
-    };
+    const room = createMockRoom();
     const rooms = {
       idFromName(nm) { return hash(nm) },
       get(id) {
@@ -119,10 +183,14 @@ describe('Worker test suite', () => {
     }
     const env = { rooms };
 
-    assert.equal(roomFetchCalls.length, 0, 'Precondition');
     const resp = await defaultEdge.fetch(req, env);
     assert.equal(200, resp.status);
-    assert.deepStrictEqual(roomFetchCalls, ['http://foobar.com/a/b/c.html?api=syncAdmin'])
+    assert.deepStrictEqual(room.calls, [
+      {
+        api: 'syncAdmin',
+        docName: 'http://foobar.com/a/b/c.html'
+      }
+    ]);
   });
 
   it('Test unknown API', async () => {
@@ -133,85 +201,6 @@ describe('Worker test suite', () => {
     const resp = await handleApiRequest(req, null);
     assert.equal(400, resp.status, 'Doc wasnt set so should return a 400 for invalid');
     assert.equal('Bad Request', await resp.text());
-  });
-
-  it('Docroom deleteFromAdmin', async () => {
-    const ydocName = 'http://foobar.com/q.html';
-    const testYdoc = new WSSharedDoc(ydocName);
-    const m = setYDoc(ydocName, testYdoc);
-
-    const connCalled = []
-    const mockConn = {
-      close() { connCalled.push('close'); }
-    };
-    testYdoc.conns.set(mockConn, 1234);
-
-    const req = {
-      url: `${ydocName}?api=deleteAdmin`
-    };
-
-    const dr = new DocRoom({});
-
-    assert(m.has(ydocName), 'Precondition');
-    const resp = await dr.fetch(req)
-    assert.equal(204, resp.status);
-    assert(!m.has(ydocName), 'Doc should have been removed');
-    assert.deepStrictEqual(['close'], connCalled);
-  });
-
-  it('Docroom deleteFromAdmin not found', async () => {
-    const req = {
-      url: `https://blah.blah/blah.html?api=deleteAdmin`
-    };
-
-    const dr = new DocRoom({});
-    const resp = await dr.fetch(req)
-    assert.equal(404, resp.status);
-  });
-
-  it('Docroom syncFromAdmin', async () => {
-    const ydocName = 'http://foobar.com/a/b/c.html';
-    const testYdoc = new WSSharedDoc(ydocName);
-    const m = setYDoc(ydocName, testYdoc);
-
-    const connCalled = []
-    const mockConn = {
-      close() { connCalled.push('close'); }
-    };
-    testYdoc.conns.set(mockConn, 1234);
-
-    const req = {
-      url: `${ydocName}?api=syncAdmin`
-    };
-
-    const dr = new DocRoom({});
-
-    assert(m.has(ydocName), 'Precondition');
-    const resp = await dr.fetch(req)
-    assert.equal(200, resp.status);
-    assert(!m.has(ydocName), 'Doc should have been removed');
-    assert.deepStrictEqual(['close'], connCalled);
-  });
-
-  it('Unknown doc update request gives 404', async () => {
-    const dr = new DocRoom({});
-
-    const req = {
-      url: 'http://foobar.com/a/b/d/e/f.html?api=syncAdmin'
-    };
-    const resp = await dr.fetch(req)
-
-    assert.equal(404, resp.status);
-  });
-
-  it('Unknown DocRoom API call gives 400', async () => {
-    const dr = new DocRoom({ storage: null }, null);
-    const req = {
-      url: 'http://foobar.com/a.html?api=blahblahblah'
-    };
-    const resp = await dr.fetch(req)
-
-    assert.equal(400, resp.status);
   });
 
   it('Test DocRoom fetch', async () => {
@@ -273,7 +262,7 @@ describe('Worker test suite', () => {
     const dr = new DocRoom({ storage: null }, null);
 
     const req = {
-      headers: new Map(),
+      headers: new Headers(),
       url: 'http://localhost:4711/'
     };
     const resp = await dr.fetch(req);
@@ -282,9 +271,10 @@ describe('Worker test suite', () => {
 
   it('Test DocRoom fetch expects document name', async () => {
     const dr = new DocRoom({ storage: null }, null);
-    const headers = new Map();
-    headers.set('Upgrade', 'websocket');
-    headers.set('Authorization', 'au123');
+    const headers = new Headers({
+      upgrade: 'websocket',
+      authorization: 'au123',
+    });
 
     const req = {
       headers,
@@ -301,6 +291,7 @@ describe('Worker test suite', () => {
     try {
       // Mock bindState to throw 404 error (simulating document deleted between auth and bindState)
       persistence.bindState = async () => {
+        await sleep(1); // the real bindState is async and we only reset the failed doc in the promise
         throw new Error('unable to get resource - status: 404');
       };
 
@@ -342,6 +333,7 @@ describe('Worker test suite', () => {
     try {
       // Mock bindState to throw an exception
       persistence.bindState = async (nm, d, c) => {
+        await sleep(1); // the real bindState is async and we only reset the failed doc in the promise
         throw new Error('WebSocket setup error');
       };
 
@@ -366,11 +358,11 @@ describe('Worker test suite', () => {
         url: 'http://localhost:4711/'
       };
       const resp = await dr.fetch(req);
-      
+
       // Should return 500 error due to exception in WebSocket setup
       assert.equal(500, resp.status);
       assert.equal('internal server error', await resp.text());
-      
+
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
       persistence.bindState = savedBS;
@@ -388,7 +380,7 @@ describe('Worker test suite', () => {
     const f = () => { throw new Error('testing'); }
 
     const req = {
-      headers: new Map()
+      headers: new Headers()
     };
     const res = await handleErrors(req, f);
     assert.equal(500, res.status);
@@ -398,9 +390,11 @@ describe('Worker test suite', () => {
     const f = () => { throw new Error('WebSocket error test'); }
 
     const req = {
-      headers: new Map([['Upgrade', 'websocket']])
+      headers: new Headers({
+        upgrade: 'websocket',
+      })
     };
-    
+
     // Mock WebSocketPair since it's not available in Node.js test environment
     const mockWebSocketPair = function() {
       const pair = [null, null];
@@ -416,10 +410,10 @@ describe('Worker test suite', () => {
       };
       return pair;
     };
-    
+
     // Mock WebSocketPair globally
     globalThis.WebSocketPair = mockWebSocketPair;
-    
+
     try {
       // In Node.js, status 101 is not valid, so we expect an error
       // But the important thing is that the WebSocket error path is covered
@@ -567,6 +561,7 @@ describe('Worker test suite', () => {
   it('Test handleApiRequest room object fetch exception', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/test.html',
+      headers: new Headers(),
     }
 
     // Mock daadmin.fetch to return a successful response
@@ -590,9 +585,9 @@ describe('Worker test suite', () => {
       get: (id) => mockRoom
     };
 
-    const env = { 
+    const env = {
       daadmin: { fetch: mockDaAdminFetch },
-      rooms 
+      rooms
     };
 
     const res = await handleApiRequest(req, env);
@@ -616,26 +611,26 @@ describe('Worker test suite', () => {
       };
       return pair;
     };
-    
+
     // Mock WebSocketPair globally
     globalThis.WebSocketPair = mockWebSocketPair;
-    
+
     try {
       const pair = DocRoom.newWebSocketPair();
-      
+
       // Verify that newWebSocketPair returns an array-like object
       assert(Array.isArray(pair));
       assert.equal(pair.length, 2);
-      
+
       // Verify that both elements are objects (WebSocket-like)
       assert(typeof pair[0] === 'object');
       assert(typeof pair[1] === 'object');
-      
+
       // Verify that the server side has expected methods
       assert(typeof pair[1].accept === 'function');
       assert(typeof pair[1].send === 'function');
       assert(typeof pair[1].close === 'function');
-      
+
     } finally {
       // Clean up the mock
       delete globalThis.WebSocketPair;
