@@ -628,12 +628,16 @@ describe('Collab Test Suite', () => {
   it('Test close connection', async () => {
     const awarenessEmitted = [];
     const mockDoc = {
+      destroyed: false,
       awareness: {
         emit(_, chg) { awarenessEmitted.push(chg); },
         name: 'http://foo.bar/q/r.html',
-        states: new Map()
+        states: new Map(),
       },
       conns: new Map(),
+      destroy() {
+        this.destroyed = true;
+      },
     };
     mockDoc.awareness.states.set('123', null);
     const docs = setYDoc(mockDoc.name, mockDoc);
@@ -658,6 +662,7 @@ describe('Collab Test Suite', () => {
       'Document should be removed from global map');
 
     assert(docs.get(mockDoc.name) === undefined, 'Should have been removed from docs map');
+    assert(mockDoc.destroyed, true, 'Should have been destroyed.');
   });
 
   it('Test close unknown connection', async () => {
