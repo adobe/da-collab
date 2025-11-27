@@ -305,7 +305,7 @@ export class DocRoom {
   async fetch(request, _opts, successCode = 101) {
     try {
       // If we get here, we're expecting this to be a WebSocket request.
-      if (request.headers?.get('Upgrade') !== 'websocket') {
+      if (request.headers.get('Upgrade') !== 'websocket') {
         return new Response('expected websocket', { status: 400 });
       }
       const auth = request.headers.get('Authorization');
