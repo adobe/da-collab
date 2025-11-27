@@ -30,24 +30,22 @@ function hash(str) {
   return hash;
 }
 
-describe('Worker test suite', () => {
-  function createMockRoom() {
-    return {
-      calls: [],
-      handleApiCall(api, docName) {
-        this.calls.push({api, docName});
-        return new Response(null, {status: 200});
-      }
-    };
+class MockRoom extends DocRoom {
+  calls = [];
+  handleApiCall(api, docName) {
+    this.calls.push({api, docName});
+    return new Response(null, {status: 200});
   }
+}
 
+describe('Worker test suite', () => {
   it('Test deleteAdmin', async () => {
     const expectedHash = hash('https://some.where/some/doc.html');
     const req = {
       url: 'http://localhost:9999/api/v1/deleteadmin?doc=https://some.where/some/doc.html'
     };
 
-    const room = createMockRoom();
+    const room = new MockRoom();
     const rooms = {
       idFromName(nm) { return hash(nm) },
       get(id) {
@@ -85,7 +83,7 @@ describe('Worker test suite', () => {
       url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html'
     };
 
-    const room = createMockRoom();
+    const room = new MockRoom();
     const rooms = {
       idFromName(nm) { return hash(nm) },
       get(id) {
@@ -115,7 +113,7 @@ describe('Worker test suite', () => {
       }),
     };
 
-    const room = createMockRoom();
+    const room = new MockRoom();
     const rooms = {
       idFromName(nm) { return hash(nm) },
       get(id) {
@@ -147,7 +145,7 @@ describe('Worker test suite', () => {
       headers: new Headers(),
     };
 
-    const room = createMockRoom();
+    const room = new MockRoom();
     const rooms = {
       idFromName(nm) { return hash(nm) },
       get(id) {
@@ -172,7 +170,7 @@ describe('Worker test suite', () => {
       url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html'
     };
 
-    const room = createMockRoom();
+    const room = new MockRoom();
     const rooms = {
       idFromName(nm) { return hash(nm) },
       get(id) {
@@ -201,6 +199,85 @@ describe('Worker test suite', () => {
     const resp = await handleApiRequest(req, null);
     assert.equal(400, resp.status, 'Doc wasnt set so should return a 400 for invalid');
     assert.equal('Bad Request', await resp.text());
+  });
+
+  it('Docroom deleteFromAdmin', async () => {
+    const ydocName = 'http://foobar.com/q.html';
+    const testYdoc = new WSSharedDoc(ydocName);
+    const m = setYDoc(ydocName, testYdoc);
+
+    const connCalled = []
+    const mockConn = {
+      close() { connCalled.push('close'); }
+    };
+    testYdoc.conns.set(mockConn, 1234);
+
+    const req = {
+      url: `${ydocName}?api=deleteAdmin`
+    };
+
+    const dr = new DocRoom({});
+
+    assert(m.has(ydocName), 'Precondition');
+    const resp = await dr.fetch(req)
+    assert.equal(204, resp.status);
+    assert(!m.has(ydocName), 'Doc should have been removed');
+    assert.deepStrictEqual(['close'], connCalled);
+  });
+
+  it('Docroom deleteFromAdmin not found', async () => {
+    const req = {
+      url: `https://blah.blah/blah.html?api=deleteAdmin`
+    };
+
+    const dr = new DocRoom({});
+    const resp = await dr.fetch(req)
+    assert.equal(404, resp.status);
+  });
+
+  it('Docroom syncFromAdmin', async () => {
+    const ydocName = 'http://foobar.com/a/b/c.html';
+    const testYdoc = new WSSharedDoc(ydocName);
+    const m = setYDoc(ydocName, testYdoc);
+
+    const connCalled = []
+    const mockConn = {
+      close() { connCalled.push('close'); }
+    };
+    testYdoc.conns.set(mockConn, 1234);
+
+    const req = {
+      url: `${ydocName}?api=syncAdmin`
+    };
+
+    const dr = new DocRoom({});
+
+    assert(m.has(ydocName), 'Precondition');
+    const resp = await dr.fetch(req)
+    assert.equal(200, resp.status);
+    assert(!m.has(ydocName), 'Doc should have been removed');
+    assert.deepStrictEqual(['close'], connCalled);
+  });
+
+  it('Unknown doc update request gives 404', async () => {
+    const dr = new DocRoom({});
+
+    const req = {
+      url: 'http://foobar.com/a/b/d/e/f.html?api=syncAdmin'
+    };
+    const resp = await dr.fetch(req)
+
+    assert.equal(404, resp.status);
+  });
+
+  it('Unknown DocRoom API call gives 400', async () => {
+    const dr = new DocRoom({ storage: null }, null);
+    const req = {
+      url: 'http://foobar.com/a.html?api=blahblahblah'
+    };
+    const resp = await dr.fetch(req)
+
+    assert.equal(400, resp.status);
   });
 
   it('Test DocRoom fetch', async () => {

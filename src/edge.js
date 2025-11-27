@@ -76,7 +76,11 @@ async function adminAPI(api, url, request, env) {
 
   const roomObject = env.rooms.get(id);
   // TODO: check for roomObject === null ?
-  return roomObject.handleApiCall(api, doc, request);
+  // note, that we cannot call DocRoom.handleApiCall directly w/o enabling
+  // RPC on on the durable objects.
+  const apiUrl = new URL(doc);
+  apiUrl.searchParams.set('api', api);
+  return roomObject.fetch(new Request(apiUrl));
 }
 
 /**
@@ -247,7 +251,7 @@ export class DocRoom {
   constructor(controller, env) {
     // `controller.storage` provides access to our durable storage. It provides a simple KV
     // get()/put() interface.
-    this.storage = controller.storage;
+    this.storage = controller?.storage;
 
     // `env` is our environment bindings (discussed earlier).
     this.env = env;
@@ -304,6 +308,14 @@ export class DocRoom {
    */
   async fetch(request, _opts, successCode = 101) {
     try {
+      // If it's a pure API call then handle it and return.
+      const url = new URL(request.url);
+      const api = url.searchParams.get('api');
+      if (api) {
+        url.searchParams.delete('api');
+        return this.handleApiCall(api, url.href, request);
+      }
+
       // If we get here, we're expecting this to be a WebSocket request.
       if (request.headers.get('Upgrade') !== 'websocket') {
         return new Response('expected websocket', { status: 400 });
