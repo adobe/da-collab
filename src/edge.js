@@ -263,7 +263,7 @@ export class DocRoom {
    * @param {Request} request
    * @returns {Promise<*>}
    */
-  // eslint-disable-next-line class-methods-use-this
+  // eslint-disable-next-line class-methods-use-this,no-unused-vars
   async handleApiCall(api, docName, request) {
     switch (api) {
       case 'deleteAdmin':
