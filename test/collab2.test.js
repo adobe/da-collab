@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 Adobe. All rights reserved.
+ * Copyright 2025 Adobe. All rights reserved.
  * This file is licensed to you under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License. You may obtain a copy
  * of the License at http://www.apache.org/licenses/LICENSE-2.0
@@ -9,10 +9,10 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
-import assert from 'assert';
+import assert from 'node:assert';
 import * as Y from 'yjs';
-import { readFileSync } from 'fs';
-import { aem2doc, doc2aem, tableToBlock } from '../src/collab.js';
+import { readFileSync } from 'node:fs';
+import { aem2doc, doc2aem } from '../src/collab.js';
 
 const collapseTagWhitespace = (str) => str.replace(/>\s+</g, '><');
 const collapseWhitespace = (str) => collapseTagWhitespace(str.replace(/\s+/g, ' ')).trim();
@@ -190,7 +190,7 @@ describe('Parsing test suite', () => {
   });
 
   it('handles lists with diff edits', async () => {
-  let html = `
+    let html = `
     <body>
       <header></header>
       <main>
@@ -215,11 +215,11 @@ describe('Parsing test suite', () => {
       </main>
       <footer></footer>
     </body>`;
-  html = collapseWhitespace(html);
-  const yDoc = new Y.Doc();
-  aem2doc(html, yDoc);
-  const result = doc2aem(yDoc);
-  assert.equal(collapseWhitespace(result), collapseWhitespace(html));
+    html = collapseWhitespace(html);
+    const yDoc = new Y.Doc();
+    aem2doc(html, yDoc);
+    const result = doc2aem(yDoc);
+    assert.equal(collapseWhitespace(result), collapseWhitespace(html));
   });
 
   it('strips contextHighlightingMark span wrapper', async () => {
@@ -286,8 +286,10 @@ describe('Parsing test suite', () => {
       <footer></footer>
     </body>`;
 
-    assert.equal(collapseWhitespace(result), collapseWhitespace(expectedOut),
-      'The contextHighlightingMark should be stripped during doc2aem, leaving only the text');
+    assert.equal(
+      collapseWhitespace(result),
+      collapseWhitespace(expectedOut),
+      'The contextHighlightingMark should be stripped during doc2aem, leaving only the text',
+    );
   });
-
 });
