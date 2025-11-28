@@ -337,7 +337,7 @@ export class DocRoom {
 
   /**
    * Implements our WebSocket-based protocol.
-   * @param {WebSocket} webSocket - The WebSocket connection to the clie2nt
+   * @param {WebSocket} webSocket - The WebSocket connection to the client
    * @param {string} docName - The document name
    * @param {string} auth - The authorization header
    */
