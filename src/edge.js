@@ -11,39 +11,46 @@
  */
 import { invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
 
-// This is the Edge Worker, built using Durable Objects!
-
-// ===============================
-// Required Environment
-// ===============================
-//
-// This worker, when deployed, must be configured with an environment binding:
-// * rooms: A Durable Object namespace binding mapped to the DocRoom class.
-
-// `handleErrors()` is a little utility function that can wrap an HTTP request handler in a
-// try/catch and return errors to the client. You probably wouldn't want to use this in production
-// code but it is convenient when debugging and iterating.
 /**
+ * This is the Edge Worker, built using Durable Objects!
+ * ===============================
+ * Required Environment
+ * ===============================
+ *
+ * This worker, when deployed, must be configured with an environment binding:
+ * - rooms: A Durable Object namespace binding mapped to the DocRoom class.
+ */
+
+/**
+ * A little utility function that can wrap an HTTP request handler in a
+ * try/catch and return errors to the client. You probably wouldn't want to use this in production
+ * code but it is convenient when debugging and iterating.
+ *
  * @param {Request} request
- * @param func
+ * @param {Env} env
+ * @param {Fetcher} handler
  * @returns {Promise<Response>}
  */
-export async function handleErrors(request, func) {
+export async function handleErrors(request, env, handler) {
   try {
-    return func();
+    return await handler(request, env);
   } catch (err) {
+    console.log('Error handling request for %s:', request.url, err);
+    const msg = String(env.RETURN_STACK_TRACES) === 'true'
+      ? JSON.stringify({ error: err.stack })
+      : 'Internal Server Error';
     if (request.headers.get('Upgrade') === 'websocket') {
-      // Annoyingly, if we return an HTTP error in response to a WebSocket request, Chrome devtools
-      // won't show us the response body! So... let's send a WebSocket response with an error
-      // frame instead.
+      // Annoyingly, if we return an HTTP error in response to a WebSocket request,
+      // Chrome devtools won't show us the response body! So... let's send a WebSocket
+      // response with an error frame instead.
       // eslint-disable-next-line no-undef
       const pair = new WebSocketPair();
       pair[1].accept();
-      pair[1].send(JSON.stringify({ error: err.stack }));
+      pair[1].send(msg);
       pair[1].close(1011, 'Uncaught exception during session setup');
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
-    return new Response(err.stack, { status: 500 });
+    return new Response(msg, { status: 500 });
   }
 }
 // Admin APIs are forwarded to the durable object. They need the doc name as a query
@@ -216,7 +223,7 @@ export default {
    * @returns {Promise<Response>}
    */
   async fetch(request, env) {
-    return handleErrors(request, async () => handleApiRequest(request, env));
+    return handleErrors(request, env, handleApiRequest);
   },
 };
 
@@ -324,7 +331,7 @@ export class DocRoom {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[docroom] Error while fetching', err);
-      return new Response('internal server error', { status: 500 });
+      return new Response('Internal Server Error', { status: 500 });
     }
   }
 

@@ -8,6 +8,9 @@ services = [
   { binding = "daadmin", service = "da-admin" }
 ]
 
+[vars]
+RETURN_STACK_TRACES = "false"
+
 [dev]
 port = 4711
 

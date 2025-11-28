@@ -7,7 +7,7 @@
   "scripts": {
     "lint:js": "eslint .",
     "lint": "npm run lint:js",
-    "dev": "wrangler dev src/edge.js",
+    "dev": "wrangler dev --var RETURN_STACK_TRACES:true src/edge.js",
     "deploy": "wrangler deploy src/edge.js",
     "deploy:stage": "wrangler deploy --env stage src/edge.js",
     "test": "c8 mocha --inline-diffs --exit # --exit is needed because some test code triggers async listeners"
