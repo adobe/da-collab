@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 Adobe. All rights reserved.
+ * Copyright 2025 Adobe. All rights reserved.
  * This file is licensed to you under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License. You may obtain a copy
  * of the License at http://www.apache.org/licenses/LICENSE-2.0
@@ -23,6 +23,11 @@ import { invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
 // `handleErrors()` is a little utility function that can wrap an HTTP request handler in a
 // try/catch and return errors to the client. You probably wouldn't want to use this in production
 // code but it is convenient when debugging and iterating.
+/**
+ * @param {Request} request
+ * @param func
+ * @returns {Promise<Response>}
+ */
 export async function handleErrors(request, func) {
   try {
     return func();
@@ -78,7 +83,8 @@ function ping(env) {
  * /deleteadmin - the document is deleted and should be removed from the worker internal state.
  * @param {URL} url - The request url
  * @param {Request} request - The request object
- * @param {Object} env - The worker environment
+ * @param {Env} env - The worker environment
+ * @return {Promise<Response>}
  */
 async function handleApiCall(url, request, env) {
   switch (url.pathname) {
@@ -95,6 +101,11 @@ async function handleApiCall(url, request, env) {
 
 // This is where the requests for the worker come in. They can either be pure API requests or
 // requests to set up a session with a Durable Object through a Yjs WebSocket.
+/**
+ * @param {Request} request
+ * @param {Env} env
+ * @returns {Promise<Response>}
+ */
 export async function handleApiRequest(request, env) {
   let timingDaAdminHeadDuration;
   const timingStartTime = Date.now();
@@ -199,6 +210,11 @@ export async function handleApiRequest(request, env) {
 // In modules-syntax workers, we use `export default` to export our script's main event handlers.
 // This is the main entry point for the worker.
 export default {
+  /**
+   * @param {Request} request
+   * @param {Env} env
+   * @returns {Promise<Response>}
+   */
   async fetch(request, env) {
     return handleErrors(request, async () => handleApiRequest(request, env));
   },

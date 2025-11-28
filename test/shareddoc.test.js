@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 Adobe. All rights reserved.
+ * Copyright 2025 Adobe. All rights reserved.
  * This file is licensed to you under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License. You may obtain a copy
  * of the License at http://www.apache.org/licenses/LICENSE-2.0
@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 import * as Y from 'yjs';
-import assert from 'assert';
+import assert from 'node:assert';
 import esmock from 'esmock';
 
 import {
@@ -25,12 +25,13 @@ function isSubArray(full, sub) {
   }
 
   const candidateIdxs = [];
-  for (let i = 0; i < full.length; i++) {
+  for (let i = 0; i < full.length; i += 1) {
     if (full[i] === sub[0]) {
       candidateIdxs.push(i);
     }
   }
 
+  /* eslint-disable */
   nextCandidate:
   for (let i = 0; i < candidateIdxs.length; i++) {
     for (let j = 0; j < sub.length; j++) {
@@ -40,6 +41,8 @@ function isSubArray(full, sub) {
     }
     return true;
   }
+  /* eslint-enable */
+  /* eslint-disable no-unused-vars, no-underscore-dangle */
 
   return false;
 }
@@ -144,7 +147,9 @@ describe('Collab Test Suite', () => {
       assert.equal(url, 'foo');
       assert.equal(opts.method, undefined);
       assert(opts.headers === undefined);
-      return { ok: true, text: async () => 'content', status: 200, statusText: 'OK' };
+      return {
+        ok: true, text: async () => 'content', status: 200, statusText: 'OK',
+      };
     };
     const result = await persistence.get('foo', undefined, daadmin);
     assert.equal(result, 'content');
@@ -156,7 +161,9 @@ describe('Collab Test Suite', () => {
       assert.equal(url, 'foo');
       assert.equal(opts.method, undefined);
       assert.equal(opts.headers.get('authorization'), 'auth');
-      return { ok: true, text: async () => 'content', status: 200, statusText: 'OK' };
+      return {
+        ok: true, text: async () => 'content', status: 200, statusText: 'OK',
+      };
     };
     const result = await persistence.get('foo', 'auth', daadmin);
     assert.equal(result, 'content');
@@ -168,7 +175,9 @@ describe('Collab Test Suite', () => {
       assert.equal(url, 'foo');
       assert.equal(opts.method, undefined);
       assert.equal(opts.headers.get('authorization'), 'auth');
-      return { ok: false, text: async () => { throw new Error(); }, status: 404, statusText: 'Not Found' };
+      return {
+        ok: false, text: async () => { throw new Error(); }, status: 404, statusText: 'Not Found',
+      };
     };
     try {
       await persistence.get('foo', 'auth', daadmin);
@@ -184,11 +193,13 @@ describe('Collab Test Suite', () => {
       assert.equal(url, 'foo');
       assert.equal(opts.method, undefined);
       assert.equal(opts.headers.get('authorization'), 'auth');
-      return { ok: false, text: async () => { throw new Error(); }, status: 500, statusText: 'Error' };
+      return {
+        ok: false, text: async () => { throw new Error(); }, status: 500, statusText: 'Error',
+      };
     };
     try {
-      const result = await persistence.get('foo', 'auth', daadmin);
-      assert.fail("Expected get to throw");
+      await persistence.get('foo', 'auth', daadmin);
+      assert.fail('Expected get to throw');
     } catch (error) {
       // expected
       assert(error.toString().includes('unable to get resource - status: 500'));
@@ -202,7 +213,7 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, 'PUT');
       assert.equal(opts.headers.get('If-Match'), '*', 'Should include If-Match: * header');
       assert.equal(await opts.body.get('data').text(), 'test');
-      return { ok: true, status: 200, statusText: 'OK - Stored'};
+      return { ok: true, status: 200, statusText: 'OK - Stored' };
     };
     const conns = new Map();
     // conns.set({}, new Set());
@@ -221,7 +232,7 @@ describe('Collab Test Suite', () => {
       assert.equal('collab', opts.headers.get('X-DA-Initiator'));
       assert.equal('*', opts.headers.get('If-Match'));
       assert.equal(await opts.body.get('data').text(), 'test');
-      return { ok: true, status: 200, statusText: 'OK - Stored too'};
+      return { ok: true, status: 200, statusText: 'OK - Stored too' };
     };
     const conns = new Map();
     conns.set({ auth: 'myauth' }, new Set());
@@ -238,7 +249,7 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, 'PUT');
       assert.equal(opts.headers.get('If-Match'), '*');
       assert.equal(await opts.body.get('data').text(), 'test');
-      return { ok: true, status: 200, statusText: 'OK'};
+      return { ok: true, status: 200, statusText: 'OK' };
     };
     const result = await persistence.put({ name: 'foo', conns: new Map(), daadmin }, 'test');
     assert(result.ok);
@@ -253,12 +264,12 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
       assert.equal(opts.headers.get('If-Match'), '*');
       assert.equal(await opts.body.get('data').text(), 'test');
-      return { ok: true, status: 200, statusText: 'okidoki'};
+      return { ok: true, status: 200, statusText: 'okidoki' };
     };
     const result = await persistence.put({
       name: 'foo',
       conns: new Map().set({ auth: 'auth', authActions: ['read', 'write'] }, new Set()),
-      daadmin
+      daadmin,
     }, 'test');
     assert(result.ok);
     assert.equal(result.status, 200);
@@ -274,7 +285,7 @@ describe('Collab Test Suite', () => {
     const result = await persistence.put({
       name: 'bar',
       conns: new Map().set({ auth: 'auth', readOnly: true }, new Set()),
-      daadmin
+      daadmin,
     }, 'toast');
     assert(result.ok);
     assert.equal(fetchCalled.length, 0, 'Should not have called fetch');
@@ -282,25 +293,24 @@ describe('Collab Test Suite', () => {
 
   it('Test persistence update does not put if no change', async () => {
     const mockDoc2Aem = () => 'Svr content';
-    const pss = await esmock(
-      '../src/shareddoc.js', {
-        '../src/collab.js': {
-          doc2aem: mockDoc2Aem
-        }
-      });
+    const pss = await esmock('../src/shareddoc.js', {
+      '../src/collab.js': {
+        doc2aem: mockDoc2Aem,
+      },
+    });
 
     pss.persistence.put = async (ydoc, content) => {
-      assert.fail("update should not have happend");
-    }
+      assert.fail('update should not have happend');
+    };
 
     const mockYDoc = {
-      conns: { keys() { return [ {} ] }},
+      conns: { keys() { return [{}]; } },
       name: 'http://foo.bar/0/123.html',
     };
 
     pss.persistence.put = async (ydoc, content) => {
-      assert.fail("update should not have happend");
-    }
+      assert.fail('update should not have happend');
+    };
 
     const result = await pss.persistence.update(mockYDoc, 'Svr content');
     assert.equal(result, 'Svr content');
@@ -308,15 +318,14 @@ describe('Collab Test Suite', () => {
 
   it('Test persistence update does put if change', async () => {
     const mockDoc2Aem = () => 'Svr content update';
-    const pss = await esmock(
-      '../src/shareddoc.js', {
-        '../src/collab.js': {
-          doc2aem: mockDoc2Aem
-        }
-      });
+    const pss = await esmock('../src/shareddoc.js', {
+      '../src/collab.js': {
+        doc2aem: mockDoc2Aem,
+      },
+    });
 
     const mockYDoc = {
-      conns: { keys() { return [ {} ] }},
+      conns: { keys() { return [{}]; } },
       name: 'http://foo.bar/0/123.html',
     };
 
@@ -325,13 +334,13 @@ describe('Collab Test Suite', () => {
       assert.equal(ydoc, mockYDoc);
       assert.equal(content, 'Svr content update');
       called = true;
-      return { ok: true, status: 201, statusText: 'Created'};
-    }
+      return { ok: true, status: 201, statusText: 'Created' };
+    };
 
     let calledCloseCon = false;
     pss.persistence.closeConn = (doc, conn) => {
       calledCloseCon = true;
-    }
+    };
 
     const result = await pss.persistence.update(mockYDoc, 'Svr content');
     assert.equal(result, 'Svr content update');
@@ -341,17 +350,16 @@ describe('Collab Test Suite', () => {
 
   async function testCloseAllOnAuthFailure(httpError) {
     const mockDoc2Aem = () => 'Svr content update';
-    const pss = await esmock(
-      '../src/shareddoc.js', {
-        '../src/collab.js': {
-          doc2aem: mockDoc2Aem
-        }
-      });
+    const pss = await esmock('../src/shareddoc.js', {
+      '../src/collab.js': {
+        doc2aem: mockDoc2Aem,
+      },
+    });
 
     const mockYDoc = {
       conns: new Map().set('foo', 'bar'),
       name: 'http://foo.bar/0/123.html',
-      getMap(nm) { return nm === 'error' ? new Map() : null },
+      getMap(nm) { return nm === 'error' ? new Map() : null; },
       transact: (f) => f(),
     };
 
@@ -360,15 +368,15 @@ describe('Collab Test Suite', () => {
       assert.equal(ydoc, mockYDoc);
       assert.equal(content, 'Svr content update');
       called = true;
-      return { ok: false, status: httpError, statusText: 'Unauthorized'};
-    }
+      return { ok: false, status: httpError, statusText: 'Unauthorized' };
+    };
 
     let calledCloseCon = false;
     pss.persistence.closeConn = (doc, conn) => {
       assert.equal(doc, mockYDoc);
       assert.equal(conn, 'foo');
       calledCloseCon = true;
-    }
+    };
 
     const result = await pss.persistence.update(mockYDoc, 'Svr content');
     assert.equal(result, 'Svr content');
@@ -489,16 +497,15 @@ describe('Collab Test Suite', () => {
 
   it('Test update handlers stop after 412 cleanup', async () => {
     const mockdebounce = (f) => {
-      let debounced = async () => await f();
+      const debounced = async () => f();
       debounced.cancel = () => {};
       return debounced;
     };
-    const pss = await esmock(
-      '../src/shareddoc.js', {
-        'lodash/debounce.js': {
-          default: mockdebounce
-        }
-      });
+    const pss = await esmock('../src/shareddoc.js', {
+      'lodash/debounce.js': {
+        default: mockdebounce,
+      },
+    });
 
     const docName = 'https://admin.da.live/source/qux.html';
     const ydoc = new pss.WSSharedDoc(docName);
@@ -528,7 +535,7 @@ describe('Collab Test Suite', () => {
     const storage = {
       list: async () => new Map(),
       deleteAll: async () => {},
-      put: async () => {}
+      put: async () => {},
     };
     pss.persistence.get = async () => '<main><div><p>initial</p></div></main>';
 
@@ -544,7 +551,8 @@ describe('Collab Test Suite', () => {
 
     assert(!docs.has(docName), 'Doc should be removed from global map');
 
-    // Now try to call the update handlers - they should not execute because ydoc is no longer in global map
+    // Now try to call the update handlers -
+    // they should not execute because ydoc is no longer in global map
     const putCalls = [];
     pss.persistence.put = async () => {
       putCalls.push('put');
@@ -631,7 +639,7 @@ describe('Collab Test Suite', () => {
       awareness: {
         emit(_, chg) { awarenessEmitted.push(chg); },
         name: 'http://foo.bar/q/r.html',
-        states: new Map()
+        states: new Map(),
       },
       conns: new Map(),
     };
@@ -640,7 +648,7 @@ describe('Collab Test Suite', () => {
 
     const called = [];
     const mockConn = {
-      close() { called.push('close'); }
+      close() { called.push('close'); },
     };
     const ids = new Set();
     ids.add('123');
@@ -651,11 +659,17 @@ describe('Collab Test Suite', () => {
     closeConn(mockDoc, mockConn);
     assert.deepStrictEqual(['close'], called);
     assert.equal(0, mockDoc.conns.size);
-    assert.deepStrictEqual(['123'], awarenessEmitted[0][0].removed,
-      'removeAwarenessStates should be called');
+    assert.deepStrictEqual(
+      ['123'],
+      awarenessEmitted[0][0].removed,
+      'removeAwarenessStates should be called',
+    );
 
-    assert.equal(docs.get(mockDoc.name), undefined,
-      'Document should be removed from global map');
+    assert.equal(
+      docs.get(mockDoc.name),
+      undefined,
+      'Document should be removed from global map',
+    );
 
     assert(docs.get(mockDoc.name) === undefined, 'Should have been removed from docs map');
   });
@@ -667,7 +681,7 @@ describe('Collab Test Suite', () => {
 
     const called = [];
     const mockConn = {
-      close() { called.push('close'); }
+      close() { called.push('close'); },
     };
 
     assert.equal(0, called.length, 'Precondition');
@@ -678,19 +692,18 @@ describe('Collab Test Suite', () => {
   it('Test bindState read from da-admin', async () => {
     const aem2DocCalled = [];
     const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
-    const pss = await esmock(
-      '../src/shareddoc.js', {
-        '../src/collab.js': {
-          aem2doc: mockAem2Doc,
-        }
-      });
+    const pss = await esmock('../src/shareddoc.js', {
+      '../src/collab.js': {
+        aem2doc: mockAem2Doc,
+      },
+    });
 
     const docName = 'http://lalala.com/ha/ha/ha.html';
     const testYDoc = new Y.Doc();
     testYDoc.daadmin = 'daadmin';
     const mockConn = {
       auth: 'myauth',
-      authActions: ['read']
+      authActions: ['read'],
     };
     pss.setYDoc(docName, testYDoc);
 
@@ -731,6 +744,7 @@ describe('Collab Test Suite', () => {
 
     const savedGet = persistence.get;
     try {
+      // eslint-disable-next-line consistent-return
       persistence.get = (d) => {
         if (d === docName) {
           return `
@@ -756,7 +770,11 @@ describe('Collab Test Suite', () => {
     const ydoc = new Y.Doc();
     setYDoc(docName, ydoc);
 
-    const storage = { list: async () => { throw new Error('yikes') } };
+    const storage = {
+      list: async () => {
+        throw new Error('yikes');
+      },
+    };
 
     const savedGet = persistence.get;
     const savedSetTimeout = globalThis.setTimeout;
@@ -779,13 +797,12 @@ describe('Collab Test Suite', () => {
   });
 
   it('test persistence update on storage update', async () => {
-    const mockdebounce = (f) => async () => await f();
-    const pss = await esmock(
-      '../src/shareddoc.js', {
-        'lodash/debounce.js': {
-          default: mockdebounce
-        }
-      });
+    const mockdebounce = (f) => async () => f();
+    const pss = await esmock('../src/shareddoc.js', {
+      'lodash/debounce.js': {
+        default: mockdebounce,
+      },
+    });
 
     const docName = 'https://admin.da.live/source/foo/bar.html';
     const storage = { list: async () => new Map() };
@@ -810,6 +827,7 @@ describe('Collab Test Suite', () => {
 
       pss.persistence.get = async () => '<main><div>oldcontent</div></main>';
       const putCalls = [];
+      // eslint-disable-next-line consistent-return
       pss.persistence.put = async (yd, c) => {
         if (yd === ydoc && c.includes('newcontent')) {
           putCalls.push(c);
@@ -855,7 +873,7 @@ describe('Collab Test Suite', () => {
     const storage = {
       deleteAll: async () => called.push('deleteAll'),
       list: async () => new Map(),
-      put: async (obj) => called.push(obj)
+      put: async (obj) => called.push(obj),
     };
 
     const savedSetTimeout = globalThis.setTimeout;
@@ -897,7 +915,7 @@ describe('Collab Test Suite', () => {
     try {
       const bsCalls = [];
       persistence.bindState = async (dn, d, c) => {
-        bsCalls.push({dn, d, c});
+        bsCalls.push({ dn, d, c });
       };
 
       const docName = 'http://www.acme.org/somedoc.html';
@@ -910,7 +928,7 @@ describe('Collab Test Suite', () => {
       assert.equal(bsCalls[0].d, doc);
       assert.equal(bsCalls[0].c, mockConn);
 
-      const daadmin = { foo: 'bar' }
+      const daadmin = { foo: 'bar' };
       const env = { daadmin };
       const doc2 = await getYDoc(docName, mockConn, env, {});
       assert.equal(1, bsCalls.length, 'Should not have called bindstate again');
@@ -963,11 +981,11 @@ describe('Collab Test Suite', () => {
     const sentMessages = [];
     const mockConn = {
       readyState: 1, // wsReadyStateOpen
-      send(m, e) { sentMessages.push({m, e}); }
+      send(m, e) { sentMessages.push({ m, e }); },
     };
     doc.conns.set(mockConn, new Set());
 
-    ah[0]({added: [], updated: [doc.clientID], removed: []}, mockConn);
+    ah[0]({ added: [], updated: [doc.clientID], removed: [] }, mockConn);
 
     const barrAsUint8Arr = new Uint8Array(getAsciiChars('barrr'));
     assert(isSubArray(sentMessages[0].m, barrAsUint8Arr));
@@ -979,9 +997,11 @@ describe('Collab Test Suite', () => {
     try {
       const bindCalls = [];
       persistence.bindState = async (nm, d, c, s) => {
-        bindCalls.push({nm, d, c, s});
+        bindCalls.push({
+          nm, d, c, s,
+        });
         return new Map();
-      }
+      };
 
       const docName = 'https://somewhere.com/somedoc.html';
       const eventListeners = new Map();
@@ -990,7 +1010,7 @@ describe('Collab Test Suite', () => {
         addEventListener(msg, fun) { eventListeners.set(msg, fun); },
         close() { closeCalls.push('close'); },
         readyState: 1, // wsReadyStateOpen
-        send() {}
+        send() {},
       };
 
       const daadmin = { a: 'b' };
@@ -1007,7 +1027,7 @@ describe('Collab Test Suite', () => {
       assert.equal(docName, bindCalls[0].d.name);
       assert.equal('b', bindCalls[0].d.daadmin.a);
       assert.equal(mockConn, bindCalls[0].c);
-      assert.deepStrictEqual(storage, bindCalls[0].s)
+      assert.deepStrictEqual(storage, bindCalls[0].s);
 
       const closeLsnr = eventListeners.get('close');
       assert(closeLsnr);
@@ -1035,7 +1055,7 @@ describe('Collab Test Suite', () => {
         addEventListener() {},
         close() { closeCalls.push('close'); },
         readyState: 1, // wsReadyStateOpen
-        send(m, e) { sendCalls.push({m, e}); }
+        send(m, e) { sendCalls.push({ m, e }); },
       };
 
       const awarenessStates = new Map();
@@ -1043,7 +1063,7 @@ describe('Collab Test Suite', () => {
       const awareness = {
         getStates: () => awarenessStates,
         meta: awarenessStates,
-        states: awarenessStates
+        states: awarenessStates,
       };
 
       const ydoc = await getYDoc(docName, mockConn, {}, {}, true);
@@ -1064,12 +1084,12 @@ describe('Collab Test Suite', () => {
     const connSent = [];
     const conn = {
       readyState: 0, // wsReadyState
-      send(m, r) { connSent.push({m, r}); }
+      send(m, r) { connSent.push({ m, r }); },
     };
 
     const emitted = [];
     const doc = new Y.Doc();
-    doc.emit = (t, e) => emitted.push({t, e});
+    doc.emit = (t, e) => emitted.push({ t, e });
     doc.getMap('foo').set('bar', 'hello');
 
     const message = [0, 0, 1, 0];
@@ -1078,7 +1098,7 @@ describe('Collab Test Suite', () => {
     assert.equal(1, connSent.length);
     assert(isSubArray(connSent[0].m, new Uint8Array(getAsciiChars('hello'))));
 
-    for (let i = 0; i < emitted.length; i++) {
+    for (let i = 0; i < emitted.length; i += 1) {
       assert(emitted[i].t !== 'error');
     }
   });
@@ -1087,38 +1107,38 @@ describe('Collab Test Suite', () => {
     const connSent = [];
     const conn = {
       readyState: 0, // wsReadyState
-      send(m, r) { connSent.push({m, r}); },
+      send(m, r) { connSent.push({ m, r }); },
       readOnly: true,
     };
 
     const emitted = [];
     const doc = new Y.Doc();
-    doc.emit = (t, e) => emitted.push({t, e});
+    doc.emit = (t, e) => emitted.push({ t, e });
     doc.getMap('foo').set('bar', 'hello');
 
     const message = [0, 0, 1, 0];
 
     messageListener(conn, doc, new Uint8Array(message));
-    assert.equal(1, connSent.length, "Readonly connection should still call sync step 1");
+    assert.equal(1, connSent.length, 'Readonly connection should still call sync step 1');
     assert(isSubArray(connSent[0].m, new Uint8Array(getAsciiChars('hello'))));
 
-    for (let i = 0; i < emitted.length; i++) {
+    for (let i = 0; i < emitted.length; i += 1) {
       assert(emitted[i].t !== 'error');
     }
   });
 
   const testSyncStep2 = async (doc, readonly) => {
     const ss2Called = [];
+    // eslint-disable-next-line no-shadow
     const mockSS2 = (dec, doc) => {
-      ss2Called.push({dec, doc});
-   }
+      ss2Called.push({ dec, doc });
+    };
 
-    const shd = await esmock(
-      '../src/shareddoc.js', {
-        'y-protocols/sync.js': {
-          readSyncStep2: mockSS2
-        }
-      });
+    const shd = await esmock('../src/shareddoc.js', {
+      'y-protocols/sync.js': {
+        readSyncStep2: mockSS2,
+      },
+    });
 
     const conn = {};
     if (readonly) {
@@ -1148,16 +1168,16 @@ describe('Collab Test Suite', () => {
 
   const testYjsUpdate = async (doc, readonly) => {
     const updCalled = [];
+    // eslint-disable-next-line no-shadow
     const mockUpd = (dec, doc) => {
-      updCalled.push({dec, doc});
-   }
+      updCalled.push({ dec, doc });
+    };
 
-    const shd = await esmock(
-      '../src/shareddoc.js', {
-        'y-protocols/sync.js': {
-          readUpdate: mockUpd
-        }
-      });
+    const shd = await esmock('../src/shareddoc.js', {
+      'y-protocols/sync.js': {
+        readUpdate: mockUpd,
+      },
+    });
 
     const conn = {};
     if (readonly) {
@@ -1201,32 +1221,32 @@ describe('Collab Test Suite', () => {
       110, 97, 109, 101, 34, 58, 110, 117, 108, 108, 44, 34, 105, 116, 101, 109, 34, 58,
       123, 34, 99, 108, 105, 101, 110, 116, 34, 58, 51, 49, 51, 52, 57, 50, 57, 54, 56,
       55, 44, 34, 99, 108, 111, 99, 107, 34, 58, 50, 48, 125, 44, 34, 97, 115, 115, 111,
-      99, 34, 58, 48, 125, 125, 125 ];
+      99, 34, 58, 48, 125, 125, 125];
 
     const awarenessEmitted = [];
     const awareness = {
-      emit(t, d) { awarenessEmitted.push({t, d}); },
+      emit(t, d) { awarenessEmitted.push({ t, d }); },
       meta: new Map(),
-      states: new Map()
+      states: new Map(),
     };
 
     const docEmitted = [];
     const doc = new Y.Doc();
     doc.awareness = awareness;
-    doc.emit = (t, e) => docEmitted.push({t, e});
+    doc.emit = (t, e) => docEmitted.push({ t, e });
 
     const conn = {};
     messageListener(conn, doc, new Uint8Array(message));
 
     assert(awarenessEmitted.length > 0);
-    for (let i = 0; i < awarenessEmitted.length; i++) {
-      assert(awarenessEmitted[i].t === 'change' ||
-        awarenessEmitted[i].t === 'update');
-      assert.deepStrictEqual([3938371515], awarenessEmitted[i].d[0].added)
+    for (let i = 0; i < awarenessEmitted.length; i += 1) {
+      assert(awarenessEmitted[i].t === 'change'
+        || awarenessEmitted[i].t === 'update');
+      assert.deepStrictEqual([3938371515], awarenessEmitted[i].d[0].added);
       assert.equal(awarenessEmitted[i].d[1], conn);
     }
 
-    for (let i = 0; i < docEmitted.length; i++) {
+    for (let i = 0; i < docEmitted.length; i += 1) {
       assert(docEmitted[i].t !== 'error');
     }
   });
@@ -1273,7 +1293,7 @@ describe('Collab Test Suite', () => {
 
     const data = await readState('mydoc', storage);
     assert.deepStrictEqual(new Uint8Array([1, 2, 3, 4, 5]), data);
-  })
+  });
 
   it('storeState not chunked', async () => {
     const docName = 'https://some.where/far/away.html';
@@ -1282,7 +1302,7 @@ describe('Collab Test Suite', () => {
     const called = [];
     const storage = {
       deleteAll: async () => called.push('deleteAll'),
-      put: (obj) => called.push(obj)
+      put: (obj) => called.push(obj),
     };
 
     await storeState(docName, state, storage, 10);
@@ -1299,7 +1319,7 @@ describe('Collab Test Suite', () => {
     const called = [];
     const storage = {
       deleteAll: async () => called.push('deleteAll'),
-      put: (obj) => called.push(obj)
+      put: (obj) => called.push(obj),
     };
 
     await storeState('somedoc', state, storage, 4);
@@ -1321,16 +1341,18 @@ describe('Collab Test Suite', () => {
       transact(f) {
         called.push('transact');
         f();
-      }
+      },
     };
 
-    let error = new Error('foo');
+    const error = new Error('foo');
 
     showError(mockYDoc, error);
     assert.equal('foo', errorMap.get('message'));
     assert(errorMap.get('timestamp') > 0);
-    assert(errorMap.get('stack').includes('shareddoc.test.js'),
-      'The stack trace should contain the name of this test file');
+    assert(
+      errorMap.get('stack').includes('shareddoc.test.js'),
+      'The stack trace should contain the name of this test file',
+    );
     assert.deepStrictEqual(['transact'], called);
   });
 
@@ -1352,7 +1374,7 @@ describe('Collab Test Suite', () => {
     const storage = {
       deleteAll: async () => called.push('deleteAll'),
       list: async () => new Map(),
-      put: async (obj) => called.push(obj)
+      put: async (obj) => called.push(obj),
     };
 
     const savedSetTimeout = globalThis.setTimeout;
@@ -1365,8 +1387,9 @@ describe('Collab Test Suite', () => {
       };
       let calledGet = 0;
       persistence.get = async () => {
-        if (calledGet++ > 0 ) {
-          throw new Error('unexpected crash')
+        // eslint-disable-next-line no-plusplus
+        if (calledGet++ > 0) {
+          throw new Error('unexpected crash');
         }
         return `
 <body>
