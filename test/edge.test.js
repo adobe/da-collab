@@ -382,33 +382,59 @@ describe('Worker test suite', () => {
 
   it('Test handleErrors success', async () => {
     const f = () => 42;
-
-    const res = await handleErrors(null, f);
-    assert.equal(42, res);
+    const res = await handleErrors({}, {}, f);
+    assert.equal(res, 42);
   });
 
-  it('Test HandleError error', async () => {
-    const f = () => {
+  it('Test HandleError error (disable stack trace)', async () => {
+    const f = async () => {
       throw new Error('testing');
     };
 
     const req = {
+      url: 'http://localhost:4711/',
       headers: new Map(),
     };
-    const res = await handleErrors(req, f);
-    assert.equal(500, res.status);
+    const env = {
+      RETURN_STACK_TRACES: false,
+    };
+    const res = await handleErrors(req, env, f);
+    assert.strictEqual(res.status, 500);
+    assert.strictEqual(await res.text(), 'Internal Server Error');
   });
 
-  it('Test handleErrors WebSocket error', async () => {
+  it('Test HandleError error (enable stack trace)', async () => {
+    const f = async () => {
+      throw new Error('testing');
+    };
+
+    const req = {
+      url: 'http://localhost:4711/',
+      headers: new Map(),
+    };
+    const env = {
+      RETURN_STACK_TRACES: true,
+    };
+    const res = await handleErrors(req, env, f);
+    assert.strictEqual(res.status, 500);
+    assert.match(await res.text(), /at handleErrors/m);
+  });
+
+  it('Test handleErrors WebSocket error (disable stack trace)', async () => {
     const f = () => {
       throw new Error('WebSocket error test');
     };
 
     const req = {
+      url: 'wss://localhost:4711/',
       headers: new Map([['Upgrade', 'websocket']]),
+    };
+    const env = {
+      RETURN_STACK_TRACES: false,
     };
 
     // Mock WebSocketPair since it's not available in Node.js test environment
+    const messages = [];
     const mockWebSocketPair = function () {
       const pair = [null, null];
       pair[0] = { // client side
@@ -418,7 +444,9 @@ describe('Worker test suite', () => {
       };
       pair[1] = { // server side
         accept: () => {},
-        send: () => {},
+        send(msg) {
+          messages.push(msg);
+        },
         close: () => {},
       };
       return pair;
@@ -431,7 +459,7 @@ describe('Worker test suite', () => {
       // In Node.js, status 101 is not valid, so we expect an error
       // But the important thing is that the WebSocket error path is covered
       try {
-        const res = await handleErrors(req, f);
+        const res = await handleErrors(req, env, f);
         // If we get here, the test environment supports status 101
         assert.equal(101, res.status);
         assert(res.webSocket !== undefined);
@@ -439,6 +467,61 @@ describe('Worker test suite', () => {
         // Expected in Node.js - status 101 is not valid
         assert(error.message.includes('must be in the range of 200 to 599'));
       }
+      assert.deepEqual(messages, ['Internal Error.']);
+    } finally {
+      // Clean up the mock
+      delete globalThis.WebSocketPair;
+    }
+  });
+
+  it('Test handleErrors WebSocket error (enable stack trace)', async () => {
+    const f = () => {
+      throw new Error('WebSocket error test');
+    };
+
+    const req = {
+      url: 'wss://localhost:4711/',
+      headers: new Map([['Upgrade', 'websocket']]),
+    };
+    const env = {
+      RETURN_STACK_TRACES: true,
+    };
+
+    // Mock WebSocketPair since it's not available in Node.js test environment
+    const messages = [];
+    const mockWebSocketPair = function () {
+      const pair = [null, null];
+      pair[0] = { // client side
+        readyState: 1,
+        close: () => {},
+        send: () => {},
+      };
+      pair[1] = { // server side
+        accept: () => {},
+        send(msg) {
+          messages.push(msg);
+        },
+        close: () => {},
+      };
+      return pair;
+    };
+
+    // Mock WebSocketPair globally
+    globalThis.WebSocketPair = mockWebSocketPair;
+
+    try {
+      // In Node.js, status 101 is not valid, so we expect an error
+      // But the important thing is that the WebSocket error path is covered
+      try {
+        const res = await handleErrors(req, env, f);
+        // If we get here, the test environment supports status 101
+        assert.equal(101, res.status);
+        assert(res.webSocket !== undefined);
+      } catch (error) {
+        // Expected in Node.js - status 101 is not valid
+        assert(error.message.includes('must be in the range of 200 to 599'));
+      }
+      assert.match(messages[0], /at handleErrors/m);
     } finally {
       // Clean up the mock
       delete globalThis.WebSocketPair;
