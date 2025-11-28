@@ -27,7 +27,8 @@ import { invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
  * code but it is convenient when debugging and iterating.
  *
  * @param {Request} request
- * @param {function} func
+ * @param {(function(): Promise<|Response>)} func
+ * @return {Promise<Response>}
  */
 export async function handleErrors(request, func) {
   try {
