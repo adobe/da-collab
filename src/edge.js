@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 Adobe. All rights reserved.
+ * Copyright 2025 Adobe. All rights reserved.
  * This file is licensed to you under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License. You may obtain a copy
  * of the License at http://www.apache.org/licenses/LICENSE-2.0
@@ -105,7 +105,8 @@ function ping(env) {
  * /deleteadmin - the document is deleted and should be removed from the worker internal state.
  * @param {URL} url - The request url
  * @param {Request} request - The request object
- * @param {Object} env - The worker environment
+ * @param {Env} env - The worker environment
+ * @return {Promise<Response>}
  */
 async function handleApiCall(url, request, env) {
   switch (url.pathname) {
@@ -232,6 +233,11 @@ export async function handleApiRequest(request, env) {
 // In modules-syntax workers, we use `export default` to export our script's main event handlers.
 // This is the main entry point for the worker.
 export default {
+  /**
+   * @param {Request} request
+   * @param {Env} env
+   * @returns {Promise<Response>}
+   */
   async fetch(request, env) {
     return handleErrors(request, async () => handleApiRequest(request, env));
   },
