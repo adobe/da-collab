@@ -332,7 +332,7 @@ describe('Worker test suite', () => {
 
       // Should return 500 error when bindState fails
       assert.equal(500, resp.status);
-      assert.equal('internal server error', await resp.text());
+      assert.equal('Internal Server Error', await resp.text());
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
       persistence.bindState = savedBS;
@@ -373,7 +373,7 @@ describe('Worker test suite', () => {
 
       // Should return 500 error due to exception in WebSocket setup
       assert.equal(500, resp.status);
-      assert.equal('internal server error', await resp.text());
+      assert.equal('Internal Server Error', await resp.text());
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
       persistence.bindState = savedBS;
@@ -467,7 +467,7 @@ describe('Worker test suite', () => {
         // Expected in Node.js - status 101 is not valid
         assert(error.message.includes('must be in the range of 200 to 599'));
       }
-      assert.deepEqual(messages, ['Internal Error.']);
+      assert.deepEqual(messages, ['Internal Server Error']);
     } finally {
       // Clean up the mock
       delete globalThis.WebSocketPair;

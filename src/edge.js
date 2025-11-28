@@ -36,6 +36,9 @@ export async function handleErrors(request, env, handler) {
     return await handler(request, env);
   } catch (err) {
     console.log('Error handling request for %s:', request.url, err);
+    const msg = String(env.RETURN_STACK_TRACES) === 'true'
+      ? JSON.stringify({ error: err.stack })
+      : 'Internal Server Error';
     if (request.headers.get('Upgrade') === 'websocket') {
       // Annoyingly, if we return an HTTP error in response to a WebSocket request,
       // Chrome devtools won't show us the response body! So... let's send a WebSocket
@@ -43,21 +46,11 @@ export async function handleErrors(request, env, handler) {
       // eslint-disable-next-line no-undef
       const pair = new WebSocketPair();
       pair[1].accept();
-      if (String(env.RETURN_STACK_TRACES) === 'true') {
-        pair[1].send(JSON.stringify({ error: err.stack }));
-        pair[1].close(1011, 'Uncaught exception during session setup');
-      } else {
-        pair[1].send('Internal Error.');
-        pair[1].close(1011, 'Uncaught exception during session setup');
-      }
+      pair[1].send(msg);
+      pair[1].close(1011, 'Uncaught exception during session setup');
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
-
-    if (String(env.RETURN_STACK_TRACES) === 'true') {
-      return new Response(err.stack, { status: 500 });
-    } else {
-      return new Response('Internal Server Error', { status: 500 });
-    }
+    return new Response(msg, { status: 500 });
   }
 }
 // Admin APIs are forwarded to the durable object. They need the doc name as a query
@@ -338,7 +331,7 @@ export class DocRoom {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[docroom] Error while fetching', err);
-      return new Response('internal server error', { status: 500 });
+      return new Response('Internal Server Error', { status: 500 });
     }
   }
 
