@@ -491,7 +491,7 @@ describe('Collab Test Suite', () => {
     assert(errorMap.size > 0, 'Error map should have entries');
     assert(errorMap.has('timestamp'), 'Should have timestamp');
     assert(errorMap.has('message'), 'Should have message');
-    assert(errorMap.has('stack'), 'Should have stack');
+    assert(!errorMap.has('stack'), 'Should not have stack');
     assert(errorMap.get('message').includes('412'), 'Error message should mention 412');
   });
 
@@ -1337,6 +1337,7 @@ describe('Collab Test Suite', () => {
     const errorMap = new Map();
     const called = [];
     const mockYDoc = {
+      sendStackTraces: true,
       getMap(nm) { return nm === 'error' ? errorMap : null; },
       transact(f) {
         called.push('transact');
