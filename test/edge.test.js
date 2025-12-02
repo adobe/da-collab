@@ -470,7 +470,7 @@ describe('Worker test suite', () => {
 
     const req = {
       url: 'http://localhost:4711/',
-      headers: new Map(),
+      headers: new Headers(),
     };
     const env = {
       RETURN_STACK_TRACES: false,
@@ -487,7 +487,7 @@ describe('Worker test suite', () => {
 
     const req = {
       url: 'http://localhost:4711/',
-      headers: new Map(),
+      headers: new Headers(),
     };
     const env = {
       RETURN_STACK_TRACES: true,
@@ -504,7 +504,9 @@ describe('Worker test suite', () => {
 
     const req = {
       url: 'wss://localhost:4711/',
-      headers: new Map([['Upgrade', 'websocket']]),
+      headers: new Headers({
+        upgrade: 'websocket',
+      }),
     };
     const env = {
       RETURN_STACK_TRACES: false,
@@ -558,7 +560,9 @@ describe('Worker test suite', () => {
 
     const req = {
       url: 'wss://localhost:4711/',
-      headers: new Map([['Upgrade', 'websocket']]),
+      headers: new Headers({
+        upgrade: 'websocket',
+      }),
     };
     const env = {
       RETURN_STACK_TRACES: true,
