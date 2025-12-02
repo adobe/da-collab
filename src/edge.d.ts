@@ -13,6 +13,7 @@ import { DurableObjectNamespace, Fetcher } from "@cloudflare/workers-types";
 
 export interface Env {
     RETURN_STACK_TRACES: string;
+    COLLAB_SHARED_SECRET: string;
     rooms: DurableObjectNamespace;
     daadmin: Fetcher /* da-admin */;
 }
