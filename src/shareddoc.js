@@ -181,7 +181,9 @@ export const showError = (ydoc, err) => {
     ydoc.transact(() => {
       em.set('timestamp', Date.now());
       em.set('message', err.message);
-      em.set('stack', err.stack);
+      if (ydoc.sendStackTraces) {
+        em.set('stack', err.stack);
+      }
     });
   } catch (e) {
     // eslint-disable-next-line no-console
@@ -439,6 +441,12 @@ export const updateHandler = (update, _origin, doc) => {
  * Our specialisation of the YDoc.
  */
 export class WSSharedDoc extends Y.Doc {
+  /**
+   * Controls if showError should send stack traces
+   * @type {boolean}
+   */
+  sendStackTraces = false;
+
   constructor(name) {
     super({ gc: gcEnabled });
     this.name = name;
@@ -494,6 +502,7 @@ export const getYDoc = async (docname, conn, env, storage, timingData, gc = true
     // The doc is not yet in the cache, create a new one.
     doc = new WSSharedDoc(docname);
     doc.gc = gc;
+    doc.sendStackTraces = String(env.RETURN_STACK_TRACES) === 'true';
     docs.set(docname, doc);
   }
 
