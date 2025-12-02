@@ -15,6 +15,12 @@ import assert from 'node:assert';
 import defaultEdge, { DocRoom, handleApiRequest, handleErrors } from '../src/edge.js';
 import { WSSharedDoc, persistence, setYDoc } from '../src/shareddoc.js';
 
+async function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function hash(str) {
   let h = 0;
   for (let i = 0, len = str.length; i < len; i += 1) {
@@ -27,6 +33,15 @@ function hash(str) {
   return h;
 }
 
+class MockRoom extends DocRoom {
+  calls = [];
+
+  handleApiCall(api, docName) {
+    this.calls.push({ api, docName });
+    return new Response(null, { status: 200 });
+  }
+}
+
 describe('Worker test suite', () => {
   it('Test deleteAdmin', async () => {
     const expectedHash = hash('https://some.where/some/doc.html');
@@ -34,13 +49,7 @@ describe('Worker test suite', () => {
       url: 'http://localhost:9999/api/v1/deleteadmin?doc=https://some.where/some/doc.html',
     };
 
-    const roomFetchCalls = [];
-    const room = {
-      fetch(url) {
-        roomFetchCalls.push(url.toString());
-        return new Response(null, { status: 200 });
-      },
-    };
+    const room = new MockRoom();
     const rooms = {
       idFromName(nm) { return hash(nm); },
       // eslint-disable-next-line consistent-return
@@ -54,7 +63,11 @@ describe('Worker test suite', () => {
 
     const resp = await handleApiRequest(req, env);
     assert.equal(200, resp.status);
-    assert.deepStrictEqual(roomFetchCalls, ['https://some.where/some/doc.html?api=deleteAdmin']);
+    assert.deepStrictEqual(room.calls, [{
+      api: 'deleteAdmin',
+      docName: 'https://some.where/some/doc.html',
+    },
+    ]);
   });
 
   it('Test syncAdmin request without doc', async () => {
@@ -75,13 +88,7 @@ describe('Worker test suite', () => {
       url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html',
     };
 
-    const roomFetchCalls = [];
-    const room = {
-      fetch(url) {
-        roomFetchCalls.push(url.toString());
-        return new Response(null, { status: 200 });
-      },
-    };
+    const room = new MockRoom();
     const rooms = {
       idFromName(nm) { return hash(nm); },
       // eslint-disable-next-line consistent-return
@@ -93,10 +100,75 @@ describe('Worker test suite', () => {
     };
     const env = { rooms };
 
-    assert.equal(roomFetchCalls.length, 0, 'Precondition');
     const resp = await handleApiRequest(req, env);
     assert.equal(200, resp.status);
-    assert.deepStrictEqual(roomFetchCalls, ['http://foobar.com/a/b/c.html?api=syncAdmin']);
+    assert.deepStrictEqual(room.calls, [
+      {
+        api: 'syncAdmin',
+        docName: 'http://foobar.com/a/b/c.html',
+      },
+    ]);
+  });
+
+  it('Test handle syncAdmin request (enforced shared secret)', async () => {
+    const expectedHash = hash('http://foobar.com/a/b/c.html');
+    const req = {
+      url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html',
+      headers: new Headers({
+        authorization: 'token test-secret',
+      }),
+    };
+
+    const room = new MockRoom();
+    const rooms = {
+      idFromName(nm) { return hash(nm); },
+      get(id) {
+        if (id === expectedHash) {
+          return room;
+        }
+        return null;
+      },
+    };
+    const env = {
+      rooms,
+      COLLAB_SHARED_SECRET: 'test-secret',
+    };
+
+    const resp = await handleApiRequest(req, env);
+    assert.equal(200, resp.status);
+    assert.deepStrictEqual(room.calls, [
+      {
+        api: 'syncAdmin',
+        docName: 'http://foobar.com/a/b/c.html',
+      },
+    ]);
+  });
+
+  it('Test handle syncAdmin request (enforced shared secret, unauthorized)', async () => {
+    const expectedHash = hash('http://foobar.com/a/b/c.html');
+    const req = {
+      url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html',
+      headers: new Headers(),
+    };
+
+    const room = new MockRoom();
+    const rooms = {
+      idFromName(nm) { return hash(nm); },
+      get(id) {
+        if (id === expectedHash) {
+          return room;
+        }
+        return null;
+      },
+    };
+    const env = {
+      rooms,
+      COLLAB_SHARED_SECRET: 'test-secret',
+    };
+
+    const resp = await handleApiRequest(req, env);
+    assert.equal(401, resp.status);
+    assert.deepStrictEqual(room.calls, []);
   });
 
   it('Test handle syncAdmin request via default export', async () => {
@@ -105,13 +177,7 @@ describe('Worker test suite', () => {
       url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html',
     };
 
-    const roomFetchCalls = [];
-    const room = {
-      fetch(url) {
-        roomFetchCalls.push(url.toString());
-        return new Response(null, { status: 200 });
-      },
-    };
+    const room = new MockRoom();
     const rooms = {
       idFromName(nm) { return hash(nm); },
       // eslint-disable-next-line consistent-return
@@ -123,10 +189,14 @@ describe('Worker test suite', () => {
     };
     const env = { rooms };
 
-    assert.equal(roomFetchCalls.length, 0, 'Precondition');
     const resp = await defaultEdge.fetch(req, env);
     assert.equal(200, resp.status);
-    assert.deepStrictEqual(roomFetchCalls, ['http://foobar.com/a/b/c.html?api=syncAdmin']);
+    assert.deepStrictEqual(room.calls, [
+      {
+        api: 'syncAdmin',
+        docName: 'http://foobar.com/a/b/c.html',
+      },
+    ]);
   });
 
   it('Test unknown API', async () => {
@@ -161,6 +231,7 @@ describe('Worker test suite', () => {
     assert.equal(204, resp.status);
     assert(!m.has(ydocName), 'Doc should have been removed');
     assert.deepStrictEqual(['close'], connCalled);
+    testYdoc.destroy();
   });
 
   it('Docroom deleteFromAdmin not found', async () => {
@@ -195,6 +266,7 @@ describe('Worker test suite', () => {
     assert.equal(200, resp.status);
     assert(!m.has(ydocName), 'Doc should have been removed');
     assert.deepStrictEqual(['close'], connCalled);
+    testYdoc.destroy();
   });
 
   it('Unknown doc update request gives 404', async () => {
@@ -277,7 +349,7 @@ describe('Worker test suite', () => {
     const dr = new DocRoom({ storage: null }, null);
 
     const req = {
-      headers: new Map(),
+      headers: new Headers(),
       url: 'http://localhost:4711/',
     };
     const resp = await dr.fetch(req);
@@ -286,9 +358,10 @@ describe('Worker test suite', () => {
 
   it('Test DocRoom fetch expects document name', async () => {
     const dr = new DocRoom({ storage: null }, null);
-    const headers = new Map();
-    headers.set('Upgrade', 'websocket');
-    headers.set('Authorization', 'au123');
+    const headers = new Headers({
+      upgrade: 'websocket',
+      authorization: 'au123',
+    });
 
     const req = {
       headers,
@@ -305,6 +378,8 @@ describe('Worker test suite', () => {
     try {
       // Mock bindState to throw 404 error (simulating document deleted between auth and bindState)
       persistence.bindState = async () => {
+        // eslint-disable-next-line max-len
+        await sleep(1); // the real bindState is async and we only reset the failed doc in the promise
         throw new Error('unable to get resource - status: 404');
       };
 
@@ -346,6 +421,8 @@ describe('Worker test suite', () => {
     try {
       // Mock bindState to throw an exception
       persistence.bindState = async (nm, d, c) => {
+        // eslint-disable-next-line max-len
+        await sleep(1); // the real bindState is async and we only reset the failed doc in the promise
         throw new Error('WebSocket setup error');
       };
 
@@ -393,7 +470,7 @@ describe('Worker test suite', () => {
 
     const req = {
       url: 'http://localhost:4711/',
-      headers: new Map(),
+      headers: new Headers(),
     };
     const env = {
       RETURN_STACK_TRACES: false,
@@ -410,7 +487,7 @@ describe('Worker test suite', () => {
 
     const req = {
       url: 'http://localhost:4711/',
-      headers: new Map(),
+      headers: new Headers(),
     };
     const env = {
       RETURN_STACK_TRACES: true,
@@ -427,7 +504,9 @@ describe('Worker test suite', () => {
 
     const req = {
       url: 'wss://localhost:4711/',
-      headers: new Map([['Upgrade', 'websocket']]),
+      headers: new Headers({
+        upgrade: 'websocket',
+      }),
     };
     const env = {
       RETURN_STACK_TRACES: false,
@@ -481,7 +560,9 @@ describe('Worker test suite', () => {
 
     const req = {
       url: 'wss://localhost:4711/',
-      headers: new Map([['Upgrade', 'websocket']]),
+      headers: new Headers({
+        upgrade: 'websocket',
+      }),
     };
     const env = {
       RETURN_STACK_TRACES: true,
@@ -659,6 +740,7 @@ describe('Worker test suite', () => {
   it('Test handleApiRequest room object fetch exception', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/test.html',
+      headers: new Headers(),
     };
 
     // Mock daadmin.fetch to return a successful response
@@ -695,7 +777,7 @@ describe('Worker test suite', () => {
 
   it('Test DocRoom newWebSocketPair', () => {
     // Mock WebSocketPair since it's not available in Node.js test environment
-    const mockWebSocketPair = function () {
+    const mockWebSocketPair = function createWebSocketPair(url, opts) {
       const pair = [null, null];
       pair[0] = { // client side
         readyState: 1,

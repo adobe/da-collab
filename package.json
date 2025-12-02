@@ -10,7 +10,8 @@
     "dev": "wrangler dev --var RETURN_STACK_TRACES:true src/edge.js",
     "deploy": "wrangler deploy src/edge.js",
     "deploy:stage": "wrangler deploy --env stage src/edge.js",
-    "test": "c8 mocha --inline-diffs --exit # --exit is needed because some test code triggers async listeners"
+    "test": "c8 mocha --inline-diffs --exit # --exit is needed because some test code triggers async listeners",
+    "prepare": "husky"
   },
   "mocha": {
     "reporter": "mocha-multi-reporters",
@@ -23,6 +24,8 @@
     "c8": "10.1.3",
     "eslint": "9.4.0",
     "esmock": "2.7.3",
+    "husky": "9.1.7",
+    "lint-staged": "16.2.7",
     "mocha": "^10.2.0",
     "mocha-junit-reporter": "^2.2.1",
     "mocha-multi-reporters": "^1.5.1",
@@ -43,5 +46,9 @@
     "y-prosemirror": "^1.2.3",
     "y-protocols": "^1.0.5",
     "yjs": "^13.5.0"
+  },
+  "lint-staged": {
+    "*.js": "eslint",
+    "*.cjs": "eslint"
   }
 }

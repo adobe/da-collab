@@ -54,6 +54,8 @@ export const closeConn = (doc, conn) => {
       }
 
       if (doc.conns.size === 0) {
+        // clear event handlers
+        doc.destroy();
         docs.delete(doc.name);
       }
     }
@@ -478,6 +480,11 @@ export class WSSharedDoc extends Y.Doc {
     this.awareness.on('update', awarenessChangeHandler);
     this.on('update', updateHandler);
   }
+
+  destroy() {
+    super.destroy();
+    this.awareness.destroy();
+  }
 }
 
 /**
@@ -517,9 +524,15 @@ export const getYDoc = async (docname, conn, env, storage, timingData, gc = true
 
   // We wait for the promise, for second and subsequent connections to the same doc, this will
   // already be resolved.
-  const timings = await doc.promise;
-  if (timingData) {
-    timings.forEach((v, k) => timingData.set(k, v));
+  try {
+    const timings = await doc.promise;
+    if (timingData) {
+      timings.forEach((v, k) => timingData.set(k, v));
+    }
+  } catch (e) {
+    // ensure to cleanup event handlers and timers
+    doc.destroy();
+    throw e;
   }
   return doc;
 };
