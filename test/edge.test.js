@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 Adobe. All rights reserved.
+ * Copyright 2025 Adobe. All rights reserved.
  * This file is licensed to you under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License. You may obtain a copy
  * of the License at http://www.apache.org/licenses/LICENSE-2.0
@@ -9,55 +9,70 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
-import assert from 'assert';
+/* eslint-disable no-unused-vars */
+import assert from 'node:assert';
 
-import * as Y from 'yjs';
 import defaultEdge, { DocRoom, handleApiRequest, handleErrors } from '../src/edge.js';
 import { WSSharedDoc, persistence, setYDoc } from '../src/shareddoc.js';
-import { doc2aem } from '../src/collab.js';
+
+async function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 function hash(str) {
-  let hash = 0;
-  for (let i = 0, len = str.length; i < len; i++) {
-      let chr = str.charCodeAt(i);
-      hash = (hash << 5) - hash + chr;
-      hash |= 0; // Convert to 32bit integer
+  let h = 0;
+  for (let i = 0, len = str.length; i < len; i += 1) {
+    const chr = str.charCodeAt(i);
+    // eslint-disable-next-line no-bitwise
+    h = (h << 5) - h + chr;
+    // eslint-disable-next-line no-bitwise
+    h |= 0; // Convert to 32bit integer
   }
-  return hash;
+  return h;
+}
+
+class MockRoom extends DocRoom {
+  calls = [];
+
+  handleApiCall(api, docName) {
+    this.calls.push({ api, docName });
+    return new Response(null, { status: 200 });
+  }
 }
 
 describe('Worker test suite', () => {
   it('Test deleteAdmin', async () => {
     const expectedHash = hash('https://some.where/some/doc.html');
     const req = {
-      url: 'http://localhost:9999/api/v1/deleteadmin?doc=https://some.where/some/doc.html'
+      url: 'http://localhost:9999/api/v1/deleteadmin?doc=https://some.where/some/doc.html',
     };
 
-    const roomFetchCalls = []
-    const room = {
-      fetch(url) {
-        roomFetchCalls.push(url.toString());
-        return new Response(null, { status: 200 });
-      }
-    };
+    const room = new MockRoom();
     const rooms = {
-      idFromName(nm) { return hash(nm) },
+      idFromName(nm) { return hash(nm); },
+      // eslint-disable-next-line consistent-return
       get(id) {
         if (id === expectedHash) {
           return room;
         }
-      }
-    }
+      },
+    };
     const env = { rooms };
 
     const resp = await handleApiRequest(req, env);
     assert.equal(200, resp.status);
-    assert.deepStrictEqual(roomFetchCalls, ['https://some.where/some/doc.html?api=deleteAdmin'])
+    assert.deepStrictEqual(room.calls, [{
+      api: 'deleteAdmin',
+      docName: 'https://some.where/some/doc.html',
+    },
+    ]);
   });
 
   it('Test syncAdmin request without doc', async () => {
     const req = {
-      url: 'http://localhost:12345/api/v1/syncadmin'
+      url: 'http://localhost:12345/api/v1/syncadmin',
     };
     const rooms = {};
     const env = { rooms };
@@ -70,64 +85,123 @@ describe('Worker test suite', () => {
   it('Test handle syncAdmin request', async () => {
     const expectedHash = hash('http://foobar.com/a/b/c.html');
     const req = {
-      url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html'
+      url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html',
     };
 
-    const roomFetchCalls = []
-    const room = {
-      fetch(url) {
-        roomFetchCalls.push(url.toString());
-        return new Response(null, { status: 200 });
-      }
-    };
+    const room = new MockRoom();
     const rooms = {
-      idFromName(nm) { return hash(nm) },
+      idFromName(nm) { return hash(nm); },
+      // eslint-disable-next-line consistent-return
       get(id) {
         if (id === expectedHash) {
           return room;
         }
-      }
-    }
+      },
+    };
     const env = { rooms };
 
-    assert.equal(roomFetchCalls.length, 0, 'Precondition');
     const resp = await handleApiRequest(req, env);
     assert.equal(200, resp.status);
-    assert.deepStrictEqual(roomFetchCalls, ['http://foobar.com/a/b/c.html?api=syncAdmin'])
+    assert.deepStrictEqual(room.calls, [
+      {
+        api: 'syncAdmin',
+        docName: 'http://foobar.com/a/b/c.html',
+      },
+    ]);
+  });
+
+  it('Test handle syncAdmin request (enforced shared secret)', async () => {
+    const expectedHash = hash('http://foobar.com/a/b/c.html');
+    const req = {
+      url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html',
+      headers: new Headers({
+        authorization: 'token test-secret',
+      }),
+    };
+
+    const room = new MockRoom();
+    const rooms = {
+      idFromName(nm) { return hash(nm); },
+      get(id) {
+        if (id === expectedHash) {
+          return room;
+        }
+        return null;
+      },
+    };
+    const env = {
+      rooms,
+      COLLAB_SHARED_SECRET: 'test-secret',
+    };
+
+    const resp = await handleApiRequest(req, env);
+    assert.equal(200, resp.status);
+    assert.deepStrictEqual(room.calls, [
+      {
+        api: 'syncAdmin',
+        docName: 'http://foobar.com/a/b/c.html',
+      },
+    ]);
+  });
+
+  it('Test handle syncAdmin request (enforced shared secret, unauthorized)', async () => {
+    const expectedHash = hash('http://foobar.com/a/b/c.html');
+    const req = {
+      url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html',
+      headers: new Headers(),
+    };
+
+    const room = new MockRoom();
+    const rooms = {
+      idFromName(nm) { return hash(nm); },
+      get(id) {
+        if (id === expectedHash) {
+          return room;
+        }
+        return null;
+      },
+    };
+    const env = {
+      rooms,
+      COLLAB_SHARED_SECRET: 'test-secret',
+    };
+
+    const resp = await handleApiRequest(req, env);
+    assert.equal(401, resp.status);
+    assert.deepStrictEqual(room.calls, []);
   });
 
   it('Test handle syncAdmin request via default export', async () => {
     const expectedHash = hash('http://foobar.com/a/b/c.html');
     const req = {
-      url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html'
+      url: 'http://localhost:12345/api/v1/syncadmin?doc=http://foobar.com/a/b/c.html',
     };
 
-    const roomFetchCalls = []
-    const room = {
-      fetch(url) {
-        roomFetchCalls.push(url.toString());
-        return new Response(null, { status: 200 });
-      }
-    };
+    const room = new MockRoom();
     const rooms = {
-      idFromName(nm) { return hash(nm) },
+      idFromName(nm) { return hash(nm); },
+      // eslint-disable-next-line consistent-return
       get(id) {
         if (id === expectedHash) {
           return room;
         }
-      }
-    }
+      },
+    };
     const env = { rooms };
 
-    assert.equal(roomFetchCalls.length, 0, 'Precondition');
     const resp = await defaultEdge.fetch(req, env);
     assert.equal(200, resp.status);
-    assert.deepStrictEqual(roomFetchCalls, ['http://foobar.com/a/b/c.html?api=syncAdmin'])
+    assert.deepStrictEqual(room.calls, [
+      {
+        api: 'syncAdmin',
+        docName: 'http://foobar.com/a/b/c.html',
+      },
+    ]);
   });
 
   it('Test unknown API', async () => {
     const req = {
-      url: 'http://localhost:12345/api/v1/foobar'
+      url: 'http://localhost:12345/api/v1/foobar',
     };
 
     const resp = await handleApiRequest(req, null);
@@ -140,32 +214,33 @@ describe('Worker test suite', () => {
     const testYdoc = new WSSharedDoc(ydocName);
     const m = setYDoc(ydocName, testYdoc);
 
-    const connCalled = []
+    const connCalled = [];
     const mockConn = {
-      close() { connCalled.push('close'); }
+      close() { connCalled.push('close'); },
     };
     testYdoc.conns.set(mockConn, 1234);
 
     const req = {
-      url: `${ydocName}?api=deleteAdmin`
+      url: `${ydocName}?api=deleteAdmin`,
     };
 
     const dr = new DocRoom({});
 
     assert(m.has(ydocName), 'Precondition');
-    const resp = await dr.fetch(req)
+    const resp = await dr.fetch(req);
     assert.equal(204, resp.status);
     assert(!m.has(ydocName), 'Doc should have been removed');
     assert.deepStrictEqual(['close'], connCalled);
+    testYdoc.destroy();
   });
 
   it('Docroom deleteFromAdmin not found', async () => {
     const req = {
-      url: `https://blah.blah/blah.html?api=deleteAdmin`
+      url: 'https://blah.blah/blah.html?api=deleteAdmin',
     };
 
     const dr = new DocRoom({});
-    const resp = await dr.fetch(req)
+    const resp = await dr.fetch(req);
     assert.equal(404, resp.status);
   });
 
@@ -174,32 +249,33 @@ describe('Worker test suite', () => {
     const testYdoc = new WSSharedDoc(ydocName);
     const m = setYDoc(ydocName, testYdoc);
 
-    const connCalled = []
+    const connCalled = [];
     const mockConn = {
-      close() { connCalled.push('close'); }
+      close() { connCalled.push('close'); },
     };
     testYdoc.conns.set(mockConn, 1234);
 
     const req = {
-      url: `${ydocName}?api=syncAdmin`
+      url: `${ydocName}?api=syncAdmin`,
     };
 
     const dr = new DocRoom({});
 
     assert(m.has(ydocName), 'Precondition');
-    const resp = await dr.fetch(req)
+    const resp = await dr.fetch(req);
     assert.equal(200, resp.status);
     assert(!m.has(ydocName), 'Doc should have been removed');
     assert.deepStrictEqual(['close'], connCalled);
+    testYdoc.destroy();
   });
 
   it('Unknown doc update request gives 404', async () => {
     const dr = new DocRoom({});
 
     const req = {
-      url: 'http://foobar.com/a/b/d/e/f.html?api=syncAdmin'
+      url: 'http://foobar.com/a/b/d/e/f.html?api=syncAdmin',
     };
-    const resp = await dr.fetch(req)
+    const resp = await dr.fetch(req);
 
     assert.equal(404, resp.status);
   });
@@ -207,9 +283,9 @@ describe('Worker test suite', () => {
   it('Unknown DocRoom API call gives 400', async () => {
     const dr = new DocRoom({ storage: null }, null);
     const req = {
-      url: 'http://foobar.com/a.html?api=blahblahblah'
+      url: 'http://foobar.com/a.html?api=blahblahblah',
     };
-    const resp = await dr.fetch(req)
+    const resp = await dr.fetch(req);
 
     assert.equal(400, resp.status);
   });
@@ -221,17 +297,17 @@ describe('Worker test suite', () => {
     try {
       const bindCalled = [];
       persistence.bindState = async (nm, d, c) => {
-        bindCalled.push({nm, d, c});
+        bindCalled.push({ nm, d, c });
         return new Map();
-      }
+      };
 
       const wspCalled = [];
       const wsp0 = {};
       const wsp1 = {
         accept() { wspCalled.push('accept'); },
         addEventListener(type) { wspCalled.push(`addEventListener ${type}`); },
-        close() { wspCalled.push('close'); }
-      }
+        close() { wspCalled.push('close'); },
+      };
       DocRoom.newWebSocketPair = () => [wsp0, wsp1];
 
       const daadmin = { blah: 1234 };
@@ -243,7 +319,7 @@ describe('Worker test suite', () => {
 
       const req = {
         headers,
-        url: 'http://localhost:4711/'
+        url: 'http://localhost:4711/',
       };
       const resp = await dr.fetch(req, {}, 306);
       assert.equal(306 /* fabricated websocket response code */, resp.status);
@@ -273,8 +349,8 @@ describe('Worker test suite', () => {
     const dr = new DocRoom({ storage: null }, null);
 
     const req = {
-      headers: new Map(),
-      url: 'http://localhost:4711/'
+      headers: new Headers(),
+      url: 'http://localhost:4711/',
     };
     const resp = await dr.fetch(req);
     assert.equal(400, resp.status, 'Expected a Websocket');
@@ -282,33 +358,255 @@ describe('Worker test suite', () => {
 
   it('Test DocRoom fetch expects document name', async () => {
     const dr = new DocRoom({ storage: null }, null);
-    const headers = new Map();
-    headers.set('Upgrade', 'websocket');
-    headers.set('Authorization', 'au123');
+    const headers = new Headers({
+      upgrade: 'websocket',
+      authorization: 'au123',
+    });
 
     const req = {
       headers,
-      url: 'http://localhost:4711/'
+      url: 'http://localhost:4711/',
     };
     const resp = await dr.fetch(req);
     assert.equal(400, resp.status, 'Expected a document name');
   });
 
-  it('Test handleErrors success', async () => {
-    const f = () => 42;
+  it('Test DocRoom fetch fails when document deleted after auth', async () => {
+    const savedNWSP = DocRoom.newWebSocketPair;
+    const savedBS = persistence.bindState;
 
-    const res = await handleErrors(null, f);
-    assert.equal(42, res);
+    try {
+      // Mock bindState to throw 404 error (simulating document deleted between auth and bindState)
+      persistence.bindState = async () => {
+        // eslint-disable-next-line max-len
+        await sleep(1); // the real bindState is async and we only reset the failed doc in the promise
+        throw new Error('unable to get resource - status: 404');
+      };
+
+      const wsp0 = {};
+      const wsp1 = {
+        accept() {},
+        addEventListener() {},
+        close() {},
+      };
+      DocRoom.newWebSocketPair = () => [wsp0, wsp1];
+
+      const daadmin = { fetch: async () => ({ ok: true }) };
+      const dr = new DocRoom({ storage: null }, { daadmin });
+      const headers = new Map();
+      headers.set('Upgrade', 'websocket');
+      headers.set('X-collab-room', 'http://foo.bar/test.html');
+      headers.set('X-auth-actions', 'read=allow,write=allow');
+
+      const req = {
+        headers,
+        url: 'http://localhost:4711/',
+      };
+
+      const resp = await dr.fetch(req, {}, 306);
+
+      // Should return 500 error when bindState fails
+      assert.equal(500, resp.status);
+      assert.equal('Internal Server Error', await resp.text());
+    } finally {
+      DocRoom.newWebSocketPair = savedNWSP;
+      persistence.bindState = savedBS;
+    }
   });
 
-  it('Test HandleError error', async () => {
-    const f = () => { throw new Error('testing'); }
+  it('Test DocRoom fetch WebSocket setup exception', async () => {
+    const savedNWSP = DocRoom.newWebSocketPair;
+    const savedBS = persistence.bindState;
+
+    try {
+      // Mock bindState to throw an exception
+      persistence.bindState = async (nm, d, c) => {
+        // eslint-disable-next-line max-len
+        await sleep(1); // the real bindState is async and we only reset the failed doc in the promise
+        throw new Error('WebSocket setup error');
+      };
+
+      // Mock WebSocketPair to return valid objects
+      const wsp0 = {};
+      const wsp1 = {
+        accept() {},
+        addEventListener() {},
+        close() {},
+      };
+      DocRoom.newWebSocketPair = () => [wsp0, wsp1];
+
+      const daadmin = { test: 'value' };
+      const dr = new DocRoom({ storage: null }, { daadmin });
+      const headers = new Map();
+      headers.set('Upgrade', 'websocket');
+      headers.set('Authorization', 'au123');
+      headers.set('X-collab-room', 'http://foo.bar/test.html');
+
+      const req = {
+        headers,
+        url: 'http://localhost:4711/',
+      };
+      const resp = await dr.fetch(req);
+
+      // Should return 500 error due to exception in WebSocket setup
+      assert.equal(500, resp.status);
+      assert.equal('Internal Server Error', await resp.text());
+    } finally {
+      DocRoom.newWebSocketPair = savedNWSP;
+      persistence.bindState = savedBS;
+    }
+  });
+
+  it('Test handleErrors success', async () => {
+    const f = () => 42;
+    const res = await handleErrors({}, {}, f);
+    assert.equal(res, 42);
+  });
+
+  it('Test HandleError error (disable stack trace)', async () => {
+    const f = async () => {
+      throw new Error('testing');
+    };
 
     const req = {
-      headers: new Map()
+      url: 'http://localhost:4711/',
+      headers: new Headers(),
     };
-    const res = await handleErrors(req, f);
-    assert.equal(500, res.status);
+    const env = {
+      RETURN_STACK_TRACES: false,
+    };
+    const res = await handleErrors(req, env, f);
+    assert.strictEqual(res.status, 500);
+    assert.strictEqual(await res.text(), 'Internal Server Error');
+  });
+
+  it('Test HandleError error (enable stack trace)', async () => {
+    const f = async () => {
+      throw new Error('testing');
+    };
+
+    const req = {
+      url: 'http://localhost:4711/',
+      headers: new Headers(),
+    };
+    const env = {
+      RETURN_STACK_TRACES: true,
+    };
+    const res = await handleErrors(req, env, f);
+    assert.strictEqual(res.status, 500);
+    assert.match(await res.text(), /at handleErrors/m);
+  });
+
+  it('Test handleErrors WebSocket error (disable stack trace)', async () => {
+    const f = () => {
+      throw new Error('WebSocket error test');
+    };
+
+    const req = {
+      url: 'wss://localhost:4711/',
+      headers: new Headers({
+        upgrade: 'websocket',
+      }),
+    };
+    const env = {
+      RETURN_STACK_TRACES: false,
+    };
+
+    // Mock WebSocketPair since it's not available in Node.js test environment
+    const messages = [];
+    const mockWebSocketPair = function () {
+      const pair = [null, null];
+      pair[0] = { // client side
+        readyState: 1,
+        close: () => {},
+        send: () => {},
+      };
+      pair[1] = { // server side
+        accept: () => {},
+        send(msg) {
+          messages.push(msg);
+        },
+        close: () => {},
+      };
+      return pair;
+    };
+
+    // Mock WebSocketPair globally
+    globalThis.WebSocketPair = mockWebSocketPair;
+
+    try {
+      // In Node.js, status 101 is not valid, so we expect an error
+      // But the important thing is that the WebSocket error path is covered
+      try {
+        const res = await handleErrors(req, env, f);
+        // If we get here, the test environment supports status 101
+        assert.equal(101, res.status);
+        assert(res.webSocket !== undefined);
+      } catch (error) {
+        // Expected in Node.js - status 101 is not valid
+        assert(error.message.includes('must be in the range of 200 to 599'));
+      }
+      assert.deepEqual(messages, ['Internal Server Error']);
+    } finally {
+      // Clean up the mock
+      delete globalThis.WebSocketPair;
+    }
+  });
+
+  it('Test handleErrors WebSocket error (enable stack trace)', async () => {
+    const f = () => {
+      throw new Error('WebSocket error test');
+    };
+
+    const req = {
+      url: 'wss://localhost:4711/',
+      headers: new Headers({
+        upgrade: 'websocket',
+      }),
+    };
+    const env = {
+      RETURN_STACK_TRACES: true,
+    };
+
+    // Mock WebSocketPair since it's not available in Node.js test environment
+    const messages = [];
+    const mockWebSocketPair = function () {
+      const pair = [null, null];
+      pair[0] = { // client side
+        readyState: 1,
+        close: () => {},
+        send: () => {},
+      };
+      pair[1] = { // server side
+        accept: () => {},
+        send(msg) {
+          messages.push(msg);
+        },
+        close: () => {},
+      };
+      return pair;
+    };
+
+    // Mock WebSocketPair globally
+    globalThis.WebSocketPair = mockWebSocketPair;
+
+    try {
+      // In Node.js, status 101 is not valid, so we expect an error
+      // But the important thing is that the WebSocket error path is covered
+      try {
+        const res = await handleErrors(req, env, f);
+        // If we get here, the test environment supports status 101
+        assert.equal(101, res.status);
+        assert(res.webSocket !== undefined);
+      } catch (error) {
+        // Expected in Node.js - status 101 is not valid
+        assert(error.message.includes('must be in the range of 200 to 599'));
+      }
+      assert.match(messages[0], /at handleErrors/m);
+    } finally {
+      // Clean up the mock
+      delete globalThis.WebSocketPair;
+    }
   });
 
   it('Test handleApiRequest', async () => {
@@ -316,16 +614,17 @@ describe('Worker test suite', () => {
     headers.set('myheader', 'myval');
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/laaa.html?Authorization=qrtoefi',
-      headers
-    }
+      headers,
+    };
 
     const roomFetchCalled = [];
     const myRoom = {
+      // eslint-disable-next-line no-shadow
       fetch(req) {
         roomFetchCalled.push(req);
         return new Response(null, { status: 306 });
-      }
-    }
+      },
+    };
 
     const mockFetchCalled = [];
     const mockFetch = async (url, opts) => {
@@ -333,13 +632,13 @@ describe('Worker test suite', () => {
       return new Response(null, { status: 200 });
     };
     const serviceBinding = {
-      fetch: mockFetch
+      fetch: mockFetch,
     };
 
     const rooms = {
       idFromName(nm) { return `id${hash(nm)}`; },
-      get(id) { return id === 'id1255893316' ? myRoom : null; }
-    }
+      get(id) { return id === 'id1255893316' ? myRoom : null; },
+    };
     const env = { rooms, daadmin: serviceBinding };
 
     const res = await handleApiRequest(req, env);
@@ -364,20 +663,21 @@ describe('Worker test suite', () => {
     headers.set('myheader', 'myval');
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/laaa.html?Authorization=lala',
-      headers
-    }
+      headers,
+    };
 
+    // eslint-disable-next-line consistent-return
     const mockFetch = async (url, opts) => {
       if (opts.method === 'HEAD'
         && url === 'https://admin.da.live/laaa.html'
         && opts.headers.get('Authorization') === 'lala') {
-        return new Response(null, {status: 410});
+        return new Response(null, { status: 410 });
       }
     };
 
     // This is how a service binding is exposed to the program, via env
     const env = {
-      daadmin: { fetch : mockFetch }
+      daadmin: { fetch: mockFetch },
     };
 
     const res = await handleApiRequest(req, env);
@@ -387,18 +687,32 @@ describe('Worker test suite', () => {
   it('Test handleApiRequest wrong host', async () => {
     const req = {
       url: 'http://do.re.mi/https://some.where.else/hihi.html',
-    }
+    };
 
     const res = await handleApiRequest(req, {});
     assert.equal(404, res.status);
   });
 
+  it('Test handleApiRequest document not found (404)', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/nonexistent.html',
+    };
+
+    const mockFetch = async (url, opts) => new Response(null, { status: 404 });
+    const daadmin = { fetch: mockFetch };
+    const env = { daadmin };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(404, res.status);
+    assert.equal('unable to get resource', await res.text());
+  });
+
   it('Test handleApiRequest not authorized', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/hihi.html',
-    }
+    };
 
-    const mockFetch = async (url, opts) => new Response(null, {status: 401});
+    const mockFetch = async (url, opts) => new Response(null, { status: 401 });
     const daadmin = { fetch: mockFetch };
     const env = { daadmin };
 
@@ -406,10 +720,106 @@ describe('Worker test suite', () => {
     assert.equal(401, res.status);
   });
 
+  it('Test handleApiRequest da-admin fetch exception', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/test.html',
+    };
+
+    // Mock daadmin.fetch to throw an exception
+    const mockFetch = async (url, opts) => {
+      throw new Error('Network error');
+    };
+    const daadmin = { fetch: mockFetch };
+    const env = { daadmin };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(500, res.status);
+    assert.equal('unable to get resource', await res.text());
+  });
+
+  it('Test handleApiRequest room object fetch exception', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/test.html',
+      headers: new Headers(),
+    };
+
+    // Mock daadmin.fetch to return a successful response
+    const mockDaAdminFetch = async (url, opts) => {
+      const response = new Response(null, { status: 200 });
+      response.headers.set('X-da-actions', 'read=allow');
+      return response;
+    };
+
+    // Mock room object fetch to throw an exception
+    // eslint-disable-next-line no-shadow
+    const mockRoomFetch = async (req) => {
+      throw new Error('Room fetch error');
+    };
+
+    const mockRoom = {
+      fetch: mockRoomFetch,
+    };
+
+    const rooms = {
+      idFromName: (name) => `id${hash(name)}`,
+      get: (id) => mockRoom,
+    };
+
+    const env = {
+      daadmin: { fetch: mockDaAdminFetch },
+      rooms,
+    };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(500, res.status);
+    assert.equal('unable to get resource', await res.text());
+  });
+
+  it('Test DocRoom newWebSocketPair', () => {
+    // Mock WebSocketPair since it's not available in Node.js test environment
+    const mockWebSocketPair = function createWebSocketPair(url, opts) {
+      const pair = [null, null];
+      pair[0] = { // client side
+        readyState: 1,
+        close: () => {},
+        send: () => {},
+      };
+      pair[1] = { // server side
+        accept: () => {},
+        send: () => {},
+        close: () => {},
+      };
+      return pair;
+    };
+
+    // Mock WebSocketPair globally
+    globalThis.WebSocketPair = mockWebSocketPair;
+
+    try {
+      const pair = DocRoom.newWebSocketPair();
+
+      // Verify that newWebSocketPair returns an array-like object
+      assert(Array.isArray(pair));
+      assert.equal(pair.length, 2);
+
+      // Verify that both elements are objects (WebSocket-like)
+      assert(typeof pair[0] === 'object');
+      assert(typeof pair[1] === 'object');
+
+      // Verify that the server side has expected methods
+      assert(typeof pair[1].accept === 'function');
+      assert(typeof pair[1].send === 'function');
+      assert(typeof pair[1].close === 'function');
+    } finally {
+      // Clean up the mock
+      delete globalThis.WebSocketPair;
+    }
+  });
+
   it('Test ping API', async () => {
     const req = {
       url: 'http://do.re.mi/api/v1/ping',
-    }
+    };
 
     const res = await defaultEdge.fetch(req, {});
     assert.equal(200, res.status);
@@ -421,9 +831,9 @@ describe('Worker test suite', () => {
   it('Test ping API with service binding', async () => {
     const req = {
       url: 'http://some.host.name/api/v1/ping',
-    }
+    };
 
-    const res = await defaultEdge.fetch(req, { daadmin: {}});
+    const res = await defaultEdge.fetch(req, { daadmin: {} });
     assert.equal(200, res.status);
     const json = await res.json();
     assert.equal('ok', json.status);
