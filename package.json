@@ -12,6 +12,7 @@
     "deploy:prod": "node prepare-deploy.js && wrangler deploy -e production -c wrangler-versioned.toml",
     "deploy:stage": "node prepare-deploy.js && wrangler deploy -e stage -c wrangler-versioned.toml",
     "test": "c8 mocha --inline-diffs --exit # --exit is needed because some test code triggers async listeners",
+    "test:ci": "echo 'todo'",
     "test:postdeploy": "echo 'todo'",
     "prepare": "husky",
     "semantic-release": "semantic-release",
