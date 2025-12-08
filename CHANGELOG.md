@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/adobe/da-collab/compare/v1.0.0...v1.0.1) (2025-12-08)
+
+
+### Bug Fixes
+
+* bindings ([e7a2baa](https://github.com/adobe/da-collab/commit/e7a2baa46494a817ff53241e567119091fcd4ed7))
+
 # 1.0.0 (2025-12-08)
 
 
