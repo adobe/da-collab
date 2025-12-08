@@ -10,16 +10,16 @@ port = 4711
 tag = "v1" # Should be unique for each entry
 new_classes = ["DocRoom"]
 
-[[durable_objects.bindings]]
-name = "rooms"
-class_name = "DocRoom"
-
 # ----------------------------------------------------------------------
 # production environment
 [env.production]
 services = [
   { binding = "daadmin", service = "da-admin" }
 ]
+
+[[env.production.durable_objects.bindings]]
+name = "rooms"
+class_name = "DocRoom"
 
 [env.production.vars]
 ENVIRONMENT = "production"
@@ -33,6 +33,10 @@ services = [
   { binding = "daadmin", service = "da-admin-stage" }
 ]
 
+[[env.stage.durable_objects.bindings]]
+name = "rooms"
+class_name = "DocRoom"
+
 [env.stage.vars]
 ENVIRONMENT = "stage"
 VERSION="@@VERSION@@-stage"
@@ -45,6 +49,10 @@ services = [
   { binding = "daadmin", service = "da-admin-stage" }
 ]
 
+[[env.ci.durable_objects.bindings]]
+name = "rooms"
+class_name = "DocRoom"
+
 [env.ci.vars]
 ENVIRONMENT = "ci"
 VERSION="@@VERSION@@-ci"
@@ -56,6 +64,10 @@ RETURN_STACK_TRACES = "false"
 services = [
   { binding = "daadmin", service = "da-admin-local" }
 ]
+
+[[env.dev.durable_objects.bindings]]
+name = "rooms"
+class_name = "DocRoom"
 
 [env.dev.vars]
 ENVIRONMENT = "dev"
