@@ -1,34 +1,63 @@
 name = "da-collab"
 workers_dev = true
 compatibility_date = "2023-10-30"
-
 main = "src/edge.js"
-
-services = [
-  { binding = "daadmin", service = "da-admin" }
-]
-
-[vars]
-RETURN_STACK_TRACES = "false"
 
 [dev]
 port = 4711
-
-[durable_objects]
-bindings = [
-  { name = "rooms", class_name = "DocRoom" },
-]
 
 [[migrations]]
 tag = "v1" # Should be unique for each entry
 new_classes = ["DocRoom"]
 
+[[durable_objects.bindings]]
+name = "rooms"
+class_name = "DocRoom"
 
+# ----------------------------------------------------------------------
+# production environment
+[env.production]
+services = [
+  { binding = "daadmin", service = "da-admin" }
+]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+VERSION = "@@VERSION@@"
+RETURN_STACK_TRACES = "false"
+
+# ----------------------------------------------------------------------
+# stage environment
 [env.stage]
 services = [
   { binding = "daadmin", service = "da-admin-stage" }
 ]
 
-durable_objects.bindings = [
-  { name = "rooms", class_name = "DocRoom" },
+[env.stage.vars]
+ENVIRONMENT = "stage"
+VERSION="@@VERSION@@-stage"
+RETURN_STACK_TRACES = "false"
+
+# ----------------------------------------------------------------------
+# ci environment
+[env.ci]
+services = [
+  { binding = "daadmin", service = "da-admin-stage" }
 ]
+
+[env.ci.vars]
+ENVIRONMENT = "ci"
+VERSION="@@VERSION@@-ci"
+RETURN_STACK_TRACES = "false"
+
+# ----------------------------------------------------------------------
+# dev environment (local)
+[env.dev]
+services = [
+  { binding = "daadmin", service = "da-admin-local" }
+]
+
+[env.dev.vars]
+ENVIRONMENT = "dev"
+VERSION="0.0.0-dev"
+RETURN_STACK_TRACES = "true"
