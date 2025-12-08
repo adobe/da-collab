@@ -2,6 +2,7 @@ name = "da-collab"
 workers_dev = true
 compatibility_date = "2023-10-30"
 main = "src/edge.js"
+keep_vars = true
 
 [dev]
 port = 4711
@@ -13,6 +14,8 @@ new_classes = ["DocRoom"]
 # ----------------------------------------------------------------------
 # production environment
 [env.production]
+name = "da-collab"
+
 services = [
   { binding = "daadmin", service = "da-admin" }
 ]
@@ -29,6 +32,8 @@ RETURN_STACK_TRACES = "false"
 # ----------------------------------------------------------------------
 # stage environment
 [env.stage]
+name = "da-collab-stage"
+
 services = [
   { binding = "daadmin", service = "da-admin-stage" }
 ]
@@ -45,6 +50,8 @@ RETURN_STACK_TRACES = "false"
 # ----------------------------------------------------------------------
 # ci environment
 [env.ci]
+name = "da-collab-ci"
+
 services = [
   { binding = "daadmin", service = "da-admin-stage" }
 ]
@@ -61,6 +68,8 @@ RETURN_STACK_TRACES = "false"
 # ----------------------------------------------------------------------
 # dev environment (local)
 [env.dev]
+name = "da-collab-dev"
+
 services = [
   { binding = "daadmin", service = "da-admin-local" }
 ]
