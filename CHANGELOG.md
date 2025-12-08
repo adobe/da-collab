@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/adobe/da-collab/compare/v1.0.1...v1.0.2) (2025-12-08)
+
+
+### Bug Fixes
+
+* deploy to prod ([088a3d7](https://github.com/adobe/da-collab/commit/088a3d7bb1d9337b4a36d2f2fa34e738e407edbd))
+
 ## [1.0.1](https://github.com/adobe/da-collab/compare/v1.0.0...v1.0.1) (2025-12-08)
 
 
