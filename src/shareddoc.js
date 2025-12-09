@@ -532,6 +532,7 @@ export const getYDoc = async (docname, conn, env, storage, timingData, gc = true
   } catch (e) {
     // ensure to cleanup event handlers and timers
     doc.destroy();
+    docs.delete(docname);
     throw e;
   }
   return doc;
