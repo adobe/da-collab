@@ -1,3 +1,10 @@
+## [1.0.3](https://github.com/adobe/da-collab/compare/v1.0.2...v1.0.3) (2025-12-09)
+
+
+### Bug Fixes
+
+* remove doc from cache if error ([#118](https://github.com/adobe/da-collab/issues/118)) ([911e81e](https://github.com/adobe/da-collab/commit/911e81e47d4e79075fb4e502dec4763eebe7df37))
+
 ## [1.0.2](https://github.com/adobe/da-collab/compare/v1.0.1...v1.0.2) (2025-12-08)
 
 
