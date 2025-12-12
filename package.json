@@ -40,10 +40,10 @@
     "mocha-multi-reporters": "1.5.1",
     "semantic-release": "25.0.2",
     "semantic-release-slack-bot": "4.0.2",
-    "wrangler": "4.33.2"
+    "wrangler": "4.51.0"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "4.20251126.0",
+    "@cloudflare/workers-types": "4.20251128.0",
     "hast-util-from-html": "2.0.3",
     "hast-util-select": "6.0.4",
     "lib0": "0.2.114",
