@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 import {
+  getFetch,
   handleWebSocketClose, handleWebSocketMessage,
   invalidateFromAdmin, logError, setupWSConnection,
 } from './shareddoc.js';
@@ -195,6 +196,7 @@ export async function handleApiRequest(request, env) {
   } else {
     auth = url.searchParams.get('Authorization');
   }
+  const xAuthToken = url.searchParams.get('X-Auth-Token');
 
   // We need to massage the path somewhat because on connections from localhost safari sends
   // a path with only one slash for some reason.
@@ -220,12 +222,21 @@ export async function handleApiRequest(request, env) {
   let authActions;
   try {
     const opts = { method: 'HEAD' };
+    const headHeaders = {};
     if (auth) {
-      opts.headers = new Headers({ Authorization: auth });
+      headHeaders.Authorization = auth;
+    }
+    if (xAuthToken) {
+      headHeaders['X-Auth-Token'] = xAuthToken;
+    }
+    if (Object.keys(headHeaders).length > 0) {
+      opts.headers = new Headers(headHeaders);
     }
 
     const timingBeforeDaAdminHead = Date.now();
-    const initialReq = await env.daadmin.fetch(docName, opts);
+    // const initialReq = await env.daadmin.fetch(docName, opts);
+    const fetchObj = getFetch(docName, env.daadmin);
+    const initialReq = await fetchObj.fetch(docName, opts);
 
     timingDaAdminHeadDuration = Date.now() - timingBeforeDaAdminHead;
 
@@ -283,6 +294,9 @@ export async function handleApiRequest(request, env) {
 
     if (auth) {
       headers.push(['Authorization', auth]);
+    }
+    if (xAuthToken) {
+      headers.push(['X-Auth-Token', xAuthToken]);
     }
     const req = new Request(new URL(docName), { headers });
     // Send the request to the Durable Object. The `fetch()` method of a Durable Object stub has the
@@ -395,7 +409,11 @@ export class DocRoom {
         return new Response('expected websocket', { status: 400 });
       }
       const auth = request.headers.get('Authorization');
-      const authActions = request.headers.get('X-auth-actions') ?? '';
+      const xAuth = request.headers.get('X-Auth-Token');
+      const authActions = xAuth
+        ? 'read,write' // TODO remove once hlx6 supports X-auth-actions
+        : request.headers.get('X-auth-actions') ?? '';
+
       const docName = request.headers.get('X-collab-room');
 
       if (!docName) {
@@ -409,12 +427,14 @@ export class DocRoom {
       // any way to act as a WebSocket server today.
       const [client, server] = DocRoom.newWebSocketPair();
 
+      const connAuth = auth || xAuth;
+
       // Register with CF Hibernation API: the DO can sleep between messages
       // without losing its WebSocket connections.
       this.ctx.acceptWebSocket(server);
-      server.serializeAttachment({ docName, auth, authActions });
+      server.serializeAttachment({ docName, auth: connAuth, authActions });
 
-      server.auth = auth;
+      server.auth = connAuth;
       if (!authActions.split(',').includes('write')) {
         // eslint-disable-next-line no-param-reassign
         server.readOnly = true;
@@ -422,7 +442,7 @@ export class DocRoom {
 
       // eslint-disable-next-line no-console
       console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${
-        auth ? auth.substring(0, auth.indexOf(' ')) : 'none'})`);
+        connAuth ? (connAuth.includes(' ') ? connAuth.substring(0, connAuth.indexOf(' ')) : 'token') : 'none'})`);
 
       // Kick off async document initialization; response is returned immediately.
       this.initSession(server, docName);

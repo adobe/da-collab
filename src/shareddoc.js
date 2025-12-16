@@ -66,6 +66,15 @@ function getDocType(docName) {
   return 'html'; // default
 }
 
+export function isHlx(url) {
+  const parts = url.split('/');
+  return parts.length >= 7 && parts[4] === 'sites' && parts[6] === 'source';
+}
+
+export function getFetch(url, daadmin) {
+  return isHlx(url) ? globalThis : daadmin;
+}
+
 /**
  * Close the WebSocket connection for a document. If there are no connections left, remove
  * the ydoc from the local cache map.
@@ -248,17 +257,22 @@ export const persistence = {
    * Get the document from da-admin.
    * @param {string} docName - The document name
    * @param {string} auth - The authorization header
-   * @param {object} daadmin - The da-admin worker service binding
+   * @param {object} fetchObj - The object to invoke fetch on
    * @returns {Promise<string>} - The content of the document
    * @throws {Error} - If the document cannot be retrieved (including 404)
    */
-  get: async (docName, auth, daadmin) => {
+  get: async (docName, auth, fetchObj) => {
     const docType = getDocType(docName);
     const initalOpts = {};
     if (auth) {
-      initalOpts.headers = new Headers({ Authorization: auth });
+      if (auth.startsWith('Bearer ')) {
+        initalOpts.headers = new Headers({ Authorization: auth });
+      } else {
+        initalOpts.headers = new Headers({ 'X-Auth-Token': auth });
+      }
     }
-    const initialReq = await daadmin.fetch(docName, initalOpts);
+
+    const initialReq = await fetchObj.fetch(docName, initalOpts);
     if (initialReq.ok) {
       return docType === 'json' ? initialReq.json() : initialReq.text();
     } else {
@@ -278,13 +292,22 @@ export const persistence = {
    * @returns {Promise<object>} The response from da-admin.
    */
   put: async (ydoc, content) => {
-    const mimeType = getDocType(ydoc.name) === 'json' ? 'application/json' : 'text/html';
-    const blob = new Blob([content], { type: mimeType });
+    let putBody;
+    let bodySize;
+    if (isHlx(ydoc.name)) {
+      putBody = content;
+      bodySize = content.length;
+    } else {
+      const mimeType = getDocType(ydoc.name) === 'json' ? 'application/json' : 'text/html';
+      const blob = new Blob([content], { type: mimeType });
 
-    const formData = new FormData();
-    formData.append('data', blob);
+      const formData = new FormData();
+      formData.append('data', blob);
+      putBody = formData;
+      bodySize = blob.size;
+    }
 
-    const opts = { method: 'PUT', body: formData };
+    const opts = { method: 'PUT', body: putBody };
     const keys = Array.from(ydoc.conns.keys());
     const allReadOnly = keys.length > 0 && keys.every((con) => con.readOnly === true);
     if (allReadOnly) {
@@ -303,19 +326,25 @@ export const persistence = {
       .map((con) => con.auth);
 
     if (auth.length > 0) {
-      headers.Authorization = [...new Set(auth)].join(',');
+      const authValue = [...new Set(auth)].join(',');
+      if (authValue.startsWith('Bearer ')) {
+        headers.Authorization = authValue;
+      } else {
+        headers['X-Auth-Token'] = authValue;
+      }
     }
 
     opts.headers = new Headers(headers);
 
-    if (blob.size <= EMPTY_DOC_SIZE) {
+    if (bodySize <= EMPTY_DOC_SIZE) {
       // eslint-disable-next-line no-console
-      console.warn('[docroom] Writing back an empty document', ydoc.name, blob.size);
+      console.warn('[docroom] Writing back an empty document', ydoc.name, bodySize);
     }
 
+    const fetchObj = getFetch(ydoc.name, ydoc.daadmin);
     const {
       ok, status, statusText, body,
-    } = await ydoc.daadmin.fetch(ydoc.name, opts);
+    } = await fetchObj.fetch(ydoc.name, opts);
 
     if (body) {
       // tell CloudFlare to consider the request as completed
@@ -435,7 +464,8 @@ export const persistence = {
 
     // Get document from da-admin (throws on error including 404)
     const timingBeforeDaAdminGet = Date.now();
-    current = await persistence.get(docName, conn.auth, ydoc.daadmin);
+    const fetchObj = getFetch(docName, ydoc.daadmin);
+    current = await persistence.get(docName, conn.auth, fetchObj);
     const timingDaAdminGetDuration = Date.now() - timingBeforeDaAdminGet;
 
     // Read the stored state from internal worker storage (errors are non-fatal)
