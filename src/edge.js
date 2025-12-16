@@ -9,7 +9,7 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
-import { invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
+import { getFetch, invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
 
 /**
  * This is the Edge Worker, built using Durable Objects!
@@ -147,6 +147,7 @@ export async function handleApiRequest(request, env) {
 
   let authActions;
   const auth = url.searchParams.get('Authorization');
+  const xAuthToken = url.searchParams.get('X-Auth-Token');
 
   // We need to massage the path somewhat because on connections from localhost safari sends
   // a path with only one slash for some reason.
@@ -174,9 +175,14 @@ export async function handleApiRequest(request, env) {
     if (auth) {
       opts.headers = new Headers({ Authorization: auth });
     }
+    if (xAuthToken) {
+      opts.headers = new Headers({ 'X-Auth-Token': xAuthToken });
+    }
 
     const timingBeforeDaAdminHead = Date.now();
-    const initialReq = await env.daadmin.fetch(docName, opts);
+    // const initialReq = await env.daadmin.fetch(docName, opts);
+    const fetchObj = getFetch(docName, env.daadmin);
+    const initialReq = await fetchObj.fetch(docName, opts);
 
     timingDaAdminHeadDuration = Date.now() - timingBeforeDaAdminHead;
 
@@ -223,6 +229,9 @@ export async function handleApiRequest(request, env) {
     ];
     if (auth) {
       headers.push(['Authorization', auth]);
+    }
+    if (xAuthToken) {
+      headers.push(['X-Auth-Token', xAuthToken]);
     }
     const req = new Request(new URL(docName), { headers });
     // Send the request to the Durable Object. The `fetch()` method of a Durable Object stub has the
@@ -333,7 +342,11 @@ export class DocRoom {
         return new Response('expected websocket', { status: 400 });
       }
       const auth = request.headers.get('Authorization');
-      const authActions = request.headers.get('X-auth-actions') ?? '';
+      const xAuth = request.headers.get('X-Auth-Token');
+      const authActions = xAuth
+        ? 'read,write' // TODO remove once hlx6 supports X-auth-actions
+        : request.headers.get('X-auth-actions') ?? '';
+
       const docName = request.headers.get('X-collab-room');
 
       if (!docName) {
@@ -349,7 +362,7 @@ export class DocRoom {
       const pair = DocRoom.newWebSocketPair();
 
       // We're going to take pair[1] as our end, and return pair[0] to the client.
-      const timingData = await this.handleSession(pair[1], docName, auth, authActions);
+      const timingData = await this.handleSession(pair[1], docName, auth || xAuth, authActions);
       const timingSetupWebSocketDuration = Date.now() - timingBeforeSetupWebsocket;
 
       const reqHeaders = request.headers;
