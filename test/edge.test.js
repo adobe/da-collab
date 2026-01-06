@@ -312,16 +312,18 @@ describe('Worker test suite', () => {
 
       const daadmin = { blah: 1234 };
       const dr = new DocRoom({ storage: null }, { daadmin });
-      const headers = new Map();
-      headers.set('Upgrade', 'websocket');
-      headers.set('Authorization', 'au123');
-      headers.set('X-collab-room', 'http://foo.bar/1/2/3.html');
+      const headers = new Headers({
+        Upgrade: 'websocket',
+        Authorization: 'au123',
+        'X-collab-room': 'http://foo.bar/1/2/3.html',
+      });
 
       const req = {
         headers,
         url: 'http://localhost:4711/',
       };
       const resp = await dr.fetch(req, {}, 306);
+      assert.equal(resp.headers.get('sec-websocket-protocol'), undefined);
       assert.equal(306 /* fabricated websocket response code */, resp.status);
 
       assert.equal(1, bindCalled.length);
@@ -339,6 +341,43 @@ describe('Worker test suite', () => {
       assert(alMessIdx > acceptIdx);
       assert(alClsIdx > alMessIdx);
       assert(clsIdx > alClsIdx);
+    } finally {
+      DocRoom.newWebSocketPair = savedNWSP;
+      persistence.bindState = savedBS;
+    }
+  });
+
+  it('Test DocRoom fetch (with protocols)', async () => {
+    const savedNWSP = DocRoom.newWebSocketPair;
+    const savedBS = persistence.bindState;
+
+    try {
+      persistence.bindState = async (nm, d, c) => new Map();
+
+      const wsp0 = {};
+      const wsp1 = {
+        accept() { },
+        addEventListener(type) { },
+        close() { },
+      };
+      DocRoom.newWebSocketPair = () => [wsp0, wsp1];
+
+      const daadmin = { blah: 1234 };
+      const dr = new DocRoom({ storage: null }, { daadmin });
+      const headers = new Headers({
+        Upgrade: 'websocket',
+        Authorization: 'au123',
+        'X-collab-room': 'http://foo.bar/1/2/3.html',
+        'sec-websocket-protocol': 'yjs,foobar',
+      });
+
+      const req = {
+        headers,
+        url: 'http://localhost:4711/',
+      };
+      const resp = await dr.fetch(req, {}, 306);
+      assert.equal(resp.headers.get('sec-websocket-protocol'), 'yjs');
+      assert.equal(306 /* fabricated websocket response code */, resp.status);
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
       persistence.bindState = savedBS;
@@ -658,12 +697,10 @@ describe('Worker test suite', () => {
     assert.equal('https://admin.da.live/laaa.html', rfreq.headers.get('X-collab-room'));
   });
 
-  it('Test handleApiRequest via Service Binding', async () => {
-    const headers = new Map();
-    headers.set('myheader', 'myval');
+  it('Test handleApiRequest via Service Binding (param auth)', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/laaa.html?Authorization=lala',
-      headers,
+      headers: new Headers(),
     };
 
     // eslint-disable-next-line consistent-return
@@ -684,9 +721,54 @@ describe('Worker test suite', () => {
     assert.equal(410, res.status);
   });
 
+  it('Test handleApiRequest via Service Binding (header auth)', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/laaa.html',
+      headers: new Headers({
+        'sec-websocket-protocol': 'yjs,test-token',
+      }),
+    };
+
+    // eslint-disable-next-line consistent-return
+    const mockDaAdminFetch = async (url, opts) => {
+      assert.equal(opts.headers.get('Authorization'), 'Bearer test-token');
+      return new Response(null, { status: 200 });
+    };
+
+    // eslint-disable-next-line no-shadow
+    const mockRoomFetch = async (req) => new Response(null, {
+      status: 200,
+      headers: {
+        'sec-websocket-protocol': req.headers.get('sec-websocket-protocol'),
+      },
+    });
+
+    const mockRoom = {
+      fetch: mockRoomFetch,
+    };
+
+    const rooms = {
+      idFromName: (name) => `id${hash(name)}`,
+      get: (id) => mockRoom,
+    };
+
+    const env = {
+      daadmin: { fetch: mockDaAdminFetch },
+      rooms,
+    };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(200, res.status);
+    assert.deepEqual(Object.fromEntries(res.headers.entries()), {
+      // test that service passes the sec-websocket-protocol header to docroom
+      'sec-websocket-protocol': 'yjs,test-token',
+    });
+  });
+
   it('Test handleApiRequest wrong host', async () => {
     const req = {
       url: 'http://do.re.mi/https://some.where.else/hihi.html',
+      headers: new Headers(),
     };
 
     const res = await handleApiRequest(req, {});
@@ -696,6 +778,7 @@ describe('Worker test suite', () => {
   it('Test handleApiRequest document not found (404)', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/nonexistent.html',
+      headers: new Headers(),
     };
 
     const mockFetch = async (url, opts) => new Response(null, { status: 404 });
@@ -710,6 +793,7 @@ describe('Worker test suite', () => {
   it('Test handleApiRequest not authorized', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/hihi.html',
+      headers: new Headers(),
     };
 
     const mockFetch = async (url, opts) => new Response(null, { status: 401 });
@@ -723,6 +807,7 @@ describe('Worker test suite', () => {
   it('Test handleApiRequest da-admin fetch exception', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/test.html',
+      headers: new Headers(),
     };
 
     // Mock daadmin.fetch to throw an exception
