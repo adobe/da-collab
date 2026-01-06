@@ -150,7 +150,6 @@ export async function handleApiRequest(request, env) {
   let auth = '';
   if (token) {
     auth = `Bearer ${token}`;
-    console.log('[worker] use token from sec-websocket-protocol header.');
   } else {
     auth = url.searchParams.get('Authorization');
   }
