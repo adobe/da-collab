@@ -68,7 +68,7 @@ RETURN_STACK_TRACES = "false"
 # ----------------------------------------------------------------------
 # dev environment (local)
 [env.dev]
-name = "da-collab-dev"
+name = "da-collab-local"
 
 services = [
   { binding = "daadmin", service = "da-admin-local" }
