@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/adobe/da-collab/compare/v1.0.3...v1.1.0) (2026-01-06)
+
+
+### Features
+
+* add support for header authentication ([#120](https://github.com/adobe/da-collab/issues/120)) ([73b8895](https://github.com/adobe/da-collab/commit/73b889550a7e7e7d0c66e6be7d7aba3e793724a5))
+
 ## [1.0.3](https://github.com/adobe/da-collab/compare/v1.0.2...v1.0.3) (2025-12-09)
 
 
