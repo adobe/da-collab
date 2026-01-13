@@ -5,7 +5,7 @@
   "main": "src/edge.js",
   "type": "module",
   "scripts": {
-    "lint:js": "eslint .",
+    "lint:js": "eslint test src",
     "lint": "npm run lint:js",
     "dev": "wrangler dev -e dev src/edge.js",
     "deploy:ci": "node prepare-deploy.js && wrangler deploy -e ci  -c wrangler-versioned.toml",

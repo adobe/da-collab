@@ -10,6 +10,8 @@
  * governing permissions and limitations under the License.
  */
 /* eslint-disable no-unused-vars */
+/* eslint-disable object-curly-newline */
+
 import assert from 'node:assert';
 
 import defaultEdge, { DocRoom, handleApiRequest, handleErrors, handleConvert } from '../src/edge.js';
