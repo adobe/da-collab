@@ -9,7 +9,11 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
+import * as Y from 'yjs';
+import { yDocToProsemirror } from 'y-prosemirror';
 import { invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
+import { aem2doc } from './collab.js';
+import { getSchema } from './schema.js';
 
 /**
  * This is the Edge Worker, built using Durable Objects!
@@ -104,11 +108,97 @@ function ping(env) {
   return new Response(json, { status: 200 });
 }
 
+/**
+ * CORS headers for the convert API.
+ * Allows cross-origin requests from da.live frontends.
+ */
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
+/**
+ * Handle CORS preflight requests.
+ * @returns {Response}
+ */
+function handleCorsPreFlight() {
+  return new Response(null, {
+    status: 204,
+    headers: CORS_HEADERS,
+  });
+}
+
+/**
+ * Convert AEM HTML to ProseMirror JSON without creating a persistent document.
+ * This is a stateless conversion API for version preview and template insertion.
+ * @param {Request} request - The request object containing HTML in the body
+ * @returns {Promise<Response>} - JSON response with prosemirror doc and metadata
+ */
+export async function handleConvert(request) {
+  if (request.method === 'OPTIONS') {
+    return handleCorsPreFlight();
+  }
+
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method Not Allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+    });
+  }
+
+  try {
+    const body = await request.json();
+    const { html } = body;
+
+    if (!html) {
+      return new Response(JSON.stringify({ error: 'Missing html parameter' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      });
+    }
+
+    // Create a temporary YDoc and convert HTML to it
+    const ydoc = new Y.Doc();
+    aem2doc(html, ydoc);
+
+    // Convert YDoc to ProseMirror JSON
+    const schema = getSchema();
+    const pmDoc = yDocToProsemirror(schema, ydoc);
+
+    // Get daMetadata from the yMap
+    const mdMap = ydoc.getMap('daMetadata');
+    const daMetadata = {};
+    mdMap.forEach((value, key) => {
+      daMetadata[key] = value;
+    });
+
+    // Clean up the temporary ydoc
+    ydoc.destroy();
+
+    return new Response(JSON.stringify({
+      prosemirror: pmDoc.toJSON(),
+      daMetadata,
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[worker] Convert error:', err);
+    return new Response(JSON.stringify({ error: 'Conversion failed', details: err.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+    });
+  }
+}
+
 /** Handle the API calls. Supported API calls right now are:
  * /ping - returns a simple JSON response to check that the worker is up.
  * /syncadmin - sync the doc state with the state of da-admin. Any internal state
  *              for this document in the worker is cleared.
  * /deleteadmin - the document is deleted and should be removed from the worker internal state.
+ * /convert - stateless conversion of AEM HTML to ProseMirror JSON (for version preview).
  * @param {URL} url - The request url
  * @param {Request} request - The request object
  * @param {Env} env - The worker environment
@@ -122,6 +212,8 @@ async function handleApiCall(url, request, env) {
       return adminAPI('syncAdmin', url, request, env);
     case '/api/v1/deleteadmin':
       return adminAPI('deleteAdmin', url, request, env);
+    case '/api/v1/convert':
+      return handleConvert(request);
     default:
       return new Response('Bad Request', { status: 400 });
   }

@@ -12,7 +12,7 @@
 /* eslint-disable no-unused-vars */
 import assert from 'node:assert';
 
-import defaultEdge, { DocRoom, handleApiRequest, handleErrors } from '../src/edge.js';
+import defaultEdge, { DocRoom, handleApiRequest, handleErrors, handleConvert } from '../src/edge.js';
 import { WSSharedDoc, persistence, setYDoc } from '../src/shareddoc.js';
 
 async function sleep(ms) {
@@ -923,5 +923,144 @@ describe('Worker test suite', () => {
     const json = await res.json();
     assert.equal('ok', json.status);
     assert.deepStrictEqual(['da-admin'], json.service_bindings);
+  });
+});
+
+describe('Convert API test suite', () => {
+  it('converts simple HTML to ProseMirror JSON', async () => {
+    const html = '<body><main><div><p>Hello World</p></div></main></body>';
+    const request = new Request('http://test/api/v1/convert', {
+      method: 'POST',
+      body: JSON.stringify({ html }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const response = await handleConvert(request);
+    assert.equal(200, response.status);
+
+    const { prosemirror, daMetadata } = await response.json();
+    assert.equal(prosemirror.type, 'doc');
+    assert.ok(prosemirror.content.length > 0);
+    assert.ok(typeof daMetadata === 'object');
+
+    // Verify CORS headers
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), '*');
+  });
+
+  it('converts HTML with blocks to ProseMirror JSON', async () => {
+    const html = `<body><main><div>
+      <p>First paragraph</p>
+      <div class="marquee light">
+        <div><div><p>Marquee content</p></div></div>
+      </div>
+    </div></main></body>`;
+    const request = new Request('http://test/api/v1/convert', {
+      method: 'POST',
+      body: JSON.stringify({ html }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const response = await handleConvert(request);
+    assert.equal(200, response.status);
+
+    const { prosemirror } = await response.json();
+    assert.equal(prosemirror.type, 'doc');
+    // Should contain table node for the block
+    const hasTable = JSON.stringify(prosemirror).includes('"type":"table"');
+    assert.ok(hasTable, 'Should convert block to table');
+  });
+
+  it('extracts daMetadata from HTML', async () => {
+    const html = `<body><main><div><p>Content</p></div></main>
+      <div class="da-metadata">
+        <div><div>template</div><div>/templates/default</div></div>
+      </div>
+    </body>`;
+    const request = new Request('http://test/api/v1/convert', {
+      method: 'POST',
+      body: JSON.stringify({ html }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const response = await handleConvert(request);
+    assert.equal(200, response.status);
+
+    const { daMetadata } = await response.json();
+    assert.equal(daMetadata.template, '/templates/default');
+  });
+
+  it('returns 400 for missing html parameter', async () => {
+    const request = new Request('http://test/api/v1/convert', {
+      method: 'POST',
+      body: JSON.stringify({}),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const response = await handleConvert(request);
+    assert.equal(400, response.status);
+
+    const { error } = await response.json();
+    assert.equal(error, 'Missing html parameter');
+  });
+
+  it('returns 405 for non-POST methods', async () => {
+    const request = new Request('http://test/api/v1/convert', {
+      method: 'GET',
+    });
+
+    const response = await handleConvert(request);
+    assert.equal(405, response.status);
+  });
+
+  it('handles CORS preflight requests', async () => {
+    const request = new Request('http://test/api/v1/convert', {
+      method: 'OPTIONS',
+    });
+
+    const response = await handleConvert(request);
+    assert.equal(204, response.status);
+    assert.equal(response.headers.get('Access-Control-Allow-Origin'), '*');
+    assert.equal(response.headers.get('Access-Control-Allow-Methods'), 'POST, OPTIONS');
+    assert.equal(response.headers.get('Access-Control-Allow-Headers'), 'Content-Type, Authorization');
+  });
+
+  it('handles malformed JSON gracefully', async () => {
+    const request = new Request('http://test/api/v1/convert', {
+      method: 'POST',
+      body: 'not valid json',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const response = await handleConvert(request);
+    assert.equal(500, response.status);
+
+    const { error } = await response.json();
+    assert.equal(error, 'Conversion failed');
+  });
+
+  it('handles empty HTML document', async () => {
+    const html = '';
+    const request = new Request('http://test/api/v1/convert', {
+      method: 'POST',
+      body: JSON.stringify({ html }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const response = await handleConvert(request);
+    // Empty string is falsy, so it should return 400
+    assert.equal(400, response.status);
+  });
+
+  it('convert API is accessible via handleApiRequest', async () => {
+    const html = '<body><main><div><p>Test</p></div></main></body>';
+    const req = {
+      url: 'http://localhost:4711/api/v1/convert',
+      method: 'POST',
+      json: async () => ({ html }),
+      headers: new Headers({ 'Content-Type': 'application/json' }),
+    };
+
+    const res = await handleApiRequest(req, {});
+    assert.equal(200, res.status);
   });
 });
