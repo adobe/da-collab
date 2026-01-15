@@ -11,7 +11,7 @@
  */
 import * as Y from 'yjs';
 
-const MIN_DIMENSIONS = 4;
+const MIN_DIMENSIONS = 20;
 const SHEET_TEMPLATE = { minDimensions: [MIN_DIMENSIONS, MIN_DIMENSIONS], sheetName: 'data' };
 
 function getSheetData(sheetData) {
@@ -51,7 +51,7 @@ function getSheet(json, sheetName) {
     ...templ,
     sheetName,
     data,
-    columns: new Array(numColumns).fill(null).map(() => ({ width: '300' })),
+    columns: new Array(numColumns).fill(null).map(() => ({ width: '50' })),
   };
 }
 
@@ -93,6 +93,15 @@ function rowToY(row) {
     ycell.setAttribute('value', String(cellValue || ''));
     yrow.insert(idx, [ycell]);
   });
+
+  if (row.length < MIN_DIMENSIONS) {
+    for (let i = row.length; i < MIN_DIMENSIONS; i += 1) {
+      const ycell = new Y.XmlElement('cell');
+      ycell.setAttribute('value', '');
+      yrow.insert(i, [ycell]);
+    }
+  }
+
   return yrow;
 }
 
@@ -114,6 +123,13 @@ function dataArrayToY(data, ydata) {
       const yrow = rowToY(row);
       ydata.insert(idx, [yrow]);
     });
+  }
+
+  if (data.length < MIN_DIMENSIONS) {
+    for (let i = data.length; i < MIN_DIMENSIONS; i += 1) {
+      const yrow = rowToY([]);
+      ydata.insert(i, [yrow]);
+    }
   }
 }
 
@@ -247,8 +263,11 @@ function yToJSheet(ysheets) {
   return sheets;
 }
 
+const EMPTY_JSON = [{ ...SHEET_TEMPLATE }];
+
 export function json2doc(json, ydoc) {
-  const sheets = getSheets(json ?? []);
+  const jsonToConvert = Object.keys(json ?? {}).length === 0 ? EMPTY_JSON : json;
+  const sheets = getSheets(jsonToConvert);
   const ySheets = jSheetToY(sheets, ydoc);
   return ySheets;
 }
