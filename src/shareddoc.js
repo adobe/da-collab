@@ -12,11 +12,10 @@
 import * as Y from 'yjs';
 import * as syncProtocol from 'y-protocols/sync.js';
 import * as awarenessProtocol from 'y-protocols/awareness.js';
-
 import * as encoding from 'lib0/encoding.js';
 import * as decoding from 'lib0/decoding.js';
 import debounce from 'lodash/debounce.js';
-import { aem2doc, doc2aem } from './collab.js';
+import { aem2doc, doc2aem } from '@da-tools/da-parser';
 
 const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
@@ -377,32 +376,30 @@ export const persistence = {
       // this timeout, the ydoc can get confused which may result in duplicated content.
       // eslint-disable-next-line no-console
       console.log('[docroom] Could not be restored, trying to restore from da-admin', docName);
-      setTimeout(() => {
+      setTimeout(async () => {
         if (ydoc === docs.get(docName)) {
-          const rootType = ydoc.getXmlFragment('prosemirror');
-          ydoc.transact(() => {
-            try {
-              // clear document
+          try {
+            const rootType = ydoc.getXmlFragment('prosemirror');
+            // Clear document and maps in a sync transaction
+            ydoc.transact(() => {
               rootType.delete(0, rootType.length);
-
-              // clear all maps
               ydoc.share.forEach((type) => {
                 if (type instanceof Y.Map) {
                   type.clear();
                 }
               });
+            });
 
-              // restore from da-admin
-              aem2doc(current, ydoc);
+            // Restore from da-admin (async)
+            await aem2doc(current, ydoc);
 
-              // eslint-disable-next-line no-console
-              console.log('[docroom] Restored from da-admin', docName);
-            } catch (error) {
-              // eslint-disable-next-line no-console
-              console.error('[docroom] Problem restoring state from da-admin', error, current);
-              showError(ydoc, error);
-            }
-          });
+            // eslint-disable-next-line no-console
+            console.log('[docroom] Restored from da-admin', docName);
+          } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error('[docroom] Problem restoring state from da-admin', error, current);
+            showError(ydoc, error);
+          }
         }
       }, 1000);
     }

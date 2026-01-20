@@ -10,14 +10,15 @@
  * governing permissions and limitations under the License.
  */
 import * as Y from 'yjs';
+import * as awarenessProtocol from 'y-protocols/awareness.js';
 import assert from 'node:assert';
 import esmock from 'esmock';
 
+import { aem2doc, doc2aem, EMPTY_DOC } from '@da-tools/da-parser';
 import {
   closeConn, getYDoc, invalidateFromAdmin, messageListener, persistence,
   readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
-import { aem2doc, doc2aem, EMPTY_DOC } from '../src/collab.js';
 
 function isSubArray(full, sub) {
   if (sub.length === 0) {
@@ -294,7 +295,7 @@ describe('Collab Test Suite', () => {
   it('Test persistence update does not put if no change', async () => {
     const mockDoc2Aem = () => 'Svr content';
     const pss = await esmock('../src/shareddoc.js', {
-      '../src/collab.js': {
+      'da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -319,7 +320,7 @@ describe('Collab Test Suite', () => {
   it('Test persistence update does put if change', async () => {
     const mockDoc2Aem = () => 'Svr content update';
     const pss = await esmock('../src/shareddoc.js', {
-      '../src/collab.js': {
+      'da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -351,7 +352,7 @@ describe('Collab Test Suite', () => {
   async function testCloseAllOnAuthFailure(httpError) {
     const mockDoc2Aem = () => 'Svr content update';
     const pss = await esmock('../src/shareddoc.js', {
-      '../src/collab.js': {
+      'da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -412,7 +413,7 @@ describe('Collab Test Suite', () => {
       fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
     };
 
-    aem2doc('<main><div><p>test content</p></div></main>', ydoc);
+    await aem2doc('<main><div><p>test content</p></div></main>', ydoc);
 
     const result = await persistence.update(ydoc, '<main><div><p>old content</p></div></main>');
 
@@ -451,7 +452,7 @@ describe('Collab Test Suite', () => {
       fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
     };
 
-    aem2doc('<main><div><p>content</p></div></main>', ydoc);
+    await aem2doc('<main><div><p>content</p></div></main>', ydoc);
 
     // Trigger 412 - should close all connections and remove from global map
     await persistence.update(ydoc, '<main><div><p>old</p></div></main>');
@@ -479,7 +480,7 @@ describe('Collab Test Suite', () => {
       fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
     };
 
-    aem2doc('<main><div><p>content</p></div></main>', ydoc);
+    await aem2doc('<main><div><p>content</p></div></main>', ydoc);
 
     // Before 412, error map should be empty
     const errorMap = ydoc.getMap('error');
@@ -544,7 +545,7 @@ describe('Collab Test Suite', () => {
     assert.equal(updateHandlers.length, 2, 'Should have two update handlers registered');
 
     // Modify document
-    aem2doc('<main><div><p>modified</p></div></main>', ydoc);
+    await aem2doc('<main><div><p>modified</p></div></main>', ydoc);
 
     // Trigger 412 which closes all connections and removes from global map
     await pss.persistence.update(ydoc, '<main><div><p>initial</p></div></main>');
@@ -560,7 +561,7 @@ describe('Collab Test Suite', () => {
     };
 
     // Simulate another update after 412
-    aem2doc('<main><div><p>another change</p></div></main>', ydoc);
+    await aem2doc('<main><div><p>another change</p></div></main>', ydoc);
 
     // Call the debounced update handler
     if (updateHandlers[1]) {
@@ -591,7 +592,7 @@ describe('Collab Test Suite', () => {
       fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
     };
 
-    aem2doc('<main><div><p>content</p></div></main>', ydoc);
+    await aem2doc('<main><div><p>content</p></div></main>', ydoc);
 
     await persistence.update(ydoc, '<main><div><p>old</p></div></main>');
 
@@ -698,7 +699,7 @@ describe('Collab Test Suite', () => {
     const aem2DocCalled = [];
     const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
     const pss = await esmock('../src/shareddoc.js', {
-      '../src/collab.js': {
+      'da-parser': {
         aem2doc: mockAem2Doc,
       },
     });
@@ -784,7 +785,10 @@ describe('Collab Test Suite', () => {
     const savedGet = persistence.get;
     const savedSetTimeout = globalThis.setTimeout;
     try {
-      globalThis.setTimeout = (f) => f(); // run timeout method instantly
+      let timeoutPromise;
+      globalThis.setTimeout = (f) => {
+        timeoutPromise = f();
+      }; // run timeout method instantly
 
       persistence.get = async () => `
         <body>
@@ -793,6 +797,7 @@ describe('Collab Test Suite', () => {
         <footer></footer>
         </body>`;
       await persistence.bindState(docName, ydoc, {}, storage);
+      await timeoutPromise; // wait for async callback to complete
 
       assert(doc2aem(ydoc).includes('<div><p>From daadmin</p></div>'));
     } finally {
@@ -842,7 +847,7 @@ describe('Collab Test Suite', () => {
 
       await pss.persistence.bindState(docName, ydoc, {}, storage);
 
-      aem2doc('<main><div>newcontent</div></main>', ydoc);
+      await aem2doc('<main><div>newcontent</div></main>', ydoc);
 
       assert.equal(2, updObservers.length);
       await updObservers[0]();
@@ -884,14 +889,16 @@ describe('Collab Test Suite', () => {
     const savedSetTimeout = globalThis.setTimeout;
     const savedGet = persistence.get;
     try {
+      let timeoutPromise;
       globalThis.setTimeout = (f) => {
         // Restore the global function
         globalThis.setTimeout = savedSetTimeout;
-        f();
+        timeoutPromise = f();
       };
       persistence.get = async () => '<main><div>myinitial</div></main>';
 
       await persistence.bindState(docName, ydoc, conn, storage);
+      await timeoutPromise; // wait for async callback to complete
       assert(doc2aem(ydoc).includes('myinitial'));
       assert.equal(2, updObservers.length);
 
@@ -1140,8 +1147,21 @@ describe('Collab Test Suite', () => {
     };
 
     const shd = await esmock('../src/shareddoc.js', {
-      'y-protocols/sync.js': {
-        readSyncStep2: mockSS2,
+      'da-parser': {
+        Y,
+        syncProtocol: {
+          messageYjsSyncStep1: 0,
+          messageYjsSyncStep2: 1,
+          messageYjsUpdate: 2,
+          readSyncStep1: () => {},
+          readSyncStep2: mockSS2,
+          readUpdate: () => {},
+          writeSyncStep1: () => {},
+          writeUpdate: () => {},
+        },
+        awarenessProtocol,
+        aem2doc,
+        doc2aem,
       },
     });
 
@@ -1179,8 +1199,21 @@ describe('Collab Test Suite', () => {
     };
 
     const shd = await esmock('../src/shareddoc.js', {
-      'y-protocols/sync.js': {
-        readUpdate: mockUpd,
+      'da-parser': {
+        Y,
+        syncProtocol: {
+          messageYjsSyncStep1: 0,
+          messageYjsSyncStep2: 1,
+          messageYjsUpdate: 2,
+          readSyncStep1: () => {},
+          readSyncStep2: () => {},
+          readUpdate: mockUpd,
+          writeSyncStep1: () => {},
+          writeUpdate: () => {},
+        },
+        awarenessProtocol,
+        aem2doc,
+        doc2aem,
       },
     });
 
@@ -1386,10 +1419,11 @@ describe('Collab Test Suite', () => {
     const savedSetTimeout = globalThis.setTimeout;
     const savedGet = persistence.get;
     try {
+      let timeoutPromise;
       globalThis.setTimeout = (f) => {
         // Restore the global function
         globalThis.setTimeout = savedSetTimeout;
-        f();
+        timeoutPromise = f();
       };
       let calledGet = 0;
       persistence.get = async () => {
@@ -1407,6 +1441,7 @@ describe('Collab Test Suite', () => {
       };
 
       await persistence.bindState(docName, ydoc, conn, storage);
+      await timeoutPromise; // wait for async callback to complete
       // strip line breaks
       const doc2aemStr = doc2aem(ydoc).replace(/\n\s*/g, '');
       assert.notEqual(doc2aemStr, EMPTY_DOC);
