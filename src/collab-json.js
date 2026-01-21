@@ -47,11 +47,17 @@ function getSheet(json, sheetName) {
   // Create columns array that matches the data width
   const numColumns = Math.max(minCols, data[0]?.length || 0);
 
+  // Use existing colWidths where available, fill rest with default width
+  const colWidths = json[':colWidths'] || [];
+  const columns = new Array(numColumns).fill(null).map((_, i) => ({
+    width: colWidths[i] || '50',
+  }));
+
   return {
     ...templ,
     sheetName,
     data,
-    columns: new Array(numColumns).fill(null).map(() => ({ width: '50' })),
+    columns,
   };
 }
 
