@@ -136,7 +136,6 @@ async function handleApiCall(url, request, env) {
  * @returns {Promise<*|Response>}
  */
 export async function handleApiRequest(request, env) {
-  let timingDaAdminHeadDuration;
   const timingStartTime = Date.now();
 
   // We've received a pure API request - handle it and return.
@@ -173,37 +172,6 @@ export async function handleApiRequest(request, env) {
     return new Response('unable to get resource', { status: 404 });
   }
 
-  // Check if we have the authorization for the room (this is a poor man's solution as right now
-  // only da-admin knows).
-  let authActions;
-  try {
-    const opts = { method: 'HEAD' };
-    if (auth) {
-      opts.headers = new Headers({ Authorization: auth });
-    }
-
-    const timingBeforeDaAdminHead = Date.now();
-    const initialReq = await env.daadmin.fetch(docName, opts);
-
-    timingDaAdminHeadDuration = Date.now() - timingBeforeDaAdminHead;
-
-    if (!initialReq.ok) {
-      // eslint-disable-next-line no-console
-      console.log(`[worker] Unable to get resource ${docName}: ${initialReq.status} - ${initialReq.statusText}`);
-      return new Response('unable to get resource', { status: initialReq.status });
-    }
-
-    // this seems to be required by CloudFlare to consider the request as completed
-    await initialReq.text();
-
-    const daActions = initialReq.headers.get('X-da-actions') ?? '';
-    [, authActions] = daActions.split('=');
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[worker] Unable to handle API request ${docName}`, err);
-    return new Response('unable to get resource', { status: 500 });
-  }
-
   try {
     const timingBeforeDocRoomGet = Date.now();
     // Each Durable Object has a 256-bit unique ID. Route the request based on the path.
@@ -219,14 +187,12 @@ export async function handleApiRequest(request, env) {
     const timingDocRoomGetDuration = Date.now() - timingBeforeDocRoomGet;
 
     // eslint-disable-next-line no-console
-    console.log('[worker] Fecthing', docName);
+    console.log('[worker] Fetching', docName);
 
     const headers = [...request.headers,
       ['X-collab-room', docName],
       ['X-timing-start', timingStartTime],
-      ['X-timing-da-admin-head-duration', timingDaAdminHeadDuration],
       ['X-timing-docroom-get-duration', timingDocRoomGetDuration],
-      ['X-auth-actions', authActions],
     ];
 
     if (auth) {
@@ -341,7 +307,6 @@ export class DocRoom {
         return new Response('expected websocket', { status: 400 });
       }
       const auth = request.headers.get('Authorization');
-      const authActions = request.headers.get('X-auth-actions') ?? '';
       const docName = request.headers.get('X-collab-room');
 
       if (!docName) {
@@ -357,12 +322,11 @@ export class DocRoom {
       const pair = DocRoom.newWebSocketPair();
 
       // We're going to take pair[1] as our end, and return pair[0] to the client.
-      const timingData = await this.handleSession(pair[1], docName, auth, authActions);
+      const timingData = await this.handleSession(pair[1], docName, auth);
       const timingSetupWebSocketDuration = Date.now() - timingBeforeSetupWebsocket;
 
       const reqHeaders = request.headers;
       const respheaders = new Headers({
-        'X-1-timing-da-admin-head-duration': reqHeaders.get('X-timing-da-admin-head-duration'),
         'X-2-timing-docroom-get-duration': reqHeaders.get('X-timing-docroom-get-duration'),
         'X-4-timing-da-admin-get-duration': timingData.get('timingDaAdminGetDuration'),
         'X-5-timing-read-state-duration': timingData.get('timingReadStateDuration'),
@@ -388,19 +352,16 @@ export class DocRoom {
    * @param {WebSocket} webSocket - The WebSocket connection to the client
    * @param {string} docName - The document name
    * @param {string} auth - The authorization header
-   * @param {string} authActions
    */
-  async handleSession(webSocket, docName, auth, authActions) {
+  async handleSession(webSocket, docName, auth) {
     // Accept our end of the WebSocket. This tells the runtime that we'll be terminating the
     // WebSocket in JavaScript, not sending it elsewhere.
     webSocket.accept();
     // eslint-disable-next-line no-param-reassign
     webSocket.auth = auth;
 
-    if (!authActions.split(',').includes('write')) {
-      // eslint-disable-next-line no-param-reassign
-      webSocket.readOnly = true;
-    }
+    // Note: readOnly will be set by setupWSConnection after the GET request
+
     // eslint-disable-next-line no-console
     console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${webSocket.auth
       ? webSocket.auth.substring(0, webSocket.auth.indexOf(' ')) : 'none'})`);

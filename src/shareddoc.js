@@ -87,27 +87,35 @@ const send = (doc, conn, m) => {
  * in storeState function.
  * @param {string} docName - The document name
  * @param {TransactionalStorage} storage - The worker transactional storage
- * @returns {Uint8Array | undefined} - The stored state or undefined if not found
+ * @returns {{ state: Uint8Array | undefined, etag: string | undefined }} - stored state and ETag
  */
 export const readState = async (docName, storage) => {
   const stored = await storage.list();
   if (stored.size === 0) {
     // eslint-disable-next-line no-console
     console.log('[docroom] No stored doc in persistence');
-    return undefined;
+    return { state: undefined, etag: undefined };
   }
 
   if (stored.get('doc') !== docName) {
     // eslint-disable-next-line no-console
-    console.log('[docroom] Docname mismatch in persistence. Expected:', docName, 'found:', stored.get('doc'), 'Deleting storage');
+    console.log(
+      '[docroom] Docname mismatch in persistence. Expected:',
+      docName,
+      'found:',
+      stored.get('doc'),
+      'Deleting storage',
+    );
     await storage.deleteAll();
-    return undefined;
+    return { state: undefined, etag: undefined };
   }
+
+  const etag = stored.get('etag');
 
   if (stored.has('docstore')) {
     // eslint-disable-next-line no-console
-    console.log('[docroom] Document found in persistence');
-    return stored.get('docstore');
+    console.log('[docroom] Document found in persistence', etag ? `(etag: ${etag})` : '');
+    return { state: stored.get('docstore'), etag };
   }
 
   const data = [];
@@ -121,8 +129,8 @@ export const readState = async (docName, storage) => {
     }
   }
   // eslint-disable-next-line no-console
-  console.log('[docroom] Document data read');
-  return new Uint8Array(data);
+  console.log('[docroom] Document data read', etag ? `(etag: ${etag})` : '');
+  return { state: new Uint8Array(data), etag };
 };
 
 /**
@@ -135,18 +143,27 @@ export const readState = async (docName, storage) => {
  * a. State size less than max storage value size:
  *    serialized.doc = document name
  *    serialized.docstore = state of the document
+ *    serialized.etag = ETag from da-admin (optional)
  * b. State size greater than max storage value size:
  *    serialized.doc = document name
  *    serialized.chunks = number of chunks
  *    serialized.chunk_0 = first chunk
  *    ...
  *    serialized.chunk_n = last chunk, where n = chunks - 1
+ *    serialized.etag = ETag from da-admin (optional)
  * @param {string} docName - The document name
  * @param {Uint8Array} state - The Yjs document state, as produced by Y.encodeStateAsUpdate()
  * @param {TransactionalStorage} storage - The worker transactional storage
+ * @param {string} etag - Optional ETag from da-admin for conditional GET
  * @param {number} chunkSize - The chunk size
  */
-export const storeState = async (docName, state, storage, chunkSize = MAX_STORAGE_VALUE_SIZE) => {
+export const storeState = async (
+  docName,
+  state,
+  storage,
+  etag = undefined,
+  chunkSize = MAX_STORAGE_VALUE_SIZE,
+) => {
   await storage.deleteAll();
 
   let serialized;
@@ -168,6 +185,9 @@ export const storeState = async (docName, state, storage, chunkSize = MAX_STORAG
     serialized.chunks = j;
   }
   serialized.doc = docName;
+  if (etag) {
+    serialized.etag = etag;
+  }
 
   await storage.put(serialized);
 };
@@ -194,26 +214,51 @@ export const persistence = {
   closeConn: closeConn.bind(this),
 
   /**
-   * Get the document from da-admin.
+   * Get the document from da-admin, with optional conditional GET using ETag.
+   * Also extracts authActions from response headers (optimization: replaces HEAD request).
    * @param {string} docName - The document name
    * @param {string} auth - The authorization header
    * @param {object} daadmin - The da-admin worker service binding
-   * @returns {Promise<string>} - The content of the document
+   * @param {string} etag - Optional ETag for conditional GET (If-None-Match)
+   * @returns {Promise<{
+   *   content: string | null, etag: string | null, notModified: boolean, authActions: string }>}
    * @throws {Error} - If the document cannot be retrieved (including 404)
    */
-  get: async (docName, auth, daadmin) => {
-    const initalOpts = {};
+  get: async (docName, auth, daadmin, etag = undefined) => {
+    const headers = new Headers();
     if (auth) {
-      initalOpts.headers = new Headers({ Authorization: auth });
+      headers.set('Authorization', auth);
     }
-    const initialReq = await daadmin.fetch(docName, initalOpts);
-    if (initialReq.ok) {
-      return initialReq.text();
-    } else {
+    if (etag) {
+      headers.set('If-None-Match', etag);
+    }
+
+    const initialReq = await daadmin.fetch(docName, { headers });
+
+    // Extract authActions from response headers (same as HEAD would return)
+    const daActions = initialReq.headers.get('X-da-actions') ?? '';
+    const [, authActions] = daActions.split('=');
+
+    if (initialReq.status === 304) {
+      // Not modified - worker storage is current
       // eslint-disable-next-line no-console
-      console.error(`[docroom] Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`);
-      throw new Error(`unable to get resource - status: ${initialReq.status}`);
+      console.log('[docroom] da-admin returned 304 Not Modified, using worker storage');
+      return {
+        content: null, etag, notModified: true, authActions: authActions || '',
+      };
     }
+
+    if (initialReq.ok) {
+      const responseEtag = initialReq.headers.get('ETag');
+      const content = await initialReq.text();
+      return {
+        content, etag: responseEtag, notModified: false, authActions: authActions || '',
+      };
+    }
+
+    // eslint-disable-next-line no-console
+    console.error(`[docroom] Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`);
+    throw new Error(`unable to get resource - status: ${initialReq.status}`);
   },
 
   /**
@@ -337,37 +382,61 @@ export const persistence = {
     ydoc.storage = storage;
 
     let current;
+    let currentEtag;
     let restored = false; // True if restored from worker storage
 
-    // Get document from da-admin (throws on error including 404)
-    const timingBeforeDaAdminGet = Date.now();
-    current = await persistence.get(docName, conn.auth, ydoc.daadmin);
-    const timingDaAdminGetDuration = Date.now() - timingBeforeDaAdminGet;
-
-    // Read the stored state from internal worker storage (errors are non-fatal)
+    // Read the stored state from internal worker storage first (errors are non-fatal)
+    let storedState;
+    let storedEtag;
     try {
       const timingBeforeReadState = Date.now();
-      const stored = await readState(docName, storage);
+      const { state, etag } = await readState(docName, storage);
+      storedState = state;
+      storedEtag = etag;
       timingReadStateDuration = Date.now() - timingBeforeReadState;
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[docroom] Problem reading state from worker storage', error);
+    }
 
-      if (stored && stored.length > 0) {
-        Y.applyUpdate(ydoc, stored);
+    // Get document from da-admin, using conditional GET if we have an ETag
+    // This also returns authActions, eliminating the need for a separate HEAD request
+    const timingBeforeDaAdminGet = Date.now();
+    const daAdminResult = await persistence.get(docName, conn.auth, ydoc.daadmin, storedEtag);
+    const timingDaAdminGetDuration = Date.now() - timingBeforeDaAdminGet;
+
+    // Set readOnly based on authActions from the GET response
+    const { authActions } = daAdminResult;
+    if (!authActions || !authActions.split(',').includes('write')) {
+      // eslint-disable-next-line no-param-reassign
+      conn.readOnly = true;
+    }
+
+    if (daAdminResult.notModified && storedState && storedState.length > 0) {
+      // da-admin returned 304 Not Modified - use worker storage directly
+      Y.applyUpdate(ydoc, storedState);
+      restored = true;
+      currentEtag = storedEtag;
+      current = doc2aem(ydoc);
+      // eslint-disable-next-line no-console
+      console.log('[docroom] Restored from worker persistence (304 Not Modified)', docName);
+    } else {
+      // da-admin returned new content
+      current = daAdminResult.content;
+      currentEtag = daAdminResult.etag;
+
+      // Try to restore from worker storage if available
+      if (storedState && storedState.length > 0) {
+        Y.applyUpdate(ydoc, storedState);
 
         // Check if the state from the worker storage is the same as the current state in da-admin.
-        // So for example if da-admin doesn't have the doc any more, or if it has been altered in
-        // another way, we don't use the state of the worker storage.
         const fromStorage = doc2aem(ydoc);
         if (fromStorage === current) {
           restored = true;
-
           // eslint-disable-next-line no-console
-          console.log('[docroom] Restored from worker persistence', docName);
+          console.log('[docroom] Restored from worker persistence (content match)', docName);
         }
       }
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('[docroom] Problem restoring state from worker storage', error);
-      showError(ydoc, error);
     }
 
     if (!restored && current) {
@@ -407,7 +476,7 @@ export const persistence = {
     ydoc.on('update', async () => {
       // Whenever we receive an update on the document store it in the local storage
       if (ydoc === docs.get(docName)) { // make sure this ydoc is still active
-        storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
+        storeState(docName, Y.encodeStateAsUpdate(ydoc), storage, currentEtag);
       }
     });
 
