@@ -648,7 +648,9 @@ describe('Worker test suite', () => {
     }
   });
 
-  it('Test handleApiRequest', async () => {
+  it('Test handleApiRequest passes through to room without HEAD', async () => {
+    // Verify that handleApiRequest forwards directly to the room without making
+    // a HEAD request to da-admin (auth now happens in bindState via GET)
     const headers = new Map();
     headers.set('myheader', 'myval');
     const req = {
@@ -683,11 +685,10 @@ describe('Worker test suite', () => {
     const res = await handleApiRequest(req, env);
     assert.equal(306, res.status);
 
-    assert.equal(1, mockFetchCalled.length);
-    const mfreq = mockFetchCalled[0];
-    assert.equal('https://admin.da.live/laaa.html', mfreq.url);
-    assert.equal('HEAD', mfreq.opts.method);
+    // No HEAD request should be made to da-admin
+    assert.equal(0, mockFetchCalled.length, 'No da-admin fetch should happen in edge worker');
 
+    // Room should be called with correct headers
     assert.equal(1, roomFetchCalled.length);
 
     const rfreq = roomFetchCalled[0];
@@ -697,28 +698,34 @@ describe('Worker test suite', () => {
     assert.equal('https://admin.da.live/laaa.html', rfreq.headers.get('X-collab-room'));
   });
 
-  it('Test handleApiRequest via Service Binding (param auth)', async () => {
+  it('Test handleApiRequest via Service Binding (param auth) passes to room', async () => {
+    // Verify that auth from query params is extracted and passed to room
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/laaa.html?Authorization=lala',
       headers: new Headers(),
     };
 
-    // eslint-disable-next-line consistent-return
-    const mockFetch = async (url, opts) => {
-      if (opts.method === 'HEAD'
-        && url === 'https://admin.da.live/laaa.html'
-        && opts.headers.get('Authorization') === 'lala') {
-        return new Response(null, { status: 410 });
-      }
+    const roomFetchCalled = [];
+    const myRoom = {
+      // eslint-disable-next-line no-shadow
+      fetch(req) {
+        roomFetchCalled.push(req);
+        return new Response(null, { status: 200 });
+      },
     };
 
-    // This is how a service binding is exposed to the program, via env
-    const env = {
-      daadmin: { fetch: mockFetch },
+    const rooms = {
+      idFromName(nm) { return `id${hash(nm)}`; },
+      get(id) { return myRoom; },
     };
+    const env = { rooms };
 
     const res = await handleApiRequest(req, env);
-    assert.equal(410, res.status);
+    assert.equal(200, res.status);
+
+    // Room should be called with auth from query params
+    assert.equal(1, roomFetchCalled.length);
+    assert.equal('lala', roomFetchCalled[0].headers.get('Authorization'));
   });
 
   it('Test handleApiRequest via Service Binding (header auth)', async () => {
@@ -775,30 +782,54 @@ describe('Worker test suite', () => {
     assert.equal(404, res.status);
   });
 
-  it('Test handleApiRequest document not found (404)', async () => {
+  it('Test handleApiRequest propagates room 404 response', async () => {
+    // Auth/404 checking now happens in bindState (shareddoc.js), not edge.js
+    // This test verifies that room errors are propagated correctly
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/nonexistent.html',
       headers: new Headers(),
     };
 
-    const mockFetch = async (url, opts) => new Response(null, { status: 404 });
-    const daadmin = { fetch: mockFetch };
-    const env = { daadmin };
+    const myRoom = {
+      // eslint-disable-next-line no-shadow
+      fetch(req) {
+        // Room returns 404 (e.g., from bindState when da-admin returns 404)
+        return new Response('document not found', { status: 404 });
+      },
+    };
+
+    const rooms = {
+      idFromName(nm) { return `id${hash(nm)}`; },
+      get(id) { return myRoom; },
+    };
+    const env = { rooms };
 
     const res = await handleApiRequest(req, env);
     assert.equal(404, res.status);
-    assert.equal('unable to get resource', await res.text());
+    assert.equal('document not found', await res.text());
   });
 
-  it('Test handleApiRequest not authorized', async () => {
+  it('Test handleApiRequest propagates room 401 response', async () => {
+    // Auth checking now happens in bindState (shareddoc.js), not edge.js
+    // This test verifies that auth errors from room are propagated correctly
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/hihi.html',
       headers: new Headers(),
     };
 
-    const mockFetch = async (url, opts) => new Response(null, { status: 401 });
-    const daadmin = { fetch: mockFetch };
-    const env = { daadmin };
+    const myRoom = {
+      // eslint-disable-next-line no-shadow
+      fetch(req) {
+        // Room returns 401 (e.g., from bindState when da-admin returns 401)
+        return new Response('unauthorized', { status: 401 });
+      },
+    };
+
+    const rooms = {
+      idFromName(nm) { return `id${hash(nm)}`; },
+      get(id) { return myRoom; },
+    };
+    const env = { rooms };
 
     const res = await handleApiRequest(req, env);
     assert.equal(401, res.status);

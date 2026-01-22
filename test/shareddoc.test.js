@@ -10,7 +10,6 @@
  * governing permissions and limitations under the License.
  */
 import * as Y from 'yjs';
-import * as awarenessProtocol from 'y-protocols/awareness.js';
 import assert from 'node:assert';
 import esmock from 'esmock';
 
@@ -147,13 +146,20 @@ describe('Collab Test Suite', () => {
     daadmin.fetch = async (url, opts) => {
       assert.equal(url, 'foo');
       assert.equal(opts.method, undefined);
-      assert(opts.headers === undefined);
+      assert(opts.headers instanceof Headers);
       return {
-        ok: true, text: async () => 'content', status: 200, statusText: 'OK',
+        ok: true,
+        text: async () => 'content',
+        status: 200,
+        statusText: 'OK',
+        headers: new Headers({ 'X-da-actions': 'actions=read,write', ETag: '"abc123"' }),
       };
     };
     const result = await persistence.get('foo', undefined, daadmin);
-    assert.equal(result, 'content');
+    assert.equal(result.content, 'content');
+    assert.equal(result.etag, '"abc123"');
+    assert.equal(result.notModified, false);
+    assert.equal(result.authActions, 'read,write');
   });
 
   it('Test persistence get auth', async () => {
@@ -163,11 +169,35 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, undefined);
       assert.equal(opts.headers.get('authorization'), 'auth');
       return {
-        ok: true, text: async () => 'content', status: 200, statusText: 'OK',
+        ok: true,
+        text: async () => 'content',
+        status: 200,
+        statusText: 'OK',
+        headers: new Headers({ 'X-da-actions': 'actions=read,write' }),
       };
     };
     const result = await persistence.get('foo', 'auth', daadmin);
-    assert.equal(result, 'content');
+    assert.equal(result.content, 'content');
+    assert.equal(result.authActions, 'read,write');
+  });
+
+  it('Test persistence get 304 Not Modified', async () => {
+    const daadmin = {};
+    daadmin.fetch = async (url, opts) => {
+      assert.equal(url, 'foo');
+      assert.equal(opts.headers.get('If-None-Match'), '"etag123"');
+      return {
+        ok: false,
+        status: 304,
+        statusText: 'Not Modified',
+        headers: new Headers({ 'X-da-actions': 'actions=read,write' }),
+      };
+    };
+    const result = await persistence.get('foo', 'auth', daadmin, '"etag123"');
+    assert.equal(result.content, null);
+    assert.equal(result.etag, '"etag123"');
+    assert.equal(result.notModified, true);
+    assert.equal(result.authActions, 'read,write');
   });
 
   it('Test persistence get 404', async () => {
@@ -177,7 +207,11 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, undefined);
       assert.equal(opts.headers.get('authorization'), 'auth');
       return {
-        ok: false, text: async () => { throw new Error(); }, status: 404, statusText: 'Not Found',
+        ok: false,
+        text: async () => { throw new Error(); },
+        status: 404,
+        statusText: 'Not Found',
+        headers: new Headers(),
       };
     };
     try {
@@ -195,7 +229,11 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, undefined);
       assert.equal(opts.headers.get('authorization'), 'auth');
       return {
-        ok: false, text: async () => { throw new Error(); }, status: 500, statusText: 'Error',
+        ok: false,
+        text: async () => { throw new Error(); },
+        status: 500,
+        statusText: 'Error',
+        headers: new Headers(),
       };
     };
     try {
@@ -295,7 +333,7 @@ describe('Collab Test Suite', () => {
   it('Test persistence update does not put if no change', async () => {
     const mockDoc2Aem = () => 'Svr content';
     const pss = await esmock('../src/shareddoc.js', {
-      'da-parser': {
+      '@da-tools/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -320,7 +358,7 @@ describe('Collab Test Suite', () => {
   it('Test persistence update does put if change', async () => {
     const mockDoc2Aem = () => 'Svr content update';
     const pss = await esmock('../src/shareddoc.js', {
-      'da-parser': {
+      '@da-tools/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -352,7 +390,7 @@ describe('Collab Test Suite', () => {
   async function testCloseAllOnAuthFailure(httpError) {
     const mockDoc2Aem = () => 'Svr content update';
     const pss = await esmock('../src/shareddoc.js', {
-      'da-parser': {
+      '@da-tools/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -699,7 +737,7 @@ describe('Collab Test Suite', () => {
     const aem2DocCalled = [];
     const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
     const pss = await esmock('../src/shareddoc.js', {
-      'da-parser': {
+      '@da-tools/da-parser': {
         aem2doc: mockAem2Doc,
       },
     });
@@ -715,7 +753,13 @@ describe('Collab Test Suite', () => {
 
     const mockStorage = { list: () => new Map() };
 
-    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    // persistence.get now returns { content, etag, notModified, authActions }
+    pss.persistence.get = async (nm, au, ad) => ({
+      content: `Get: ${nm}-${au}-${ad}`,
+      etag: '"test-etag"',
+      notModified: false,
+      authActions: 'read,write',
+    });
     const updated = new Map();
     pss.persistence.update = async (d, v) => updated.set(d, v);
 
@@ -786,16 +830,26 @@ describe('Collab Test Suite', () => {
     const savedSetTimeout = globalThis.setTimeout;
     try {
       let timeoutPromise;
+      // Mock setTimeout to capture the restoration callback, but restore it immediately
+      // to avoid interfering with lodash debounce (which also uses setTimeout)
       globalThis.setTimeout = (f) => {
+        // Restore immediately to prevent infinite loop with debounce
+        globalThis.setTimeout = savedSetTimeout;
         timeoutPromise = f();
-      }; // run timeout method instantly
+      };
 
-      persistence.get = async () => `
+      // persistence.get now returns { content, etag, notModified, authActions }
+      persistence.get = async () => ({
+        content: `
         <body>
         <header></header>
         <main><div>From daadmin</div></main>
         <footer></footer>
-        </body>`;
+        </body>`,
+        etag: '"test-etag"',
+        notModified: false,
+        authActions: 'read,write',
+      });
       await persistence.bindState(docName, ydoc, {}, storage);
       await timeoutPromise; // wait for async callback to complete
 
@@ -835,7 +889,13 @@ describe('Collab Test Suite', () => {
         f();
       };
 
-      pss.persistence.get = async () => '<main><div>oldcontent</div></main>';
+      // persistence.get now returns { content, etag, notModified, authActions }
+      pss.persistence.get = async () => ({
+        content: '<main><div>oldcontent</div></main>',
+        etag: '"test-etag"',
+        notModified: false,
+        authActions: 'read,write',
+      });
       const putCalls = [];
       // eslint-disable-next-line consistent-return
       pss.persistence.put = async (yd, c) => {
@@ -895,7 +955,13 @@ describe('Collab Test Suite', () => {
         globalThis.setTimeout = savedSetTimeout;
         timeoutPromise = f();
       };
-      persistence.get = async () => '<main><div>myinitial</div></main>';
+      // persistence.get now returns { content, etag, notModified, authActions }
+      persistence.get = async () => ({
+        content: '<main><div>myinitial</div></main>',
+        etag: '"test-etag"',
+        notModified: false,
+        authActions: 'read,write',
+      });
 
       await persistence.bindState(docName, ydoc, conn, storage);
       await timeoutPromise; // wait for async callback to complete
@@ -1147,21 +1213,15 @@ describe('Collab Test Suite', () => {
     };
 
     const shd = await esmock('../src/shareddoc.js', {
-      'da-parser': {
-        Y,
-        syncProtocol: {
-          messageYjsSyncStep1: 0,
-          messageYjsSyncStep2: 1,
-          messageYjsUpdate: 2,
-          readSyncStep1: () => {},
-          readSyncStep2: mockSS2,
-          readUpdate: () => {},
-          writeSyncStep1: () => {},
-          writeUpdate: () => {},
-        },
-        awarenessProtocol,
-        aem2doc,
-        doc2aem,
+      'y-protocols/sync.js': {
+        messageYjsSyncStep1: 0,
+        messageYjsSyncStep2: 1,
+        messageYjsUpdate: 2,
+        readSyncStep1: () => {},
+        readSyncStep2: mockSS2,
+        readUpdate: () => {},
+        writeSyncStep1: () => {},
+        writeUpdate: () => {},
       },
     });
 
@@ -1199,21 +1259,15 @@ describe('Collab Test Suite', () => {
     };
 
     const shd = await esmock('../src/shareddoc.js', {
-      'da-parser': {
-        Y,
-        syncProtocol: {
-          messageYjsSyncStep1: 0,
-          messageYjsSyncStep2: 1,
-          messageYjsUpdate: 2,
-          readSyncStep1: () => {},
-          readSyncStep2: () => {},
-          readUpdate: mockUpd,
-          writeSyncStep1: () => {},
-          writeUpdate: () => {},
-        },
-        awarenessProtocol,
-        aem2doc,
-        doc2aem,
+      'y-protocols/sync.js': {
+        messageYjsSyncStep1: 0,
+        messageYjsSyncStep2: 1,
+        messageYjsUpdate: 2,
+        readSyncStep1: () => {},
+        readSyncStep2: () => {},
+        readUpdate: mockUpd,
+        writeSyncStep1: () => {},
+        writeUpdate: () => {},
       },
     });
 
@@ -1295,11 +1349,27 @@ describe('Collab Test Suite', () => {
     stored.set('docstore', new Uint8Array([254, 255]));
     stored.set('chunks', 17); // should be ignored
     stored.set('doc', docName);
+    stored.set('etag', '"test-etag"');
 
     const storage = { list: async () => stored };
 
-    const data = await readState(docName, storage);
-    assert.deepStrictEqual(new Uint8Array([254, 255]), data);
+    const result = await readState(docName, storage);
+    assert.deepStrictEqual(new Uint8Array([254, 255]), result.state);
+    assert.equal('"test-etag"', result.etag);
+  });
+
+  it('readState not chunked without etag', async () => {
+    const docName = 'http://foo.bar/doc123.html';
+    const stored = new Map();
+    stored.set('docstore', new Uint8Array([254, 255]));
+    stored.set('doc', docName);
+    // no etag stored (legacy data)
+
+    const storage = { list: async () => stored };
+
+    const result = await readState(docName, storage);
+    assert.deepStrictEqual(new Uint8Array([254, 255]), result.state);
+    assert.equal(undefined, result.etag);
   });
 
   it('readState doc mismatch', async () => {
@@ -1315,8 +1385,9 @@ describe('Collab Test Suite', () => {
       deleteAll: async () => storageCalled.push('deleteAll'),
     };
 
-    const data = await readState(docName, storage);
-    assert.equal(data, undefined);
+    const result = await readState(docName, storage);
+    assert.equal(result.state, undefined);
+    assert.equal(result.etag, undefined);
     assert.deepStrictEqual(['deleteAll'], storageCalled);
   });
 
@@ -1326,11 +1397,13 @@ describe('Collab Test Suite', () => {
     stored.set('chunk_1', new Uint8Array([4, 5]));
     stored.set('chunks', 2);
     stored.set('doc', 'mydoc');
+    stored.set('etag', '"chunked-etag"');
 
     const storage = { list: async () => stored };
 
-    const data = await readState('mydoc', storage);
-    assert.deepStrictEqual(new Uint8Array([1, 2, 3, 4, 5]), data);
+    const result = await readState('mydoc', storage);
+    assert.deepStrictEqual(new Uint8Array([1, 2, 3, 4, 5]), result.state);
+    assert.equal('"chunked-etag"', result.etag);
   });
 
   it('storeState not chunked', async () => {
@@ -1343,12 +1416,33 @@ describe('Collab Test Suite', () => {
       put: (obj) => called.push(obj),
     };
 
-    await storeState(docName, state, storage, 10);
+    // Note: storeState signature is (docName, state, storage, etag, chunkSize)
+    await storeState(docName, state, storage, undefined, 10);
 
     assert.equal(2, called.length);
     assert.equal('deleteAll', called[0]);
     assert.deepStrictEqual(state, called[1].docstore);
     assert.equal(docName, called[1].doc);
+    assert.equal(undefined, called[1].etag); // no etag provided
+  });
+
+  it('storeState not chunked with etag', async () => {
+    const docName = 'https://some.where/far/away.html';
+    const state = new Uint8Array([1, 2, 3, 4, 5]);
+
+    const called = [];
+    const storage = {
+      deleteAll: async () => called.push('deleteAll'),
+      put: (obj) => called.push(obj),
+    };
+
+    await storeState(docName, state, storage, '"my-etag"', 10);
+
+    assert.equal(2, called.length);
+    assert.equal('deleteAll', called[0]);
+    assert.deepStrictEqual(state, called[1].docstore);
+    assert.equal(docName, called[1].doc);
+    assert.equal('"my-etag"', called[1].etag);
   });
 
   it('storeState chunked', async () => {
@@ -1360,12 +1454,14 @@ describe('Collab Test Suite', () => {
       put: (obj) => called.push(obj),
     };
 
-    await storeState('somedoc', state, storage, 4);
+    // Note: storeState signature is (docName, state, storage, etag, chunkSize)
+    await storeState('somedoc', state, storage, '"chunked-etag"', 4);
 
     assert.equal(2, called.length);
     assert.equal('deleteAll', called[0]);
     assert.equal(3, called[1].chunks);
     assert.equal('somedoc', called[1].doc);
+    assert.equal('"chunked-etag"', called[1].etag);
     assert.deepStrictEqual(new Uint8Array([1, 2, 3, 4]), called[1].chunk_0);
     assert.deepStrictEqual(new Uint8Array([5, 6, 7, 8]), called[1].chunk_1);
     assert.deepStrictEqual(new Uint8Array([9]), called[1].chunk_2);
@@ -1426,18 +1522,24 @@ describe('Collab Test Suite', () => {
         timeoutPromise = f();
       };
       let calledGet = 0;
+      // persistence.get now returns { content, etag, notModified, authActions }
       persistence.get = async () => {
         // eslint-disable-next-line no-plusplus
         if (calledGet++ > 0) {
           throw new Error('unexpected crash');
         }
-        return `
+        return {
+          content: `
 <body>
   <header></header>
   <main><div>initial</div></main>
   <footer></footer>
 </body>
-`;
+`,
+          etag: '"test-etag"',
+          notModified: false,
+          authActions: 'read,write',
+        };
       };
 
       await persistence.bindState(docName, ydoc, conn, storage);
