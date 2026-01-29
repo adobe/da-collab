@@ -214,11 +214,7 @@ export const persistence = {
   get: async (docName, auth, fetchObj) => {
     const initalOpts = {};
     if (auth) {
-      if (auth.startsWith('Bearer ')) {
-        initalOpts.headers = new Headers({ Authorization: auth });
-      } else {
-        initalOpts.headers = new Headers({ 'X-Auth-Token': auth });
-      }
+      initalOpts.headers = new Headers({ Authorization: auth });
     }
 
     const initialReq = await fetchObj.fetch(docName, initalOpts);
@@ -273,11 +269,7 @@ export const persistence = {
 
     if (auth.length > 0) {
       const authValue = [...new Set(auth)].join(',');
-      if (authValue.startsWith('Bearer ')) {
-        headers.Authorization = authValue;
-      } else {
-        headers['X-Auth-Token'] = authValue;
-      }
+      headers.Authorization = authValue;
     }
 
     opts.headers = new Headers(headers);
