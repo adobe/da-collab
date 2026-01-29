@@ -345,7 +345,10 @@ export class DocRoom {
         return new Response('expected websocket', { status: 400 });
       }
       const auth = request.headers.get('Authorization');
-      const authActions = 'read,write';
+      const isHlx6 = url.hostname === 'api.aem.live';
+      const authActions = isHlx6
+        ? 'read,write' // TODO remove once hlx6 supports X-auth-actions
+        : request.headers.get('X-auth-actions') ?? '';
 
       const docName = request.headers.get('X-collab-room');
 
