@@ -145,9 +145,14 @@ export async function handleApiRequest(request, env) {
     return handleApiCall(url, request, env);
   }
 
-  let authActions;
-  const auth = url.searchParams.get('Authorization');
-  const xAuthToken = url.searchParams.get('X-Auth-Token');
+  const protocols = request.headers.get('sec-websocket-protocol')?.split(',');
+  const token = protocols?.find((hdr) => hdr !== 'yjs')?.trim();
+  let auth = '';
+  if (token) {
+    auth = `Bearer ${token}`;
+  } else {
+    auth = url.searchParams.get('Authorization');
+  }
 
   // We need to massage the path somewhat because on connections from localhost safari sends
   // a path with only one slash for some reason.
@@ -164,19 +169,18 @@ export async function handleApiRequest(request, env) {
   if (!docName.startsWith('https://admin.da.live/')
       && !docName.startsWith('https://admin.da.page/')
       && !docName.startsWith('https://stage-admin.da.live/')
+      && !docName.startsWith('https://api.aem.live/')
       && !docName.startsWith('http://localhost:')) {
     return new Response('unable to get resource', { status: 404 });
   }
 
   // Check if we have the authorization for the room (this is a poor man's solution as right now
   // only da-admin knows).
+  let authActions;
   try {
     const opts = { method: 'HEAD' };
     if (auth) {
       opts.headers = new Headers({ Authorization: auth });
-    }
-    if (xAuthToken) {
-      opts.headers = new Headers({ 'X-Auth-Token': xAuthToken });
     }
 
     const timingBeforeDaAdminHead = Date.now();
@@ -227,12 +231,11 @@ export async function handleApiRequest(request, env) {
       ['X-timing-docroom-get-duration', timingDocRoomGetDuration],
       ['X-auth-actions', authActions],
     ];
+
     if (auth) {
       headers.push(['Authorization', auth]);
     }
-    if (xAuthToken) {
-      headers.push(['X-Auth-Token', xAuthToken]);
-    }
+
     const req = new Request(new URL(docName), { headers });
     // Send the request to the Durable Object. The `fetch()` method of a Durable Object stub has the
     // same signature as the global `fetch()` function, but the request is always sent to the
@@ -342,10 +345,7 @@ export class DocRoom {
         return new Response('expected websocket', { status: 400 });
       }
       const auth = request.headers.get('Authorization');
-      const xAuth = request.headers.get('X-Auth-Token');
-      const authActions = xAuth
-        ? 'read,write' // TODO remove once hlx6 supports X-auth-actions
-        : request.headers.get('X-auth-actions') ?? '';
+      const authActions = 'read,write';
 
       const docName = request.headers.get('X-collab-room');
 
@@ -362,17 +362,22 @@ export class DocRoom {
       const pair = DocRoom.newWebSocketPair();
 
       // We're going to take pair[1] as our end, and return pair[0] to the client.
-      const timingData = await this.handleSession(pair[1], docName, auth || xAuth, authActions);
+      const timingData = await this.handleSession(pair[1], docName, auth, authActions);
       const timingSetupWebSocketDuration = Date.now() - timingBeforeSetupWebsocket;
 
       const reqHeaders = request.headers;
-      const respheaders = new Headers();
-      respheaders.set('X-1-timing-da-admin-head-duration', reqHeaders.get('X-timing-da-admin-head-duration'));
-      respheaders.set('X-2-timing-docroom-get-duration', reqHeaders.get('X-timing-docroom-get-duration'));
-      respheaders.set('X-4-timing-da-admin-get-duration', timingData.get('timingDaAdminGetDuration'));
-      respheaders.set('X-5-timing-read-state-duration', timingData.get('timingReadStateDuration'));
-      respheaders.set('X-7-timing-setup-websocket-duration', timingSetupWebSocketDuration);
-      respheaders.set('X-9-timing-full-duration', Date.now() - reqHeaders.get('X-timing-start'));
+      const respheaders = new Headers({
+        'X-1-timing-da-admin-head-duration': reqHeaders.get('X-timing-da-admin-head-duration'),
+        'X-2-timing-docroom-get-duration': reqHeaders.get('X-timing-docroom-get-duration'),
+        'X-4-timing-da-admin-get-duration': timingData.get('timingDaAdminGetDuration'),
+        'X-5-timing-read-state-duration': timingData.get('timingReadStateDuration'),
+        'X-7-timing-setup-websocket-duration': timingSetupWebSocketDuration,
+        'X-9-timing-full-duration': Date.now() - reqHeaders.get('X-timing-start'),
+      });
+      const protocols = reqHeaders.get('sec-websocket-protocol')?.split(',');
+      if (protocols?.includes('yjs')) {
+        respheaders.set('sec-websocket-protocol', 'yjs');
+      }
 
       // Now we return the other end of the pair to the client.
       return new Response(null, { status: successCode, headers: respheaders, webSocket: pair[0] });
