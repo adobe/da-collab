@@ -213,6 +213,7 @@ export async function handleApiRequest(request, env) {
   if (!docName.startsWith('https://admin.da.live/')
       && !docName.startsWith('https://admin.da.page/')
       && !docName.startsWith('https://stage-admin.da.live/')
+      && !docName.startsWith('https://api.aem.live/')
       && !docName.startsWith('http://localhost:')) {
     return new Response('unable to get resource', { status: 404 });
   }
@@ -410,7 +411,8 @@ export class DocRoom {
       }
       const auth = request.headers.get('Authorization');
       const xAuth = request.headers.get('X-Auth-Token');
-      const authActions = xAuth
+      const isHlx6 = url.hostname === 'api.aem.live';
+      const authActions = isHlx6
         ? 'read,write' // TODO remove once hlx6 supports X-auth-actions
         : request.headers.get('X-auth-actions') ?? '';
 
