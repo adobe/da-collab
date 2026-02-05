@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/adobe/da-collab/compare/v1.1.0...v1.1.1) (2026-02-05)
+
+
+### Bug Fixes
+
+* make issues writable ([c7568b0](https://github.com/adobe/da-collab/commit/c7568b07a6d2d83836c2e66ee6777c2e9a488d9d))
+
 # [1.1.0](https://github.com/adobe/da-collab/compare/v1.0.3...v1.1.0) (2026-01-06)
 
 
