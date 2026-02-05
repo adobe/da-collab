@@ -412,7 +412,7 @@ describe('Collab Test Suite', () => {
       fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
     };
 
-    await aem2doc('<main><div><p>test content</p></div></main>', ydoc);
+    aem2doc('<main><div><p>test content</p></div></main>', ydoc);
 
     const result = await persistence.update(ydoc, '<main><div><p>old content</p></div></main>');
 
@@ -451,7 +451,7 @@ describe('Collab Test Suite', () => {
       fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
     };
 
-    await aem2doc('<main><div><p>content</p></div></main>', ydoc);
+    aem2doc('<main><div><p>content</p></div></main>', ydoc);
 
     // Trigger 412 - should close all connections and remove from global map
     await persistence.update(ydoc, '<main><div><p>old</p></div></main>');
@@ -479,7 +479,7 @@ describe('Collab Test Suite', () => {
       fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
     };
 
-    await aem2doc('<main><div><p>content</p></div></main>', ydoc);
+    aem2doc('<main><div><p>content</p></div></main>', ydoc);
 
     // Before 412, error map should be empty
     const errorMap = ydoc.getMap('error');
@@ -544,7 +544,7 @@ describe('Collab Test Suite', () => {
     assert.equal(updateHandlers.length, 2, 'Should have two update handlers registered');
 
     // Modify document
-    await aem2doc('<main><div><p>modified</p></div></main>', ydoc);
+    aem2doc('<main><div><p>modified</p></div></main>', ydoc);
 
     // Trigger 412 which closes all connections and removes from global map
     await pss.persistence.update(ydoc, '<main><div><p>initial</p></div></main>');
@@ -560,7 +560,7 @@ describe('Collab Test Suite', () => {
     };
 
     // Simulate another update after 412
-    await aem2doc('<main><div><p>another change</p></div></main>', ydoc);
+    aem2doc('<main><div><p>another change</p></div></main>', ydoc);
 
     // Call the debounced update handler
     if (updateHandlers[1]) {
@@ -591,7 +591,7 @@ describe('Collab Test Suite', () => {
       fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
     };
 
-    await aem2doc('<main><div><p>content</p></div></main>', ydoc);
+    aem2doc('<main><div><p>content</p></div></main>', ydoc);
 
     await persistence.update(ydoc, '<main><div><p>old</p></div></main>');
 
@@ -846,7 +846,7 @@ describe('Collab Test Suite', () => {
 
       await pss.persistence.bindState(docName, ydoc, {}, storage);
 
-      await aem2doc('<main><div>newcontent</div></main>', ydoc);
+      aem2doc('<main><div>newcontent</div></main>', ydoc);
 
       assert.equal(2, updObservers.length);
       await updObservers[0]();

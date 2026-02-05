@@ -376,7 +376,7 @@ export const persistence = {
       // this timeout, the ydoc can get confused which may result in duplicated content.
       // eslint-disable-next-line no-console
       console.log('[docroom] Could not be restored, trying to restore from da-admin', docName);
-      setTimeout(async () => {
+      setTimeout(() => {
         if (ydoc === docs.get(docName)) {
           try {
             const rootType = ydoc.getXmlFragment('prosemirror');
@@ -391,7 +391,7 @@ export const persistence = {
             });
 
             // Restore from da-admin
-            await aem2doc(current, ydoc);
+            aem2doc(current, ydoc);
 
             // eslint-disable-next-line no-console
             console.log('[docroom] Restored from da-admin', docName);
