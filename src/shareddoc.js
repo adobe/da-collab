@@ -15,8 +15,9 @@ import * as awarenessProtocol from 'y-protocols/awareness.js';
 import * as encoding from 'lib0/encoding.js';
 import * as decoding from 'lib0/decoding.js';
 import debounce from 'lodash/debounce.js';
-import { aem2doc, doc2aem } from '@da-tools/da-parser';
-import { json2doc, doc2json } from './collab-json.js';
+import {
+  aem2doc, doc2aem, json2doc, doc2json,
+} from '@da-tools/da-parser';
 
 const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
