@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "@cloudflare/workers-types": "4.20251126.0",
-    "@da-tools/da-parser": "^1.1.0",
+    "@da-tools/da-parser": "^1.1.1",
     "lib0": "0.2.114",
     "lodash": "4.17.21",
     "y-protocols": "1.0.6",
