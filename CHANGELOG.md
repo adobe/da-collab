@@ -1,3 +1,10 @@
+## [1.1.2](https://github.com/adobe/da-collab/compare/v1.1.1...v1.1.2) (2026-02-18)
+
+
+### Bug Fixes
+
+* Update to da-parser 1.1.1 to fix alt and title encoding ([#128](https://github.com/adobe/da-collab/issues/128)) ([5cabe4b](https://github.com/adobe/da-collab/commit/5cabe4b543e769d3aad0da3c12d6a823eec8bd7d))
+
 ## [1.1.1](https://github.com/adobe/da-collab/compare/v1.1.0...v1.1.1) (2026-02-05)
 
 
