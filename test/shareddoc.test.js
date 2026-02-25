@@ -312,7 +312,7 @@ describe('Collab Test Suite', () => {
       assert.fail('update should not have happend');
     };
 
-    const result = await pss.persistence.update(mockYDoc, 'Svr content');
+    const result = await pss.persistence.update(mockYDoc, 'Svr content', 'test.html');
     assert.equal(result, 'Svr content');
   });
 
@@ -342,7 +342,7 @@ describe('Collab Test Suite', () => {
       calledCloseCon = true;
     };
 
-    const result = await pss.persistence.update(mockYDoc, 'Svr content');
+    const result = await pss.persistence.update(mockYDoc, 'Svr content', 'test.html');
     assert.equal(result, 'Svr content update');
     assert(called);
     assert(!calledCloseCon);
@@ -378,7 +378,7 @@ describe('Collab Test Suite', () => {
       calledCloseCon = true;
     };
 
-    const result = await pss.persistence.update(mockYDoc, 'Svr content');
+    const result = await pss.persistence.update(mockYDoc, 'Svr content', 'test.html');
     assert.equal(result, 'Svr content');
     assert(called);
     assert(calledCloseCon);
@@ -414,7 +414,7 @@ describe('Collab Test Suite', () => {
 
     aem2doc('<main><div><p>test content</p></div></main>', ydoc);
 
-    const result = await persistence.update(ydoc, '<main><div><p>old content</p></div></main>');
+    const result = await persistence.update(ydoc, '<main><div><p>old content</p></div></main>', 'test.html');
 
     // Should have cleaned storage
     assert.equal(storageDeleteAllCalled.length, 1, 'Should have called storage.deleteAll');
@@ -454,7 +454,7 @@ describe('Collab Test Suite', () => {
     aem2doc('<main><div><p>content</p></div></main>', ydoc);
 
     // Trigger 412 - should close all connections and remove from global map
-    await persistence.update(ydoc, '<main><div><p>old</p></div></main>');
+    await persistence.update(ydoc, '<main><div><p>old</p></div></main>', 'test.html');
 
     assert.equal(ydoc.conns.size, 0, 'All connections should be closed');
     assert(!docs.has(docName), 'Doc should be removed from global map after last connection closes');
@@ -485,7 +485,7 @@ describe('Collab Test Suite', () => {
     const errorMap = ydoc.getMap('error');
     assert.equal(errorMap.size, 0, 'Precondition: error map should be empty');
 
-    await persistence.update(ydoc, '<main><div><p>old</p></div></main>');
+    await persistence.update(ydoc, '<main><div><p>old</p></div></main>', 'test.html');
 
     // After 412, error map should contain error details
     assert(errorMap.size > 0, 'Error map should have entries');
@@ -547,7 +547,7 @@ describe('Collab Test Suite', () => {
     aem2doc('<main><div><p>modified</p></div></main>', ydoc);
 
     // Trigger 412 which closes all connections and removes from global map
-    await pss.persistence.update(ydoc, '<main><div><p>initial</p></div></main>');
+    await pss.persistence.update(ydoc, '<main><div><p>initial</p></div></main>', 'test.html');
 
     assert(!docs.has(docName), 'Doc should be removed from global map');
 
@@ -593,7 +593,7 @@ describe('Collab Test Suite', () => {
 
     aem2doc('<main><div><p>content</p></div></main>', ydoc);
 
-    await persistence.update(ydoc, '<main><div><p>old</p></div></main>');
+    await persistence.update(ydoc, '<main><div><p>old</p></div></main>', 'test.html');
 
     // All connections should be closed (including readonly)
     assert.equal(closeCalled.length, 3, 'Should have closed all 3 connections');
