@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/adobe/da-collab/compare/v1.1.2...v1.2.0) (2026-02-26)
+
+
+### Features
+
+* collab for sheets release ([#130](https://github.com/adobe/da-collab/issues/130)) ([2d79326](https://github.com/adobe/da-collab/commit/2d7932670176611bdfcbfcb6370fc8de12864d8b))
+
 ## [1.1.2](https://github.com/adobe/da-collab/compare/v1.1.1...v1.1.2) (2026-02-18)
 
 
