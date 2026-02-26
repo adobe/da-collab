@@ -13,7 +13,9 @@ import * as Y from 'yjs';
 import assert from 'node:assert';
 import esmock from 'esmock';
 
-import { aem2doc, doc2aem, EMPTY_DOC } from '@da-tools/da-parser';
+import {
+  aem2doc, doc2aem, doc2json, EMPTY_DOC,
+} from '@da-tools/da-parser';
 import {
   closeConn, getYDoc, invalidateFromAdmin, messageListener, persistence,
   readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
@@ -694,7 +696,7 @@ describe('Collab Test Suite', () => {
     assert.deepStrictEqual(['close'], called);
   });
 
-  it('Test bindState read from da-admin', async () => {
+  it('Test bindState read from da-admin for doc', async () => {
     const aem2DocCalled = [];
     const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
     const pss = await esmock('../src/shareddoc.js', {
@@ -731,7 +733,44 @@ describe('Collab Test Suite', () => {
     assert.equal(testYDoc, aem2DocCalled[1]);
   });
 
-  it('Test bindstate read from worker storage', async () => {
+  it('Test bindState read from da-admin for json', async () => {
+    const json2DocCalled = [];
+    const mockJson2Doc = (sc, yd) => json2DocCalled.push(sc, yd);
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': {
+        json2doc: mockJson2Doc,
+      },
+    });
+
+    const docName = 'http://lalala.com/ha/ha/ha.json';
+    const testYDoc = new Y.Doc();
+    testYDoc.daadmin = 'daadmin';
+    const mockConn = {
+      auth: 'myauth',
+      authActions: ['read'],
+    };
+    pss.setYDoc(docName, testYDoc);
+
+    const mockStorage = { list: () => new Map() };
+
+    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    const updated = new Map();
+    pss.persistence.update = async (d, v) => updated.set(d, v);
+
+    assert.equal(0, updated.size, 'Precondition');
+    await pss.persistence.bindState(docName, testYDoc, mockConn, mockStorage);
+
+    assert.equal(0, json2DocCalled.length, 'Precondition, it\'s important to handle the doc setting async');
+
+    // give the async methods a change to finish
+    await wait(1500);
+
+    assert.equal(2, json2DocCalled.length);
+    assert.equal('Get: http://lalala.com/ha/ha/ha.json-myauth-daadmin', json2DocCalled[0]);
+    assert.equal(testYDoc, json2DocCalled[1]);
+  });
+
+  it('Test bindstate read from worker storage for doc', async () => {
     const docName = 'https://admin.da.live/source/foo/bar.html';
 
     // Prepare the (mocked) storage
@@ -765,6 +804,37 @@ describe('Collab Test Suite', () => {
       await persistence.bindState(docName, ydoc, conn, storage);
 
       assert.equal('somevalue', ydoc.getMap('foo').get('someattr'));
+    } finally {
+      persistence.get = savedGet;
+    }
+  });
+
+  it('Test bindstate read from worker storage for json', async () => {
+    const docName = 'https://admin.da.live/source/foo/bar.json';
+
+    // Prepare the (mocked) storage: empty ydoc (no sheets data) so doc2json(ydoc) === '{}'
+    const testDoc = new Y.Doc();
+    const storedYDoc = Y.encodeStateAsUpdate(testDoc);
+    const stored = new Map();
+    stored.set('docstore', storedYDoc);
+    stored.set('doc', docName);
+
+    const ydoc = new Y.Doc();
+    const conn = {};
+    const storage = { list: async () => stored };
+
+    const savedGet = persistence.get;
+    try {
+      // eslint-disable-next-line consistent-return
+      persistence.get = (d) => {
+        if (d === docName) {
+          return '{}';
+        }
+      };
+
+      await persistence.bindState(docName, ydoc, conn, storage);
+
+      assert.strictEqual(doc2json(ydoc), '{}', 'empty ydoc restores as empty JSON');
     } finally {
       persistence.get = savedGet;
     }
