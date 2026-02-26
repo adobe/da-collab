@@ -48,14 +48,48 @@ case "$1" in
     echo "Switched to LOCAL da-parser"
     check_status
 
-    # Remove yjs from da-tools to prevent duplicate Yjs warning
-    # da-parser will use da-collab's yjs instead
-    DA_TOOLS_YJS=$(dirname "$(dirname "$(readlink "node_modules/@da-tools/da-parser")")")/node_modules/yjs
-    if [ -d "$DA_TOOLS_YJS" ]; then
-      echo ""
-      echo "Removing $DA_TOOLS_YJS to prevent duplicate Yjs..."
-      rm -rf "$DA_TOOLS_YJS"
-      echo "Done! da-parser will use da-collab's yjs."
+    # Symlink yjs from da-collab to da-tools to prevent duplicate Yjs warning
+    # This ensures the bundler can resolve yjs while using the same instance
+    # Resolve the symlink to get the absolute path to da-parser, then go up to da-tools
+    LINK_TARGET=$(readlink "node_modules/@da-tools/da-parser")
+    if [ -n "$LINK_TARGET" ]; then
+      # Resolve relative path to absolute path
+      DA_PARSER_DIR=$(cd "$(dirname "node_modules/@da-tools/da-parser")" && cd "$LINK_TARGET" && pwd)
+      DA_TOOLS_DIR=$(dirname "$DA_PARSER_DIR")
+      DA_TOOLS_YJS="$DA_TOOLS_DIR/node_modules/yjs"
+      DA_COLLAB_YJS="$(pwd)/node_modules/yjs"
+      
+      if [ -d "$DA_COLLAB_YJS" ]; then
+        if [ -L "$DA_TOOLS_YJS" ]; then
+          # Already symlinked, check if it points to the right place
+          CURRENT_TARGET=$(readlink "$DA_TOOLS_YJS")
+          if [ "$CURRENT_TARGET" != "$DA_COLLAB_YJS" ]; then
+            echo ""
+            echo "Updating yjs symlink in da-tools..."
+            rm "$DA_TOOLS_YJS"
+            ln -s "$DA_COLLAB_YJS" "$DA_TOOLS_YJS"
+            echo "Done! da-parser will use da-collab's yjs."
+          fi
+        elif [ -d "$DA_TOOLS_YJS" ]; then
+          # Remove the directory and create a symlink instead
+          echo ""
+          echo "Replacing $DA_TOOLS_YJS with symlink to da-collab's yjs..."
+          rm -rf "$DA_TOOLS_YJS"
+          ln -s "$DA_COLLAB_YJS" "$DA_TOOLS_YJS"
+          echo "Done! da-parser will use da-collab's yjs."
+        elif [ ! -e "$DA_TOOLS_YJS" ]; then
+          # Doesn't exist, create symlink
+          echo ""
+          echo "Creating symlink from da-tools to da-collab's yjs..."
+          mkdir -p "$(dirname "$DA_TOOLS_YJS")"
+          ln -s "$DA_COLLAB_YJS" "$DA_TOOLS_YJS"
+          echo "Done! da-parser will use da-collab's yjs."
+        fi
+      else
+        echo ""
+        echo "WARNING: da-collab's yjs not found at $DA_COLLAB_YJS"
+        echo "         Make sure 'npm install' has been run in da-collab."
+      fi
     fi
     ;;
   npm)
@@ -65,8 +99,8 @@ case "$1" in
     echo "Switched to NPM da-parser"
     check_status
     echo ""
-    echo "NOTE: If you removed yjs from da-tools during 'local' mode,"
-    echo "      run 'npm install' in da-tools to restore it."
+    echo "NOTE: If you were using local mode, you may have a yjs symlink in da-tools."
+    echo "      Run 'npm install' in da-tools to restore the real yjs package if needed."
     ;;
   status)
     check_status

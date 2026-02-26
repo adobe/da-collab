@@ -15,7 +15,9 @@ import * as awarenessProtocol from 'y-protocols/awareness.js';
 import * as encoding from 'lib0/encoding.js';
 import * as decoding from 'lib0/decoding.js';
 import debounce from 'lodash/debounce.js';
-import { aem2doc, doc2aem } from '@da-tools/da-parser';
+import {
+  aem2doc, doc2aem, json2doc, doc2json,
+} from '@da-tools/da-parser';
 
 const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
@@ -30,6 +32,12 @@ const messageSync = 0;
 const messageAwareness = 1;
 const MAX_STORAGE_KEYS = 128;
 const MAX_STORAGE_VALUE_SIZE = 131072;
+
+function getDocType(docName) {
+  if (docName.endsWith('.json')) return 'json';
+  if (docName.endsWith('.html')) return 'html';
+  return 'html'; // default
+}
 
 /**
  * Close the WebSocket connection for a document. If there are no connections left, remove
@@ -87,7 +95,7 @@ const send = (doc, conn, m) => {
  * in storeState function.
  * @param {string} docName - The document name
  * @param {TransactionalStorage} storage - The worker transactional storage
- * @returns {Uint8Array | undefined} - The stored state or undefined if not found
+ * @returns {Promise<Uint8Array | undefined>} - The stored state or undefined if not found
  */
 export const readState = async (docName, storage) => {
   const stored = await storage.list();
@@ -202,13 +210,14 @@ export const persistence = {
    * @throws {Error} - If the document cannot be retrieved (including 404)
    */
   get: async (docName, auth, daadmin) => {
+    const docType = getDocType(docName);
     const initalOpts = {};
     if (auth) {
       initalOpts.headers = new Headers({ Authorization: auth });
     }
     const initialReq = await daadmin.fetch(docName, initalOpts);
     if (initialReq.ok) {
-      return initialReq.text();
+      return docType === 'json' ? initialReq.json() : initialReq.text();
     } else {
       // eslint-disable-next-line no-console
       console.error(`[docroom] Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`);
@@ -221,10 +230,11 @@ export const persistence = {
    * @param {WSSharedDoc} ydoc - The Yjs document, which among other things contains the service
    * binding to da-admin.
    * @param {string} content - The content to store
-   * @returns {object} The response from da-admin.
+   * @returns {Promise<object>} The response from da-admin.
    */
   put: async (ydoc, content) => {
-    const blob = new Blob([content], { type: 'text/html' });
+    const mimeType = getDocType(ydoc.name) === 'json' ? 'application/json' : 'text/html';
+    const blob = new Blob([content], { type: mimeType });
 
     const formData = new FormData();
     formData.append('data', blob);
@@ -279,12 +289,13 @@ export const persistence = {
    * @param {WSSharedDoc} ydoc - the ydoc that has been updated.
    * @param {string} current - the current content of the document previously
    * obtained from da-admin
-   * @returns {string} - the new content of the document in da-admin.
+   * @returns {Promise<string>} - the new content of the document in da-admin.
    */
-  update: async (ydoc, current) => {
+  update: async (ydoc, current, docName) => {
+    const docType = getDocType(docName);
     let closeAll = false;
     try {
-      const content = doc2aem(ydoc);
+      const content = docType === 'json' ? doc2json(ydoc) : doc2aem(ydoc);
       if (current !== content) {
         // Only store the document if it was actually changed.
         const { ok, status, statusText } = await persistence.put(ydoc, content);
@@ -330,6 +341,7 @@ export const persistence = {
    * @param {TransactionalStorage} storage - the worker transactional storage object
    */
   bindState: async (docName, ydoc, conn, storage) => {
+    const docType = getDocType(docName);
     let timingReadStateDuration;
 
     // Store storage reference for later use in persistence.update
@@ -356,7 +368,7 @@ export const persistence = {
         // Check if the state from the worker storage is the same as the current state in da-admin.
         // So for example if da-admin doesn't have the doc any more, or if it has been altered in
         // another way, we don't use the state of the worker storage.
-        const fromStorage = doc2aem(ydoc);
+        const fromStorage = docType === 'json' ? doc2json(ydoc) : doc2aem(ydoc);
         if (fromStorage === current) {
           restored = true;
 
@@ -379,22 +391,32 @@ export const persistence = {
       setTimeout(() => {
         if (ydoc === docs.get(docName)) {
           try {
-            const rootType = ydoc.getXmlFragment('prosemirror');
-            // Clear document and maps in a sync transaction
             ydoc.transact(() => {
-              rootType.delete(0, rootType.length);
-              ydoc.share.forEach((type) => {
-                if (type instanceof Y.Map) {
-                  type.clear();
+              if (docType === 'json') {
+                // Clear JSON structure
+                const ysheets = ydoc.getArray('sheets');
+                if (ysheets.length > 0) {
+                  ysheets.delete(0, ysheets.length);
                 }
-              });
+                // restore from da-admin
+                json2doc(current, ydoc);
+              } else {
+                // Clear HTML structure
+                const rootType = ydoc.getXmlFragment('prosemirror');
+                rootType.delete(0, rootType.length);
+                // clear all maps
+                ydoc.share.forEach((type) => {
+                  if (type instanceof Y.Map) {
+                    type.clear();
+                  }
+                });
+                // Restore from da-admin
+                aem2doc(current, ydoc);
+              }
             });
 
-            // Restore from da-admin
-            aem2doc(current, ydoc);
-
             // eslint-disable-next-line no-console
-            console.log('[docroom] Restored from da-admin', docName);
+            console.log('[docroom] Restored from da-admin', docName, docType);
           } catch (error) {
             // eslint-disable-next-line no-console
             console.error('[docroom] Problem restoring state from da-admin', error, current);
@@ -415,7 +437,7 @@ export const persistence = {
       // If we receive an update on the document, store it in da-admin, but debounce it
       // to avoid excessive da-admin calls.
       if (current && ydoc === docs.get(docName)) {
-        current = await persistence.update(ydoc, current);
+        current = await persistence.update(ydoc, current, docName);
       }
     }, 2000, { maxWait: 10000 }));
 
