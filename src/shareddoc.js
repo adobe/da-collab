@@ -560,6 +560,40 @@ export const getYDoc = async (docname, conn, env, storage, timingData, gc = true
 // For testing
 export const setYDoc = (docname, ydoc) => docs.set(docname, ydoc);
 
+/**
+ * Returns true if the Yjs update only touches the 'comments' named type.
+ * Used to allow read-only WebSocket connections to write comment data.
+ * @param {Uint8Array} update
+ * @returns {boolean}
+ */
+export function isCommentOnlyUpdate(update) {
+  try {
+    const testDoc = new Y.Doc({ gc: false });
+    const commentsMap = testDoc.getMap('comments');
+    let onlyComments = true;
+
+    testDoc.on('afterTransaction', (tr) => {
+      tr.changed.forEach((_, type) => {
+        let ancestor = type;
+        let underComments = false;
+        while (ancestor) {
+          if (ancestor === commentsMap) {
+            underComments = true;
+            break;
+          }
+          ancestor = ancestor.parent;
+        }
+        if (!underComments) onlyComments = false;
+      });
+    });
+
+    Y.applyUpdate(testDoc, update);
+    return onlyComments;
+  } catch {
+    return false;
+  }
+}
+
 // This read sync message handles readonly connections
 const readSyncMessage = (decoder, encoder, doc, readOnly, transactionOrigin) => {
   const messageType = decoding.readVarUint(decoder);
@@ -568,10 +602,20 @@ const readSyncMessage = (decoder, encoder, doc, readOnly, transactionOrigin) => 
       syncProtocol.readSyncStep1(decoder, encoder, doc);
       break;
     case syncProtocol.messageYjsSyncStep2:
-      if (!readOnly) syncProtocol.readSyncStep2(decoder, doc, transactionOrigin);
+      if (readOnly) {
+        const update = decoding.readVarUint8Array(decoder);
+        if (isCommentOnlyUpdate(update)) Y.applyUpdate(doc, update, transactionOrigin);
+      } else {
+        syncProtocol.readSyncStep2(decoder, doc, transactionOrigin);
+      }
       break;
     case syncProtocol.messageYjsUpdate:
-      if (!readOnly) syncProtocol.readUpdate(decoder, doc, transactionOrigin);
+      if (readOnly) {
+        const update = decoding.readVarUint8Array(decoder);
+        if (isCommentOnlyUpdate(update)) Y.applyUpdate(doc, update, transactionOrigin);
+      } else {
+        syncProtocol.readUpdate(decoder, doc, transactionOrigin);
+      }
       break;
     default:
       throw new Error('Unknown message type');

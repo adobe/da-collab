@@ -17,7 +17,7 @@ import {
   aem2doc, doc2aem, doc2json, EMPTY_DOC,
 } from '@da-tools/da-parser';
 import {
-  closeConn, getYDoc, invalidateFromAdmin, messageListener, persistence,
+  closeConn, getYDoc, invalidateFromAdmin, isCommentOnlyUpdate, messageListener, persistence,
   readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
 
@@ -1532,5 +1532,33 @@ describe('Collab Test Suite', () => {
       globalThis.setTimeout = savedSetTimeout;
       persistence.get = savedGet;
     }
+  });
+});
+
+describe('isCommentOnlyUpdate', () => {
+  it('returns true when update only touches comments map', () => {
+    const ydoc = new Y.Doc();
+    const comments = ydoc.getMap('comments');
+    let capturedUpdate;
+    ydoc.on('update', (update) => {
+      capturedUpdate = update;
+    });
+    comments.set('test-id', new Y.Map());
+    assert.equal(isCommentOnlyUpdate(capturedUpdate), true);
+  });
+
+  it('returns false when update touches prosemirror fragment', () => {
+    const ydoc = new Y.Doc();
+    const pm = ydoc.getXmlFragment('prosemirror');
+    let capturedUpdate;
+    ydoc.on('update', (update) => {
+      capturedUpdate = update;
+    });
+    pm.insert(0, [new Y.XmlText('hello')]);
+    assert.equal(isCommentOnlyUpdate(capturedUpdate), false);
+  });
+
+  it('returns false for an empty or invalid update', () => {
+    assert.equal(isCommentOnlyUpdate(new Uint8Array()), false);
   });
 });
