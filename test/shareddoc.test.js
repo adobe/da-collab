@@ -17,7 +17,7 @@ import {
   aem2doc, doc2aem, doc2json, EMPTY_DOC,
 } from '@da-tools/da-parser';
 import {
-  closeConn, getYDoc, invalidateFromAdmin, messageListener, persistence,
+  closeConn, getYDoc, invalidateFromAdmin, isExpectedPlatformEvent, messageListener, persistence,
   readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
 
@@ -1532,5 +1532,22 @@ describe('Collab Test Suite', () => {
       globalThis.setTimeout = savedSetTimeout;
       persistence.get = savedGet;
     }
+  });
+
+  it('isExpectedPlatformEvent returns true for Cloudflare deployment event', () => {
+    const err = new Error('This script has been upgraded');
+    assert.equal(true, isExpectedPlatformEvent(err));
+  });
+
+  it('isExpectedPlatformEvent returns true for DO live migration event', () => {
+    const err = new Error('cannot access storage because object has moved to a different machine');
+    assert.equal(true, isExpectedPlatformEvent(err));
+  });
+
+  it('isExpectedPlatformEvent returns false for regular errors', () => {
+    assert.equal(false, isExpectedPlatformEvent(new Error('some unexpected error')));
+    assert.equal(false, isExpectedPlatformEvent(new Error()));
+    assert.equal(false, isExpectedPlatformEvent(null));
+    assert.equal(false, isExpectedPlatformEvent(undefined));
   });
 });
