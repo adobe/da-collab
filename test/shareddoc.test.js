@@ -950,7 +950,6 @@ describe('Collab Test Suite', () => {
     const conn = {};
     const called = [];
     const storage = {
-      deleteAll: async () => called.push('deleteAll'),
       list: async () => new Map(),
       put: async (obj) => called.push(obj),
     };
@@ -976,11 +975,10 @@ describe('Collab Test Suite', () => {
       await updObservers[1]();
 
       // check that it was stored
-      assert.equal(2, called.length);
-      assert.equal('deleteAll', called[0]);
+      assert.equal(1, called.length);
 
       const ydoc2 = new Y.Doc();
-      Y.applyUpdate(ydoc2, called[1].docstore);
+      Y.applyUpdate(ydoc2, called[0].docstore);
 
       assert.equal('bcd', ydoc2.getMap('yah').get('a'));
       assert(doc2aem(ydoc2).includes('myinitial'));
@@ -1402,38 +1400,59 @@ describe('Collab Test Suite', () => {
     const docName = 'https://some.where/far/away.html';
     const state = new Uint8Array([1, 2, 3, 4, 5]);
 
-    const called = [];
+    const putCalled = [];
+    const deleteCalled = [];
     const storage = {
-      deleteAll: async () => called.push('deleteAll'),
-      put: (obj) => called.push(obj),
+      put: (obj) => putCalled.push(obj),
+      delete: async (key) => deleteCalled.push(key),
     };
 
     await storeState(docName, state, storage, 10);
 
-    assert.equal(2, called.length);
-    assert.equal('deleteAll', called[0]);
-    assert.deepStrictEqual(state, called[1].docstore);
-    assert.equal(docName, called[1].doc);
+    assert.equal(1, putCalled.length);
+    assert.deepStrictEqual(state, putCalled[0].docstore);
+    assert.equal(docName, putCalled[0].doc);
+    assert.equal(0, deleteCalled.length, 'non-chunked store should not call delete');
   });
 
   it('storeState chunked', async () => {
     const state = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
-    const called = [];
+    const putCalled = [];
+    const deleteCalled = [];
     const storage = {
-      deleteAll: async () => called.push('deleteAll'),
-      put: (obj) => called.push(obj),
+      put: (obj) => putCalled.push(obj),
+      delete: async (key) => deleteCalled.push(key),
     };
 
     await storeState('somedoc', state, storage, 4);
 
-    assert.equal(2, called.length);
-    assert.equal('deleteAll', called[0]);
-    assert.equal(3, called[1].chunks);
-    assert.equal('somedoc', called[1].doc);
-    assert.deepStrictEqual(new Uint8Array([1, 2, 3, 4]), called[1].chunk_0);
-    assert.deepStrictEqual(new Uint8Array([5, 6, 7, 8]), called[1].chunk_1);
-    assert.deepStrictEqual(new Uint8Array([9]), called[1].chunk_2);
+    assert.equal(1, putCalled.length);
+    assert.equal(3, putCalled[0].chunks);
+    assert.equal('somedoc', putCalled[0].doc);
+    assert.deepStrictEqual(new Uint8Array([1, 2, 3, 4]), putCalled[0].chunk_0);
+    assert.deepStrictEqual(new Uint8Array([5, 6, 7, 8]), putCalled[0].chunk_1);
+    assert.deepStrictEqual(new Uint8Array([9]), putCalled[0].chunk_2);
+    assert.deepStrictEqual(['docstore'], deleteCalled, 'chunked store must delete old docstore key');
+  });
+
+  it('storeState error is caught and logged when storage fails', async () => {
+    const docName = 'https://some.where/fail.html';
+    const state = new Uint8Array([1, 2, 3]);
+    const storageError = new Error('cannot access storage because object has moved to a different machine');
+    const storage = {
+      put: async () => { throw storageError; },
+      delete: async () => {},
+    };
+
+    const logged = [];
+    const savedError = console.error;
+    console.error = (...args) => logged.push(args);
+    try {
+      await assert.rejects(() => storeState(docName, state, storage), storageError);
+    } finally {
+      console.error = savedError;
+    }
   });
 
   it('Test showError', () => {
@@ -1476,7 +1495,6 @@ describe('Collab Test Suite', () => {
     const conn = {};
     const called = [];
     const storage = {
-      deleteAll: async () => called.push('deleteAll'),
       list: async () => new Map(),
       put: async (obj) => called.push(obj),
     };
@@ -1518,11 +1536,10 @@ describe('Collab Test Suite', () => {
       await updObservers[1]();
 
       // check that it was stored
-      assert.equal(2, called.length);
-      assert.equal('deleteAll', called[0]);
+      assert.equal(1, called.length);
 
       const ydoc2 = new Y.Doc();
-      Y.applyUpdate(ydoc2, called[1].docstore);
+      Y.applyUpdate(ydoc2, called[0].docstore);
 
       assert.equal('bcd', ydoc2.getMap('yah').get('a'));
       const doc2aemStr2 = doc2aem(ydoc2).replace(/\n\s*/g, '');
