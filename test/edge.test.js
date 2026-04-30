@@ -419,7 +419,9 @@ describe('Worker test suite', () => {
       persistence.bindState = async () => {
         // eslint-disable-next-line max-len
         await sleep(1); // the real bindState is async and we only reset the failed doc in the promise
-        throw new Error('unable to get resource - status: 404');
+        const err = new Error('unable to get resource - status: 404');
+        err.status = 404;
+        throw err;
       };
 
       const wsp0 = {};
@@ -444,7 +446,83 @@ describe('Worker test suite', () => {
 
       const resp = await dr.fetch(req, {}, 306);
 
-      // Should return 500 error when bindState fails
+      // Should propagate the 404 status from the error
+      assert.equal(404, resp.status);
+      assert.equal('unable to get resource - status: 404', await resp.text());
+    } finally {
+      DocRoom.newWebSocketPair = savedNWSP;
+      persistence.bindState = savedBS;
+    }
+  });
+
+  it('Test DocRoom fetch propagates 401 when auth check fails', async () => {
+    const savedNWSP = DocRoom.newWebSocketPair;
+    const savedBS = persistence.bindState;
+
+    try {
+      persistence.bindState = async () => {
+        await sleep(1);
+        const err = new Error('unable to get resource - status: 401');
+        err.status = 401;
+        throw err;
+      };
+
+      const wsp0 = {};
+      const wsp1 = {
+        accept() {},
+        addEventListener() {},
+        close() {},
+      };
+      DocRoom.newWebSocketPair = () => [wsp0, wsp1];
+
+      const daadmin = { fetch: async () => ({ ok: true }) };
+      const dr = new DocRoom({ storage: null }, { daadmin });
+      const headers = new Map();
+      headers.set('Upgrade', 'websocket');
+      headers.set('X-collab-room', 'http://foo.bar/test.html');
+      headers.set('X-auth-actions', 'read=allow,write=allow');
+
+      const req = { headers, url: 'http://localhost:4711/' };
+
+      const resp = await dr.fetch(req, {}, 306);
+
+      assert.equal(401, resp.status);
+      assert.equal('unable to get resource - status: 401', await resp.text());
+    } finally {
+      DocRoom.newWebSocketPair = savedNWSP;
+      persistence.bindState = savedBS;
+    }
+  });
+
+  it('Test DocRoom fetch returns 500 for unexpected errors', async () => {
+    const savedNWSP = DocRoom.newWebSocketPair;
+    const savedBS = persistence.bindState;
+
+    try {
+      persistence.bindState = async () => {
+        await sleep(1);
+        throw new Error('some unexpected internal error');
+      };
+
+      const wsp0 = {};
+      const wsp1 = {
+        accept() {},
+        addEventListener() {},
+        close() {},
+      };
+      DocRoom.newWebSocketPair = () => [wsp0, wsp1];
+
+      const daadmin = { fetch: async () => ({ ok: true }) };
+      const dr = new DocRoom({ storage: null }, { daadmin });
+      const headers = new Map();
+      headers.set('Upgrade', 'websocket');
+      headers.set('X-collab-room', 'http://foo.bar/test.html');
+      headers.set('X-auth-actions', 'read=allow,write=allow');
+
+      const req = { headers, url: 'http://localhost:4711/' };
+
+      const resp = await dr.fetch(req, {}, 306);
+
       assert.equal(500, resp.status);
       assert.equal('Internal Server Error', await resp.text());
     } finally {

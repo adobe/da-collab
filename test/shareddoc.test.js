@@ -186,6 +186,7 @@ describe('Collab Test Suite', () => {
       assert.fail('Should have thrown an error');
     } catch (error) {
       assert(error.toString().includes('unable to get resource - status: 404'));
+      assert.equal(404, error.status, 'Error must carry the HTTP status for upstream propagation');
     }
   });
 
@@ -205,6 +206,33 @@ describe('Collab Test Suite', () => {
     } catch (error) {
       // expected
       assert(error.toString().includes('unable to get resource - status: 500'));
+      assert.equal(500, error.status, 'Error must carry the HTTP status for upstream propagation');
+    }
+  });
+
+  it('Test persistence get 401 carries status for propagation', async () => {
+    const daadmin = {
+      fetch: async () => ({ ok: false, status: 401, statusText: 'Unauthorized' }),
+    };
+    try {
+      await persistence.get('foo', 'auth', daadmin);
+      assert.fail('Should have thrown an error');
+    } catch (error) {
+      assert.equal(401, error.status, 'Error must carry 401 status');
+      assert(error.message.includes('401'));
+    }
+  });
+
+  it('Test persistence get 403 carries status for propagation', async () => {
+    const daadmin = {
+      fetch: async () => ({ ok: false, status: 403, statusText: 'Forbidden' }),
+    };
+    try {
+      await persistence.get('foo', 'auth', daadmin);
+      assert.fail('Should have thrown an error');
+    } catch (error) {
+      assert.equal(403, error.status, 'Error must carry 403 status');
+      assert(error.message.includes('403'));
     }
   });
 
