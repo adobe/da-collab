@@ -322,9 +322,18 @@ describe('Worker test suite', () => {
         headers,
         url: 'http://localhost:4711/',
       };
+
+      // fetch returns the 101 immediately — accept() is synchronous, but the
+      // addEventListener calls happen in the async setupWSConnection.
       const resp = await dr.fetch(req, {}, 306);
       assert.equal(resp.headers.get('sec-websocket-protocol'), undefined);
       assert.equal(306 /* fabricated websocket response code */, resp.status);
+
+      // accept() must have happened before the response was returned
+      assert(wspCalled.includes('accept'), 'accept must be called before returning 101');
+
+      // Wait for the async session setup to complete
+      await sleep(10);
 
       assert.equal(1, bindCalled.length);
       assert.equal('http://foo.bar/1/2/3.html', bindCalled[0].nm);
@@ -333,14 +342,15 @@ describe('Worker test suite', () => {
       assert.equal('au123', wsp1.auth);
 
       const acceptIdx = wspCalled.indexOf('accept');
-      const alMessIdx = wspCalled.indexOf('addEventListener message');
       const alClsIdx = wspCalled.indexOf('addEventListener close');
+      const alMessIdx = wspCalled.indexOf('addEventListener message');
       const clsIdx = wspCalled.indexOf('close');
 
       assert(acceptIdx >= 0);
-      assert(alMessIdx > acceptIdx);
-      assert(alClsIdx > alMessIdx);
-      assert(clsIdx > alClsIdx);
+      // close listener must be registered before message listener (early cleanup on disconnect)
+      assert(alClsIdx > acceptIdx, 'close listener registered after accept');
+      assert(alMessIdx > alClsIdx, 'message listener registered after close listener');
+      assert(clsIdx > alMessIdx, 'close called after listeners registered');
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
       persistence.bindState = savedBS;
@@ -417,16 +427,16 @@ describe('Worker test suite', () => {
     try {
       // Mock bindState to throw 404 error (simulating document deleted between auth and bindState)
       persistence.bindState = async () => {
-        // eslint-disable-next-line max-len
-        await sleep(1); // the real bindState is async and we only reset the failed doc in the promise
+        await sleep(1);
         throw new Error('unable to get resource - status: 404');
       };
 
+      const closeCalled = [];
       const wsp0 = {};
       const wsp1 = {
         accept() {},
         addEventListener() {},
-        close() {},
+        close(...args) { closeCalled.push(args); },
       };
       DocRoom.newWebSocketPair = () => [wsp0, wsp1];
 
@@ -437,19 +447,40 @@ describe('Worker test suite', () => {
       headers.set('X-collab-room', 'http://foo.bar/test.html');
       headers.set('X-auth-actions', 'read=allow,write=allow');
 
-      const req = {
-        headers,
-        url: 'http://localhost:4711/',
-      };
+      const req = { headers, url: 'http://localhost:4711/' };
 
+      // fetch returns 101 immediately; setup fails asynchronously
       const resp = await dr.fetch(req, {}, 306);
+      assert.equal(306, resp.status, 'fetch must return 101 immediately, not wait for setup');
 
-      // Should return 500 error when bindState fails
-      assert.equal(500, resp.status);
-      assert.equal('Internal Server Error', await resp.text());
+      // Wait for the async setup to fail
+      await sleep(20);
+
+      assert.equal(1, closeCalled.length, 'server socket must be closed on setup failure');
+      assert.equal(1011, closeCalled[0][0]);
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
       persistence.bindState = savedBS;
+    }
+  });
+
+  it('Test DocRoom fetch synchronous error returns 500', async () => {
+    const savedNWSP = DocRoom.newWebSocketPair;
+    try {
+      DocRoom.newWebSocketPair = () => {
+        throw new Error('pair creation failed');
+      };
+
+      const dr = new DocRoom({ storage: null }, {});
+      const headers = new Map();
+      headers.set('Upgrade', 'websocket');
+      headers.set('X-collab-room', 'http://foo.bar/test.html');
+
+      const req = { headers, url: 'http://localhost:4711/' };
+      const resp = await dr.fetch(req);
+      assert.equal(500, resp.status);
+    } finally {
+      DocRoom.newWebSocketPair = savedNWSP;
     }
   });
 
@@ -458,19 +489,17 @@ describe('Worker test suite', () => {
     const savedBS = persistence.bindState;
 
     try {
-      // Mock bindState to throw an exception
-      persistence.bindState = async (nm, d, c) => {
-        // eslint-disable-next-line max-len
-        await sleep(1); // the real bindState is async and we only reset the failed doc in the promise
+      persistence.bindState = async () => {
+        await sleep(1);
         throw new Error('WebSocket setup error');
       };
 
-      // Mock WebSocketPair to return valid objects
+      const closeCalled = [];
       const wsp0 = {};
       const wsp1 = {
         accept() {},
         addEventListener() {},
-        close() {},
+        close(...args) { closeCalled.push(args); },
       };
       DocRoom.newWebSocketPair = () => [wsp0, wsp1];
 
@@ -481,15 +510,15 @@ describe('Worker test suite', () => {
       headers.set('Authorization', 'au123');
       headers.set('X-collab-room', 'http://foo.bar/test.html');
 
-      const req = {
-        headers,
-        url: 'http://localhost:4711/',
-      };
-      const resp = await dr.fetch(req);
+      const req = { headers, url: 'http://localhost:4711/' };
 
-      // Should return 500 error due to exception in WebSocket setup
-      assert.equal(500, resp.status);
-      assert.equal('Internal Server Error', await resp.text());
+      const resp = await dr.fetch(req, {}, 306);
+      assert.equal(306, resp.status, 'fetch must return 101 immediately');
+
+      await sleep(20);
+
+      assert.equal(1, closeCalled.length, 'server socket must be closed on setup failure');
+      assert.equal(1011, closeCalled[0][0]);
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
       persistence.bindState = savedBS;
