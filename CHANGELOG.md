@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/adobe/da-collab/compare/v1.2.0...v1.2.1) (2026-04-30)
+
+
+### Bug Fixes
+
+* propagate HTTP status from persistence.get through DocRoom.fetch response ([#134](https://github.com/adobe/da-collab/issues/134)) ([eac219d](https://github.com/adobe/da-collab/commit/eac219d553991b8de7e9ae2812a7508173a028f2))
+
 # [1.2.0](https://github.com/adobe/da-collab/compare/v1.1.2...v1.2.0) (2026-02-26)
 
 
