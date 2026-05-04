@@ -390,8 +390,23 @@ export const persistence = {
       // this timeout, the ydoc can get confused which may result in duplicated content.
       // eslint-disable-next-line no-console
       console.log('[docroom] Could not be restored, trying to restore from da-admin', docName);
+
+      // Snapshot the state vector before yielding. If the client sends any Y.js update
+      // before the timeout fires (e.g. an image whose FPO was replaced just before a
+      // 412-triggered reconnect cleared worker storage), the state vector will advance
+      // and we must NOT overwrite with the stale da-admin snapshot.
+      const svBefore = Y.encodeStateVector(ydoc);
+
       setTimeout(() => {
         if (ydoc === docs.get(docName)) {
+          const svAfter = Y.encodeStateVector(ydoc);
+          const clientHasUpdated = svBefore.length !== svAfter.length
+            || svBefore.some((v, i) => v !== svAfter[i]);
+          if (clientHasUpdated) {
+            // eslint-disable-next-line no-console
+            console.log('[docroom] Skipping da-admin reload: client state received', docName);
+            return;
+          }
           try {
             ydoc.transact(() => {
               if (docType === 'json') {

@@ -798,6 +798,78 @@ describe('Collab Test Suite', () => {
     assert.equal(testYDoc, json2DocCalled[1]);
   });
 
+  it('Test bindState skips da-admin reload when client sends Y.js update before timeout', async () => {
+    const aem2DocCalled = [];
+    const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': {
+        aem2doc: mockAem2Doc,
+      },
+    });
+
+    const docName = 'http://lalala.com/ha/ha/ha.html';
+    const testYDoc = new Y.Doc();
+    testYDoc.daadmin = 'daadmin';
+    const mockConn = {
+      auth: 'myauth',
+      authActions: ['read'],
+    };
+    pss.setYDoc(docName, testYDoc);
+
+    const mockStorage = { list: () => new Map() };
+    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    pss.persistence.update = async () => {};
+
+    await pss.persistence.bindState(docName, testYDoc, mockConn, mockStorage);
+
+    assert.equal(0, aem2DocCalled.length, 'Precondition');
+
+    // Simulate a client Y.js update arriving before the 1-second timeout fires.
+    // This represents the client pushing its authoritative state (e.g. an image
+    // whose FPO was just replaced) to a freshly reconnected DO whose storage was cleared.
+    testYDoc.transact(() => {
+      testYDoc.getMap('clientstate').set('img', 'real-url.png');
+    });
+
+    await wait(1500);
+
+    assert.equal(0, aem2DocCalled.length, 'da-admin reload should be skipped when the client sent state first');
+  });
+
+  it('Test bindState still reloads from da-admin when no client update arrives before timeout', async () => {
+    const aem2DocCalled = [];
+    const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': {
+        aem2doc: mockAem2Doc,
+      },
+    });
+
+    const docName = 'http://lalala.com/ha/ha/ha2.html';
+    const testYDoc = new Y.Doc();
+    testYDoc.daadmin = 'daadmin';
+    const mockConn = {
+      auth: 'myauth',
+      authActions: ['read'],
+    };
+    pss.setYDoc(docName, testYDoc);
+
+    const mockStorage = { list: () => new Map() };
+    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    pss.persistence.update = async () => {};
+
+    await pss.persistence.bindState(docName, testYDoc, mockConn, mockStorage);
+
+    assert.equal(0, aem2DocCalled.length, 'Precondition — reload is deferred');
+
+    // No client update fired; the timeout must proceed and restore from da-admin.
+    await wait(1500);
+
+    assert.equal(2, aem2DocCalled.length, 'da-admin reload must still run when no client state arrived');
+    assert.equal('Get: http://lalala.com/ha/ha/ha2.html-myauth-daadmin', aem2DocCalled[0]);
+    assert.equal(testYDoc, aem2DocCalled[1]);
+  });
+
   it('Test bindstate read from worker storage for doc', async () => {
     const docName = 'https://admin.da.live/source/foo/bar.html';
 
