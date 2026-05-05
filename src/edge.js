@@ -9,7 +9,9 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
-import { invalidateFromAdmin, isExpectedPlatformEvent, setupWSConnection } from './shareddoc.js';
+import {
+  invalidateFromAdmin, logError, setupWSConnection,
+} from './shareddoc.js';
 
 /**
  * This is the Edge Worker, built using Durable Objects!
@@ -199,9 +201,7 @@ export async function handleApiRequest(request, env) {
     const daActions = initialReq.headers.get('X-da-actions') ?? '';
     [, authActions] = daActions.split('=');
   } catch (err) {
-    // eslint-disable-next-line no-console
-    const log = isExpectedPlatformEvent(err) ? console.log : console.error;
-    log(`[worker] Unable to handle API request ${docName}`, err);
+    logError(err, `[worker] Unable to handle API request ${docName}`, err);
     return new Response('unable to get resource', { status: 500 });
   }
 
@@ -239,9 +239,7 @@ export async function handleApiRequest(request, env) {
     // object, regardless of the hostname in the request's URL.
     return await roomObject.fetch(req);
   } catch (err) {
-    // eslint-disable-next-line no-console
-    const log = isExpectedPlatformEvent(err) ? console.log : console.error;
-    log(`[worker] Error fetching the doc from the room ${docName}`, err);
+    logError(err, `[worker] Error fetching the doc from the room ${docName}`, err);
     return new Response('unable to get resource', { status: 500 });
   }
 }
@@ -371,9 +369,7 @@ export class DocRoom {
 
       return new Response(null, { status: successCode, headers: respheaders, webSocket: client });
     } catch (err) {
-      // eslint-disable-next-line no-console
-      const log = isExpectedPlatformEvent(err) ? console.log : console.error;
-      log('[docroom] Error while fetching', err);
+      logError(err, '[docroom] Error while fetching', err);
       const status = err.status ?? 500;
       const body = status === 500 ? 'Internal Server Error' : err.message;
       return new Response(body, { status });
@@ -402,9 +398,7 @@ export class DocRoom {
     try {
       await setupWSConnection(webSocket, docName, this.env, this.storage);
     } catch (err) {
-      // eslint-disable-next-line no-console
-      const log = isExpectedPlatformEvent(err) ? console.log : console.error;
-      log('[docroom] Error during session setup', docName, err);
+      logError(err, '[docroom] Error during session setup', docName, err);
       try {
         webSocket.close(1011, err.message);
       } catch (_) { /* already closed */ }

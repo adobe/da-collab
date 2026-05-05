@@ -33,6 +33,11 @@ export const isExpectedPlatformEvent = (err) => {
     || msg.includes('cannot access storage because object has moved to a different machine');
 };
 
+export const logError = (err, ...args) => {
+  // eslint-disable-next-line no-console
+  (isExpectedPlatformEvent(err) ? console.log : console.error)(...args);
+};
+
 // disable gc when using snapshots!
 const gcEnabled = false;
 
@@ -66,9 +71,7 @@ export const closeConn = (doc, conn) => {
         /* c8 ignore start */
       } catch (err) {
         // we can ignore an exception here, closing the connection will remove the awareness states
-        // eslint-disable-next-line no-console
-        const log = isExpectedPlatformEvent(err) ? console.log : console.error;
-        log('[docroom] Error while removing awareness states', err);
+        logError(err, '[docroom] Error while removing awareness states', err);
         /* c8 ignore end */
       }
 
@@ -82,9 +85,7 @@ export const closeConn = (doc, conn) => {
   } catch (e) {
     /* c8 ignore start */
     // we can ignore an exception here, connection will be closed anyway
-    // eslint-disable-next-line no-console
-    const log = isExpectedPlatformEvent(e) ? console.log : console.error;
-    log('[docroom] Error while closing connection', e);
+    logError(e, '[docroom] Error while closing connection', e);
     /* c8 ignore end */
   }
 };
@@ -97,9 +98,7 @@ const send = (doc, conn, m) => {
     }
     conn.send(m, (err) => err != null && closeConn(doc, conn));
   } catch (e) {
-    // eslint-disable-next-line no-console
-    const log = isExpectedPlatformEvent(e) ? console.log : console.error;
-    log('[docroom] Error while sending message', e);
+    logError(e, '[docroom] Error while sending message', e);
     closeConn(doc, conn);
   }
 };
@@ -393,9 +392,7 @@ export const persistence = {
         }
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
-      const log = isExpectedPlatformEvent(error) ? console.log : console.error;
-      log('[docroom] Problem restoring state from worker storage', error);
+      logError(error, '[docroom] Problem restoring state from worker storage', error);
       if (!isExpectedPlatformEvent(error)) showError(ydoc, error);
     }
 
@@ -435,9 +432,7 @@ export const persistence = {
             // eslint-disable-next-line no-console
             console.log('[docroom] Restored from da-admin', docName, docType);
           } catch (error) {
-            // eslint-disable-next-line no-console
-            const log = isExpectedPlatformEvent(error) ? console.log : console.error;
-            log('[docroom] Problem restoring state from da-admin', error, current);
+            logError(error, '[docroom] Problem restoring state from da-admin', error, current);
             if (!isExpectedPlatformEvent(error)) showError(ydoc, error);
           }
         }
@@ -627,9 +622,7 @@ export const messageListener = (conn, doc, message) => {
         break;
     }
   } catch (err) {
-    // eslint-disable-next-line no-console
-    const log = isExpectedPlatformEvent(err) ? console.log : console.error;
-    log('[docroom] messageListener - Message', err.stack, err);
+    logError(err, '[docroom] messageListener - Message', err.stack, err);
     if (!isExpectedPlatformEvent(err)) showError(doc, err);
   }
 };
@@ -701,9 +694,7 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
       send(doc, conn, encoding.toUint8Array(encoder));
     }
   } catch (err) {
-    // eslint-disable-next-line no-console
-    const log = isExpectedPlatformEvent(err) ? console.log : console.error;
-    log('[docroom] Error while setting up WSConnection', docName, err);
+    logError(err, '[docroom] Error while setting up WSConnection', docName, err);
   }
 
   return timingData;
