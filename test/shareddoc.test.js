@@ -1050,7 +1050,7 @@ describe('Collab Test Suite', () => {
     const conn = {};
     const called = [];
     const storage = {
-      deleteAll: async () => called.push('deleteAll'),
+      get: async () => undefined,
       list: async () => new Map(),
       put: async (obj) => called.push(obj),
     };
@@ -1076,11 +1076,10 @@ describe('Collab Test Suite', () => {
       await updObservers[1]();
 
       // check that it was stored
-      assert.equal(2, called.length);
-      assert.equal('deleteAll', called[0]);
+      assert.equal(1, called.length);
 
       const ydoc2 = new Y.Doc();
-      Y.applyUpdate(ydoc2, called[1].docstore);
+      Y.applyUpdate(ydoc2, called[0].docstore);
 
       assert.equal('bcd', ydoc2.getMap('yah').get('a'));
       assert(doc2aem(ydoc2).includes('myinitial'));
@@ -1502,38 +1501,119 @@ describe('Collab Test Suite', () => {
     const docName = 'https://some.where/far/away.html';
     const state = new Uint8Array([1, 2, 3, 4, 5]);
 
-    const called = [];
+    const putCalled = [];
+    const deleteCalled = [];
     const storage = {
-      deleteAll: async () => called.push('deleteAll'),
-      put: (obj) => called.push(obj),
+      get: async () => undefined,
+      put: (obj) => putCalled.push(obj),
+      delete: async (key) => deleteCalled.push(key),
     };
 
     await storeState(docName, state, storage, 10);
 
-    assert.equal(2, called.length);
-    assert.equal('deleteAll', called[0]);
-    assert.deepStrictEqual(state, called[1].docstore);
-    assert.equal(docName, called[1].doc);
+    assert.equal(1, putCalled.length);
+    assert.deepStrictEqual(state, putCalled[0].docstore);
+    assert.equal(docName, putCalled[0].doc);
+    assert.equal(0, deleteCalled.length, 'non-chunked store should not call delete when no old chunks exist');
   });
 
   it('storeState chunked', async () => {
     const state = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
-    const called = [];
+    const putCalled = [];
+    const deleteCalled = [];
     const storage = {
-      deleteAll: async () => called.push('deleteAll'),
-      put: (obj) => called.push(obj),
+      get: async () => undefined,
+      put: (obj) => putCalled.push(obj),
+      delete: async (key) => deleteCalled.push(key),
     };
 
     await storeState('somedoc', state, storage, 4);
 
-    assert.equal(2, called.length);
-    assert.equal('deleteAll', called[0]);
-    assert.equal(3, called[1].chunks);
-    assert.equal('somedoc', called[1].doc);
-    assert.deepStrictEqual(new Uint8Array([1, 2, 3, 4]), called[1].chunk_0);
-    assert.deepStrictEqual(new Uint8Array([5, 6, 7, 8]), called[1].chunk_1);
-    assert.deepStrictEqual(new Uint8Array([9]), called[1].chunk_2);
+    assert.equal(1, putCalled.length);
+    assert.equal(3, putCalled[0].chunks);
+    assert.equal('somedoc', putCalled[0].doc);
+    assert.deepStrictEqual(new Uint8Array([1, 2, 3, 4]), putCalled[0].chunk_0);
+    assert.deepStrictEqual(new Uint8Array([5, 6, 7, 8]), putCalled[0].chunk_1);
+    assert.deepStrictEqual(new Uint8Array([9]), putCalled[0].chunk_2);
+    assert.deepStrictEqual(['docstore'], deleteCalled, 'chunked store must delete old docstore key');
+  });
+
+  it('storeState large-to-small cleans up old chunk keys', async () => {
+    const docName = 'https://some.where/far/away.html';
+    const state = new Uint8Array([1, 2, 3]); // small, fits in single docstore
+
+    const putCalled = [];
+    const deleteCalled = [];
+    const storage = {
+      get: async (key) => (key === 'chunks' ? 3 : undefined),
+      put: (obj) => putCalled.push(obj),
+      delete: async (key) => deleteCalled.push(key),
+    };
+
+    await storeState(docName, state, storage, 10);
+
+    assert.equal(1, putCalled.length);
+    assert.deepStrictEqual(state, putCalled[0].docstore);
+    assert.equal(1, deleteCalled.length, 'should call delete once for stale chunk keys');
+    assert.deepStrictEqual(
+      ['chunks', 'chunk_0', 'chunk_1', 'chunk_2'],
+      deleteCalled[0],
+      'should delete chunks count key and all chunk data keys',
+    );
+  });
+
+  it('storeState large-to-smaller-large cleans up extra chunk keys', async () => {
+    // 20 bytes: with chunkSize=6 → 4 chunks, with chunkSize=4 → 5 chunks
+    const state = new Uint8Array(Array.from({ length: 20 }, (_, i) => i + 1));
+
+    const putCalled = [];
+    const deleteCalled = [];
+    const storage = {
+      get: async (key) => (key === 'chunks' ? 5 : undefined), // previously had 5 chunks
+      put: (obj) => putCalled.push(obj),
+      delete: async (key) => deleteCalled.push(key),
+    };
+
+    await storeState('somedoc', state, storage, 4); // chunkSize=4 → 5 chunks for 20 bytes
+
+    // state.length=20, chunkSize=4 → exactly 5 chunks (same as before, no extras to delete)
+    // Use chunkSize=6 to get 4 chunks (ceil(20/6)=4), so old chunk_4 must be deleted
+    const putCalled2 = [];
+    const deleteCalled2 = [];
+    const storage2 = {
+      get: async (key) => (key === 'chunks' ? 5 : undefined),
+      put: (obj) => putCalled2.push(obj),
+      delete: async (key) => deleteCalled2.push(key),
+    };
+
+    await storeState('somedoc', state, storage2, 6); // chunkSize=6 → 4 chunks (chunk_0..chunk_3)
+
+    assert.equal(1, putCalled2.length);
+    assert.equal(4, putCalled2[0].chunks);
+    // delete should be called for docstore (no docstore) and for extra chunk_4
+    const allDeleted = deleteCalled2.flat ? deleteCalled2.flat() : [].concat(...deleteCalled2);
+    assert.ok(allDeleted.includes('chunk_4'), 'must delete stale chunk_4 when doc shrank from 5 to 4 chunks');
+  });
+
+  it('storeState error is caught and logged when storage fails', async () => {
+    const docName = 'https://some.where/fail.html';
+    const state = new Uint8Array([1, 2, 3]);
+    const storageError = new Error('cannot access storage because object has moved to a different machine');
+    const storage = {
+      get: async () => undefined,
+      put: async () => { throw storageError; },
+      delete: async () => {},
+    };
+
+    const logged = [];
+    const savedError = console.error;
+    console.error = (...args) => logged.push(args);
+    try {
+      await assert.rejects(() => storeState(docName, state, storage), storageError);
+    } finally {
+      console.error = savedError;
+    }
   });
 
   it('Test showError', () => {
@@ -1576,7 +1656,7 @@ describe('Collab Test Suite', () => {
     const conn = {};
     const called = [];
     const storage = {
-      deleteAll: async () => called.push('deleteAll'),
+      get: async () => undefined,
       list: async () => new Map(),
       put: async (obj) => called.push(obj),
     };
@@ -1618,11 +1698,10 @@ describe('Collab Test Suite', () => {
       await updObservers[1]();
 
       // check that it was stored
-      assert.equal(2, called.length);
-      assert.equal('deleteAll', called[0]);
+      assert.equal(1, called.length);
 
       const ydoc2 = new Y.Doc();
-      Y.applyUpdate(ydoc2, called[1].docstore);
+      Y.applyUpdate(ydoc2, called[0].docstore);
 
       assert.equal('bcd', ydoc2.getMap('yah').get('a'));
       const doc2aemStr2 = doc2aem(ydoc2).replace(/\n\s*/g, '');

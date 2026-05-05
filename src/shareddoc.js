@@ -155,11 +155,15 @@ export const readState = async (docName, storage) => {
  * @param {number} chunkSize - The chunk size
  */
 export const storeState = async (docName, state, storage, chunkSize = MAX_STORAGE_VALUE_SIZE) => {
-  await storage.deleteAll();
+  const oldChunkCount = await storage.get('chunks');
 
   let serialized;
   if (state.byteLength < chunkSize) {
     serialized = { docstore: state };
+    if (oldChunkCount !== undefined) {
+      const staleKeys = ['chunks', ...Array.from({ length: oldChunkCount }, (_, i) => `chunk_${i}`)];
+      await storage.delete(staleKeys);
+    }
   } else {
     serialized = {};
     let j = 0;
@@ -174,6 +178,11 @@ export const storeState = async (docName, state, storage, chunkSize = MAX_STORAG
     }
 
     serialized.chunks = j;
+    await storage.delete('docstore');
+    if (oldChunkCount !== undefined && oldChunkCount > j) {
+      const extraKeys = Array.from({ length: oldChunkCount - j }, (_, i) => `chunk_${j + i}`);
+      await storage.delete(extraKeys);
+    }
   }
   serialized.doc = docName;
 
@@ -446,7 +455,12 @@ export const persistence = {
     ydoc.on('update', async () => {
       // Whenever we receive an update on the document store it in the local storage
       if (ydoc === docs.get(docName)) { // make sure this ydoc is still active
-        storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
+        try {
+          await storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('[docroom] Failed to persist state to storage', docName, err);
+        }
       }
     });
 
