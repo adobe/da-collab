@@ -387,7 +387,7 @@ export class DocRoom {
    * @param {string} auth - The authorization header
    * @param {string} authActions
    */
-  handleSession(webSocket, docName, auth, authActions) {
+  async handleSession(webSocket, docName, auth, authActions) {
     webSocket.accept();
     // eslint-disable-next-line no-param-reassign
     webSocket.auth = auth;
@@ -399,16 +399,15 @@ export class DocRoom {
     console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${auth
       ? auth.substring(0, auth.indexOf(' ')) : 'none'})`);
 
-    // Run session setup asynchronously so the 101 response is returned immediately.
-    // This ensures Cloudflare records a known ("ok") outcome for this fetch event even
-    // when the client disconnects while the document is still loading.
-    setupWSConnection(webSocket, docName, this.env, this.storage).catch((err) => {
+    try {
+      await setupWSConnection(webSocket, docName, this.env, this.storage);
+    } catch (err) {
       // eslint-disable-next-line no-console
       const log = isExpectedPlatformEvent(err) ? console.log : console.error;
       log('[docroom] Error during session setup', docName, err);
       try {
         webSocket.close(1011, err.message);
       } catch (_) { /* already closed */ }
-    });
+    }
   }
 }
