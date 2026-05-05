@@ -168,11 +168,15 @@ export const readState = async (docName, storage) => {
  * @param {number} chunkSize - The chunk size
  */
 export const storeState = async (docName, state, storage, chunkSize = MAX_STORAGE_VALUE_SIZE) => {
-  await storage.deleteAll();
+  const oldChunkCount = await storage.get('chunks');
 
   let serialized;
   if (state.byteLength < chunkSize) {
     serialized = { docstore: state };
+    if (oldChunkCount !== undefined) {
+      const staleKeys = ['chunks', ...Array.from({ length: oldChunkCount }, (_, i) => `chunk_${i}`)];
+      await storage.delete(staleKeys);
+    }
   } else {
     serialized = {};
     let j = 0;
@@ -187,6 +191,11 @@ export const storeState = async (docName, state, storage, chunkSize = MAX_STORAG
     }
 
     serialized.chunks = j;
+    await storage.delete('docstore');
+    if (oldChunkCount !== undefined && oldChunkCount > j) {
+      const extraKeys = Array.from({ length: oldChunkCount - j }, (_, i) => `chunk_${j + i}`);
+      await storage.delete(extraKeys);
+    }
   }
   serialized.doc = docName;
 
@@ -402,8 +411,23 @@ export const persistence = {
       // this timeout, the ydoc can get confused which may result in duplicated content.
       // eslint-disable-next-line no-console
       console.log('[docroom] Could not be restored, trying to restore from da-admin', docName);
+
+      // Snapshot the state vector before yielding. If the client sends any Y.js update
+      // before the timeout fires (e.g. an image whose FPO was replaced just before a
+      // 412-triggered reconnect cleared worker storage), the state vector will advance
+      // and we must NOT overwrite with the stale da-admin snapshot.
+      const svBefore = Y.encodeStateVector(ydoc);
+
       setTimeout(() => {
         if (ydoc === docs.get(docName)) {
+          const svAfter = Y.encodeStateVector(ydoc);
+          const clientHasUpdated = svBefore.length !== svAfter.length
+            || svBefore.some((v, i) => v !== svAfter[i]);
+          if (clientHasUpdated) {
+            // eslint-disable-next-line no-console
+            console.log('[docroom] Skipping da-admin reload: client state received', docName);
+            return;
+          }
           try {
             ydoc.transact(() => {
               if (docType === 'json') {
@@ -442,7 +466,12 @@ export const persistence = {
     ydoc.on('update', async () => {
       // Whenever we receive an update on the document store it in the local storage
       if (ydoc === docs.get(docName)) { // make sure this ydoc is still active
-        storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
+        try {
+          await storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('[docroom] Failed to persist state to storage', docName, err);
+        }
       }
     });
 
