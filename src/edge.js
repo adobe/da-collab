@@ -9,7 +9,9 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
-import { invalidateFromAdmin, setupWSConnection } from './shareddoc.js';
+import {
+  invalidateFromAdmin, logError, setupWSConnection,
+} from './shareddoc.js';
 
 /**
  * This is the Edge Worker, built using Durable Objects!
@@ -199,8 +201,7 @@ export async function handleApiRequest(request, env) {
     const daActions = initialReq.headers.get('X-da-actions') ?? '';
     [, authActions] = daActions.split('=');
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[worker] Unable to handle API request ${docName}`, err);
+    logError(err, `[worker] Unable to handle API request ${docName}`, err);
     return new Response('unable to get resource', { status: 500 });
   }
 
@@ -238,8 +239,7 @@ export async function handleApiRequest(request, env) {
     // object, regardless of the hostname in the request's URL.
     return await roomObject.fetch(req);
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`[worker] Error fetching the doc from the room ${docName}`, err);
+    logError(err, `[worker] Error fetching the doc from the room ${docName}`, err);
     return new Response('unable to get resource', { status: 500 });
   }
 }
@@ -348,37 +348,28 @@ export class DocRoom {
         return new Response('expected docName', { status: 400 });
       }
 
-      const timingBeforeSetupWebsocket = Date.now();
       // To accept the WebSocket request, we create a WebSocketPair (which is like a socketpair,
       // i.e. two WebSockets that talk to each other), we return one end of the pair in the
       // response, and we operate on the other end. Note that this API is not part of the
       // Fetch API standard; unfortunately, the Fetch API / Service Workers specs do not define
       // any way to act as a WebSocket server today.
-      const pair = DocRoom.newWebSocketPair();
+      const [client, server] = DocRoom.newWebSocketPair();
 
-      // We're going to take pair[1] as our end, and return pair[0] to the client.
-      const timingData = await this.handleSession(pair[1], docName, auth, authActions);
-      const timingSetupWebSocketDuration = Date.now() - timingBeforeSetupWebsocket;
+      this.handleSession(server, docName, auth, authActions);
 
       const reqHeaders = request.headers;
       const respheaders = new Headers({
         'X-1-timing-da-admin-head-duration': reqHeaders.get('X-timing-da-admin-head-duration'),
         'X-2-timing-docroom-get-duration': reqHeaders.get('X-timing-docroom-get-duration'),
-        'X-4-timing-da-admin-get-duration': timingData.get('timingDaAdminGetDuration'),
-        'X-5-timing-read-state-duration': timingData.get('timingReadStateDuration'),
-        'X-7-timing-setup-websocket-duration': timingSetupWebSocketDuration,
-        'X-9-timing-full-duration': Date.now() - reqHeaders.get('X-timing-start'),
       });
       const protocols = reqHeaders.get('sec-websocket-protocol')?.split(',');
       if (protocols?.includes('yjs')) {
         respheaders.set('sec-websocket-protocol', 'yjs');
       }
 
-      // Now we return the other end of the pair to the client.
-      return new Response(null, { status: successCode, headers: respheaders, webSocket: pair[0] });
+      return new Response(null, { status: successCode, headers: respheaders, webSocket: client });
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[docroom] Error while fetching', err);
+      logError(err, '[docroom] Error while fetching', err);
       const status = err.status ?? 500;
       const body = status === 500 ? 'Internal Server Error' : err.message;
       return new Response(body, { status });
@@ -393,21 +384,24 @@ export class DocRoom {
    * @param {string} authActions
    */
   async handleSession(webSocket, docName, auth, authActions) {
-    // Accept our end of the WebSocket. This tells the runtime that we'll be terminating the
-    // WebSocket in JavaScript, not sending it elsewhere.
     webSocket.accept();
     // eslint-disable-next-line no-param-reassign
     webSocket.auth = auth;
-
     if (!authActions.split(',').includes('write')) {
       // eslint-disable-next-line no-param-reassign
       webSocket.readOnly = true;
     }
     // eslint-disable-next-line no-console
-    console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${webSocket.auth
-      ? webSocket.auth.substring(0, webSocket.auth.indexOf(' ')) : 'none'})`);
+    console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${auth
+      ? auth.substring(0, auth.indexOf(' ')) : 'none'})`);
 
-    const timingData = await setupWSConnection(webSocket, docName, this.env, this.storage);
-    return timingData;
+    try {
+      await setupWSConnection(webSocket, docName, this.env, this.storage);
+    } catch (err) {
+      logError(err, '[docroom] Error during session setup', docName, err);
+      try {
+        webSocket.close(1011, err.message);
+      } catch (_) { /* already closed */ }
+    }
   }
 }

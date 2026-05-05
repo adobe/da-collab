@@ -22,6 +22,22 @@ import {
 const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
 
+/**
+ * Returns true for Cloudflare platform events that are expected during normal operation
+ * (deployments, DO live migrations) and should not be treated as errors.
+ * @param {Error} err
+ */
+export const isExpectedPlatformEvent = (err) => {
+  const msg = err?.message ?? '';
+  return msg.includes('This script has been upgraded')
+    || msg.includes('cannot access storage because object has moved to a different machine');
+};
+
+export const logError = (err, ...args) => {
+  // eslint-disable-next-line no-console
+  (isExpectedPlatformEvent(err) ? console.log : console.error)(...args);
+};
+
 // disable gc when using snapshots!
 const gcEnabled = false;
 
@@ -55,8 +71,7 @@ export const closeConn = (doc, conn) => {
         /* c8 ignore start */
       } catch (err) {
         // we can ignore an exception here, closing the connection will remove the awareness states
-        // eslint-disable-next-line no-console
-        console.error('[docroom] Error while removing awareness states', err);
+        logError(err, '[docroom] Error while removing awareness states', err);
         /* c8 ignore end */
       }
 
@@ -70,8 +85,7 @@ export const closeConn = (doc, conn) => {
   } catch (e) {
     /* c8 ignore start */
     // we can ignore an exception here, connection will be closed anyway
-    // eslint-disable-next-line no-console
-    console.error('[docroom] Error while closing connection', e);
+    logError(e, '[docroom] Error while closing connection', e);
     /* c8 ignore end */
   }
 };
@@ -84,8 +98,7 @@ const send = (doc, conn, m) => {
     }
     conn.send(m, (err) => err != null && closeConn(doc, conn));
   } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error('[docroom] Error while sending message', e);
+    logError(e, '[docroom] Error while sending message', e);
     closeConn(doc, conn);
   }
 };
@@ -388,9 +401,8 @@ export const persistence = {
         }
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('[docroom] Problem restoring state from worker storage', error);
-      showError(ydoc, error);
+      logError(error, '[docroom] Problem restoring state from worker storage', error);
+      if (!isExpectedPlatformEvent(error)) showError(ydoc, error);
     }
 
     if (!restored && current) {
@@ -444,9 +456,8 @@ export const persistence = {
             // eslint-disable-next-line no-console
             console.log('[docroom] Restored from da-admin', docName, docType);
           } catch (error) {
-            // eslint-disable-next-line no-console
-            console.error('[docroom] Problem restoring state from da-admin', error, current);
-            showError(ydoc, error);
+            logError(error, '[docroom] Problem restoring state from da-admin', error, current);
+            if (!isExpectedPlatformEvent(error)) showError(ydoc, error);
           }
         }
       }, 1000);
@@ -580,6 +591,9 @@ export const getYDoc = async (docname, conn, env, storage, timingData, gc = true
       timings.forEach((v, k) => timingData.set(k, v));
     }
   } catch (e) {
+    // Remove the connection before destroy to prevent the awareness broadcast
+    // (triggered by destroy) from calling send() → closeConn() on this conn.
+    doc.conns.delete(conn);
     // ensure to cleanup event handlers and timers
     doc.destroy();
     docs.delete(docname);
@@ -637,9 +651,8 @@ export const messageListener = (conn, doc, message) => {
         break;
     }
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('[docroom] messageListener - Message', err.stack, err);
-    showError(doc, err);
+    logError(err, '[docroom] messageListener - Message', err.stack, err);
+    if (!isExpectedPlatformEvent(err)) showError(doc, err);
   }
 };
 
@@ -680,16 +693,19 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
 
   // eslint-disable-next-line no-param-reassign
   conn.binaryType = 'arraybuffer';
+
+  // Register close listener BEFORE any async operation so cleanup always fires,
+  // even if the client disconnects while the document is still loading.
+  conn.addEventListener('close', () => {
+    const doc = docs.get(docName);
+    if (doc) closeConn(doc, conn);
+  });
+
   // get doc, initialize if it does not exist yet
   const doc = await getYDoc(docName, conn, env, storage, timingData, true);
 
   // listen and reply to events
   conn.addEventListener('message', (message) => messageListener(conn, doc, new Uint8Array(message.data)));
-
-  // Check if connection is still alive
-  conn.addEventListener('close', () => {
-    closeConn(doc, conn);
-  });
   // put the following in a variables in a block so the interval handlers don't keep in in
   // scope
   try {
@@ -707,8 +723,7 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
       send(doc, conn, encoding.toUint8Array(encoder));
     }
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('[docroom] Error while setting up WSConnection', docName, err);
+    logError(err, '[docroom] Error while setting up WSConnection', docName, err);
   }
 
   return timingData;
