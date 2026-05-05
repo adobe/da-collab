@@ -1,3 +1,10 @@
+## [1.2.4](https://github.com/adobe/da-collab/compare/v1.2.3...v1.2.4) (2026-05-05)
+
+
+### Bug Fixes
+
+* demote expected platform events to info and eliminate unknown worker outcomes ([#135](https://github.com/adobe/da-collab/issues/135)) ([f72ff4b](https://github.com/adobe/da-collab/commit/f72ff4b33e6092863236672bb1d894022300f96e))
+
 ## [1.2.3](https://github.com/adobe/da-collab/compare/v1.2.2...v1.2.3) (2026-05-05)
 
 
