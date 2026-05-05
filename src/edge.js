@@ -374,7 +374,9 @@ export class DocRoom {
       // eslint-disable-next-line no-console
       const log = isExpectedPlatformEvent(err) ? console.log : console.error;
       log('[docroom] Error while fetching', err);
-      return new Response('Internal Server Error', { status: 500 });
+      const status = err.status ?? 500;
+      const body = status === 500 ? 'Internal Server Error' : err.message;
+      return new Response(body, { status });
     }
   }
 

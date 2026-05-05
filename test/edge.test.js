@@ -427,8 +427,11 @@ describe('Worker test suite', () => {
     try {
       // Mock bindState to throw 404 error (simulating document deleted between auth and bindState)
       persistence.bindState = async () => {
-        await sleep(1);
-        throw new Error('unable to get resource - status: 404');
+        // eslint-disable-next-line max-len
+        await sleep(1); // the real bindState is async and we only reset the failed doc in the promise
+        const err = new Error('unable to get resource - status: 404');
+        err.status = 404;
+        throw err;
       };
 
       const closeCalled = [];
