@@ -221,7 +221,9 @@ export const persistence = {
     } else {
       // eslint-disable-next-line no-console
       console.error(`[docroom] Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`);
-      throw new Error(`unable to get resource - status: ${initialReq.status}`);
+      const err = new Error(`unable to get resource - status: ${initialReq.status}`);
+      err.status = initialReq.status;
+      throw err;
     }
   },
 
