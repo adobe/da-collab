@@ -357,28 +357,7 @@ export class DocRoom {
       // any way to act as a WebSocket server today.
       const [client, server] = DocRoom.newWebSocketPair();
 
-      server.accept();
-      // eslint-disable-next-line no-param-reassign
-      server.auth = auth;
-      if (!authActions.split(',').includes('write')) {
-        // eslint-disable-next-line no-param-reassign
-        server.readOnly = true;
-      }
-      // eslint-disable-next-line no-console
-      console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${auth
-        ? auth.substring(0, auth.indexOf(' ')) : 'none'})`);
-
-      // Run session setup asynchronously so the 101 response is returned immediately.
-      // This ensures Cloudflare records a known ("ok") outcome for this fetch event even
-      // when the client disconnects while the document is still loading.
-      setupWSConnection(server, docName, this.env, this.storage).catch((err) => {
-        // eslint-disable-next-line no-console
-        const log = isExpectedPlatformEvent(err) ? console.log : console.error;
-        log('[docroom] Error during session setup', docName, err);
-        try {
-          server.close(1011, err.message);
-        } catch (_) { /* already closed */ }
-      });
+      this.handleSession(server, docName, auth, authActions);
 
       const reqHeaders = request.headers;
       const respheaders = new Headers({
@@ -397,5 +376,37 @@ export class DocRoom {
       log('[docroom] Error while fetching', err);
       return new Response('Internal Server Error', { status: 500 });
     }
+  }
+
+  /**
+   * Implements our WebSocket-based protocol.
+   * @param {WebSocket} webSocket - The WebSocket connection to the client
+   * @param {string} docName - The document name
+   * @param {string} auth - The authorization header
+   * @param {string} authActions
+   */
+  handleSession(webSocket, docName, auth, authActions) {
+    webSocket.accept();
+    // eslint-disable-next-line no-param-reassign
+    webSocket.auth = auth;
+    if (!authActions.split(',').includes('write')) {
+      // eslint-disable-next-line no-param-reassign
+      webSocket.readOnly = true;
+    }
+    // eslint-disable-next-line no-console
+    console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${auth
+      ? auth.substring(0, auth.indexOf(' ')) : 'none'})`);
+
+    // Run session setup asynchronously so the 101 response is returned immediately.
+    // This ensures Cloudflare records a known ("ok") outcome for this fetch event even
+    // when the client disconnects while the document is still loading.
+    setupWSConnection(webSocket, docName, this.env, this.storage).catch((err) => {
+      // eslint-disable-next-line no-console
+      const log = isExpectedPlatformEvent(err) ? console.log : console.error;
+      log('[docroom] Error during session setup', docName, err);
+      try {
+        webSocket.close(1011, err.message);
+      } catch (_) { /* already closed */ }
+    });
   }
 }
