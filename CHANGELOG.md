@@ -1,3 +1,10 @@
+## [1.2.3](https://github.com/adobe/da-collab/compare/v1.2.2...v1.2.3) (2026-05-05)
+
+
+### Bug Fixes
+
+* avoid storage.deleteAll() in storeState to prevent Cloudflare DO reset bug ([#133](https://github.com/adobe/da-collab/issues/133)) ([4ebbddc](https://github.com/adobe/da-collab/commit/4ebbddc51048109ceb96e212d1d9397cdd9787ee))
+
 ## [1.2.2](https://github.com/adobe/da-collab/compare/v1.2.1...v1.2.2) (2026-05-05)
 
 
