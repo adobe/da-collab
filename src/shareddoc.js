@@ -155,9 +155,15 @@ export const readState = async (docName, storage) => {
  * @param {number} chunkSize - The chunk size
  */
 export const storeState = async (docName, state, storage, chunkSize = MAX_STORAGE_VALUE_SIZE) => {
+  const oldChunkCount = await storage.get('chunks');
+
   let serialized;
   if (state.byteLength < chunkSize) {
     serialized = { docstore: state };
+    if (oldChunkCount !== undefined) {
+      const staleKeys = ['chunks', ...Array.from({ length: oldChunkCount }, (_, i) => `chunk_${i}`)];
+      await storage.delete(staleKeys);
+    }
   } else {
     serialized = {};
     let j = 0;
@@ -172,8 +178,11 @@ export const storeState = async (docName, state, storage, chunkSize = MAX_STORAG
     }
 
     serialized.chunks = j;
-    // readState() prefers docstore over chunks — remove it to avoid stale data
     await storage.delete('docstore');
+    if (oldChunkCount !== undefined && oldChunkCount > j) {
+      const extraKeys = Array.from({ length: oldChunkCount - j }, (_, i) => `chunk_${j + i}`);
+      await storage.delete(extraKeys);
+    }
   }
   serialized.doc = docName;
 
