@@ -379,7 +379,9 @@ export class DocRoom {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[docroom] Error while fetching', err);
-      return new Response('Internal Server Error', { status: 500 });
+      const status = err.status ?? 500;
+      const body = status === 500 ? 'Internal Server Error' : err.message;
+      return new Response(body, { status });
     }
   }
 
