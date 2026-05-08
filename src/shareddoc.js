@@ -756,9 +756,11 @@ export const invalidateFromAdmin = async (docName) => {
  * @param {string} docName - The name of the document
  * @param {object} env - The durable object environment object
  * @param {TransactionalStorage} storage - The worker transactional storage object
+ * @param {boolean} hibernation - When true, skip event listener registration (CF Hibernation API
+ *   handles message/close routing via class methods instead of addEventListener).
  * @returns {Promise<void>} - The return value of this
  */
-export const setupWSConnection = async (conn, docName, env, storage) => {
+export const setupWSConnection = async (conn, docName, env, storage, hibernation = false) => {
   const timingData = new Map();
 
   // eslint-disable-next-line no-param-reassign
@@ -766,20 +768,25 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
   // eslint-disable-next-line no-param-reassign
   conn.connectedAt = Date.now();
 
-  // Register close listener BEFORE any async operation so cleanup always fires,
-  // even if the client disconnects while the document is still loading.
-  conn.addEventListener('close', () => {
-    const doc = docs.get(docName);
-    if (doc) {
-      closeConn(doc, conn);
-    }
-  });
+  if (!hibernation) {
+    // Register close listener BEFORE any async operation so cleanup always fires,
+    // even if the client disconnects while the document is still loading.
+    conn.addEventListener('close', () => {
+      const doc = docs.get(docName);
+      if (doc) {
+        closeConn(doc, conn);
+      }
+    });
+  }
 
   // get doc, initialize if it does not exist yet
   const doc = await getYDoc(docName, conn, env, storage, timingData, true);
 
-  // listen and reply to events
-  conn.addEventListener('message', (message) => messageListener(conn, doc, new Uint8Array(message.data)));
+  if (!hibernation) {
+    // listen and reply to events
+    conn.addEventListener('message', (message) => messageListener(conn, doc, new Uint8Array(message.data)));
+  }
+
   // put the following in a variables in a block so the interval handlers don't keep in in
   // scope
   try {
@@ -801,4 +808,37 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
   }
 
   return timingData;
+};
+
+/**
+ * Handle an incoming WebSocket message from the Cloudflare Hibernation API.
+ * Re-establishes the Yjs session if the DO was hibernated (doc not in memory).
+ * @param {WebSocket} conn - The WebSocket connection
+ * @param {string} docName - The document name
+ * @param {object} env - The durable object environment
+ * @param {TransactionalStorage} storage - The durable object storage
+ * @param {ArrayBuffer|string} message - The raw message from the WebSocket
+ */
+export const handleWebSocketMessage = async (conn, docName, env, storage, message) => {
+  let doc = docs.get(docName);
+  if (!doc) {
+    // DO was hibernated; re-establish Yjs state without re-registering event listeners
+    await setupWSConnection(conn, docName, env, storage, true);
+    doc = docs.get(docName);
+  }
+  if (doc) {
+    messageListener(conn, doc, new Uint8Array(message));
+  }
+};
+
+/**
+ * Handle a WebSocket close event from the Cloudflare Hibernation API.
+ * @param {WebSocket} conn - The WebSocket connection
+ * @param {string} docName - The document name
+ */
+export const handleWebSocketClose = (conn, docName) => {
+  const doc = docs.get(docName);
+  if (doc) {
+    closeConn(doc, conn);
+  }
 };

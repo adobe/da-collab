@@ -10,6 +10,7 @@
  * governing permissions and limitations under the License.
  */
 import {
+  handleWebSocketClose, handleWebSocketMessage,
   invalidateFromAdmin, logError, setupWSConnection,
 } from './shareddoc.js';
 
@@ -310,6 +311,9 @@ export class DocRoom {
     // `env` is our environment bindings (discussed earlier).
     this.env = env;
     this.id = controller?.id?.toString() || `no-controller-${new Date().getTime()}`;
+
+    // `ctx` is the Durable Object controller, used for the Hibernation API
+    this.ctx = controller;
   }
 
   /**
@@ -389,7 +393,23 @@ export class DocRoom {
       // any way to act as a WebSocket server today.
       const [client, server] = DocRoom.newWebSocketPair();
 
-      this.handleSession(server, docName, auth, authActions);
+      // Register with CF Hibernation API: the DO can sleep between messages
+      // without losing its WebSocket connections.
+      this.ctx.acceptWebSocket(server);
+      server.serializeAttachment({ docName, auth, authActions });
+
+      server.auth = auth;
+      if (!authActions.split(',').includes('write')) {
+        // eslint-disable-next-line no-param-reassign
+        server.readOnly = true;
+      }
+
+      // eslint-disable-next-line no-console
+      console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${
+        auth ? auth.substring(0, auth.indexOf(' ')) : 'none'})`);
+
+      // Kick off async document initialization; response is returned immediately.
+      this.initSession(server, docName);
 
       const reqHeaders = request.headers;
       const respheaders = new Headers({
@@ -411,31 +431,58 @@ export class DocRoom {
   }
 
   /**
-   * Implements our WebSocket-based protocol.
+   * Async document initialization, called after CF Hibernation API has accepted the WebSocket.
+   * Auth properties must already be set on webSocket before calling this.
    * @param {WebSocket} webSocket - The WebSocket connection to the client
    * @param {string} docName - The document name
-   * @param {string} auth - The authorization header
-   * @param {string} authActions
    */
-  async handleSession(webSocket, docName, auth, authActions) {
-    webSocket.accept();
-    // eslint-disable-next-line no-param-reassign
-    webSocket.auth = auth;
-    if (!authActions.split(',').includes('write')) {
-      // eslint-disable-next-line no-param-reassign
-      webSocket.readOnly = true;
-    }
-    // eslint-disable-next-line no-console
-    console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${auth
-      ? auth.substring(0, auth.indexOf(' ')) : 'none'})`);
-
+  async initSession(webSocket, docName) {
     try {
-      await setupWSConnection(webSocket, docName, this.env, this.storage);
+      await setupWSConnection(webSocket, docName, this.env, this.storage, true);
     } catch (err) {
       logError(err, '[docroom] Error during session setup', docName, err);
       try {
         webSocket.close(1011, err.message);
       } catch (_) { /* already closed */ }
     }
+  }
+
+  /**
+   * CF Hibernation API: called when a message arrives on a hibernated WebSocket.
+   * Re-hydrates the Yjs session if the DO was evicted since the last message.
+   * @param {WebSocket} webSocket
+   * @param {ArrayBuffer|string} message
+   */
+  async webSocketMessage(webSocket, message) {
+    const { docName, auth, authActions } = webSocket.deserializeAttachment();
+    // eslint-disable-next-line no-param-reassign
+    webSocket.auth = auth;
+    if (!authActions.split(',').includes('write')) {
+      // eslint-disable-next-line no-param-reassign
+      webSocket.readOnly = true;
+    }
+    await handleWebSocketMessage(webSocket, docName, this.env, this.storage, message);
+  }
+
+  /**
+   * CF Hibernation API: called when a hibernated WebSocket closes.
+   * @param {WebSocket} webSocket
+   */
+  // eslint-disable-next-line class-methods-use-this
+  webSocketClose(webSocket) {
+    const { docName } = webSocket.deserializeAttachment();
+    handleWebSocketClose(webSocket, docName);
+  }
+
+  /**
+   * CF Hibernation API: called when a hibernated WebSocket encounters an error.
+   * @param {WebSocket} webSocket
+   * @param {Error} error
+   */
+  // eslint-disable-next-line class-methods-use-this
+  webSocketError(webSocket, error) {
+    logError(error, '[docroom] WebSocket error', error);
+    const { docName } = webSocket.deserializeAttachment();
+    handleWebSocketClose(webSocket, docName);
   }
 }
