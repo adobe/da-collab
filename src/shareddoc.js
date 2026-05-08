@@ -389,16 +389,14 @@ export const persistence = {
       if (stored && stored.length > 0) {
         Y.applyUpdate(ydoc, stored);
 
-        // Check if the state from the worker storage is the same as the current state in da-admin.
-        // So for example if da-admin doesn't have the doc any more, or if it has been altered in
-        // another way, we don't use the state of the worker storage.
-        const fromStorage = docType === 'json' ? doc2json(ydoc) : doc2aem(ydoc);
-        if (fromStorage === current) {
-          restored = true;
+        // Worker storage holds the most-recent Yjs state, including edits that have not yet
+        // been flushed to da-admin (e.g. because the debounced PUT was still in flight when the
+        // DO was evicted). Always trust storage over da-admin; the syncadmin/deleteadmin APIs
+        // are responsible for clearing stale storage when da-admin is modified externally.
+        restored = true;
 
-          // eslint-disable-next-line no-console
-          console.log('[docroom] Restored from worker persistence', docName);
-        }
+        // eslint-disable-next-line no-console
+        console.log('[docroom] Restored from worker persistence', docName);
       }
     } catch (error) {
       logError(error, '[docroom] Problem restoring state from worker storage', error);

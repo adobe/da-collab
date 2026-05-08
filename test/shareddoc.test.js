@@ -940,6 +940,69 @@ describe('Collab Test Suite', () => {
     }
   });
 
+  it('Test bindstate trusts storage when storage is newer than da-admin', async () => {
+    // Scenario: user added a new paragraph; PUT to da-admin failed (debounce/412).
+    // Worker storage has the new paragraph; da-admin doesn't.
+    // bindState must preserve the storage content, NOT overwrite with stale da-admin.
+    const docName = 'https://admin.da.live/source/foo/newer.html';
+
+    const daadminContent = `
+<body>
+  <header></header>
+  <main><div><p>First paragraph</p></div></main>
+  <footer></footer>
+</body>`;
+
+    const storageContent = `
+<body>
+  <header></header>
+  <main><div><p>First paragraph</p><p>Second paragraph added later</p></div></main>
+  <footer></footer>
+</body>`;
+
+    // Build Yjs storage bytes from storageContent
+    const storageDoc = new Y.Doc();
+    aem2doc(storageContent, storageDoc);
+    const storedYDoc = Y.encodeStateAsUpdate(storageDoc);
+    const stored = new Map();
+    stored.set('docstore', storedYDoc);
+    stored.set('doc', docName);
+
+    const ydoc = new Y.Doc();
+    setYDoc(docName, ydoc);
+
+    const storage = { list: async () => stored };
+
+    const savedGet = persistence.get;
+    const savedSetTimeout = globalThis.setTimeout;
+    try {
+      persistence.get = async () => daadminContent;
+
+      let timerCallback;
+      globalThis.setTimeout = (f) => {
+        timerCallback = f; // capture but do not run yet
+      };
+
+      await persistence.bindState(docName, ydoc, {}, storage);
+
+      // Storage content must be in ydoc immediately after bind
+      assert(doc2aem(ydoc).includes('Second paragraph added later'), 'ydoc must contain storage content after bind');
+
+      // Timer must NOT be registered when storage is authoritative
+      assert(!timerCallback, 'da-admin reload timer must not be registered when storage is newer');
+
+      // Belt-and-suspenders: even if the timer fires (old behaviour), content must survive
+      if (timerCallback) {
+        await timerCallback();
+        assert(doc2aem(ydoc).includes('Second paragraph added later'), 'storage content must survive timer');
+      }
+    } finally {
+      persistence.get = savedGet;
+      globalThis.setTimeout = savedSetTimeout;
+      ydoc.destroy();
+    }
+  });
+
   it('Test bindstate falls back to daadmin on worker storage error', async () => {
     const docName = 'https://admin.da.live/source/foo/bar.html';
     const ydoc = new Y.Doc();
