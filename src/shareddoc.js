@@ -273,7 +273,6 @@ export const persistence = {
     }
 
     const headers = {
-      'If-Match': '*',
       'X-DA-Initiator': 'collab',
     };
 
@@ -325,20 +324,7 @@ export const persistence = {
         const { ok, status, statusText } = await persistence.put(ydoc, content);
 
         if (!ok) {
-          if (status === 412) {
-            // Document doesn't exist - clean up cached state
-            if (ydoc.storage) {
-              try {
-                await ydoc.storage.deleteAll();
-                // eslint-disable-next-line no-console
-                console.log('[docroom] Cleaned worker storage after 412 (document deleted)');
-              } catch (storageErr) {
-                // eslint-disable-next-line no-console
-                console.error('[docroom] Failed to clean storage', storageErr);
-              }
-            }
-          }
-          closeAll = (status === 401 || status === 403 || status === 412);
+          closeAll = (status === 401 || status === 403);
           throw new Error(`${status} - ${statusText}`);
         }
 

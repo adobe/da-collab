@@ -241,7 +241,7 @@ describe('Collab Test Suite', () => {
     daadmin.fetch = async (url, opts) => {
       assert.equal(url, 'foo');
       assert.equal(opts.method, 'PUT');
-      assert.equal(opts.headers.get('If-Match'), '*', 'Should include If-Match: * header');
+      assert.equal(null, opts.headers.get('If-Match'), 'If-Match header must not be sent');
       assert.equal(await opts.body.get('data').text(), 'test');
       return { ok: true, status: 200, statusText: 'OK - Stored' };
     };
@@ -260,7 +260,7 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, 'PUT');
       assert.equal('myauth', opts.headers.get('Authorization'));
       assert.equal('collab', opts.headers.get('X-DA-Initiator'));
-      assert.equal('*', opts.headers.get('If-Match'));
+      assert.equal(null, opts.headers.get('If-Match'), 'If-Match must not be sent');
       assert.equal(await opts.body.get('data').text(), 'test');
       return { ok: true, status: 200, statusText: 'OK - Stored too' };
     };
@@ -277,7 +277,7 @@ describe('Collab Test Suite', () => {
     daadmin.fetch = async (url, opts) => {
       assert.equal(url, 'foo');
       assert.equal(opts.method, 'PUT');
-      assert.equal(opts.headers.get('If-Match'), '*');
+      assert.equal(null, opts.headers.get('If-Match'), 'If-Match must not be sent');
       assert.equal(await opts.body.get('data').text(), 'test');
       return { ok: true, status: 200, statusText: 'OK' };
     };
@@ -292,7 +292,7 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, 'PUT');
       assert.equal(opts.headers.get('authorization'), 'auth');
       assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
-      assert.equal(opts.headers.get('If-Match'), '*');
+      assert.equal(null, opts.headers.get('If-Match'), 'If-Match must not be sent');
       assert.equal(await opts.body.get('data').text(), 'test');
       return { ok: true, status: 200, statusText: 'okidoki' };
     };
@@ -419,47 +419,111 @@ describe('Collab Test Suite', () => {
     await testCloseAllOnAuthFailure(403);
   });
 
-  it('Test persistence update closes all and cleans storage on 412', async () => {
+  it('Test PUT request does not include If-Match header', async () => {
+    // If-Match: * prevents PUT when the resource does not yet exist in da-admin,
+    // causing 412 errors that destroy worker storage. The header must be absent.
+    const fetchCalled = [];
+    const daadmin = {
+      fetch: async (url, opts) => {
+        fetchCalled.push(opts.headers.get('If-Match'));
+        return {
+          ok: true, status: 200, statusText: 'OK', body: null,
+        };
+      },
+    };
+    const conns = new Map();
+    conns.set({ auth: 'test-auth' }, new Set());
+    await persistence.put({ name: 'https://admin.da.live/source/foo.html', conns, daadmin }, 'test content');
+
+    assert.equal(1, fetchCalled.length);
+    assert.equal(null, fetchCalled[0], 'If-Match header must not be sent');
+  });
+
+  it('Test persistence update does not close connections or clear storage on 412', async () => {
+    // 412 from da-admin must NOT destroy the Yjs state — user edits must be preserved.
+    const docName = 'https://admin.da.live/source/no-close-on-412.html';
+    const ydoc = new WSSharedDoc(docName);
+
+    const deleteAllCalled = [];
+    ydoc.storage = { deleteAll: async () => deleteAllCalled.push('deleteAll') };
+
+    const closeCalled = [];
+    const conn1 = {
+      close: () => closeCalled.push('conn1'),
+      readOnly: false,
+      readyState: 1, // OPEN — prevents send() from triggering closeConn indirectly
+      send() {}, // no-op send so showError broadcast doesn't fail
+    };
+    ydoc.conns.set(conn1, new Set());
+    const docs = setYDoc(docName, ydoc);
+
+    ydoc.daadmin = {
+      fetch: async () => ({
+        ok: false, status: 412, statusText: 'Precondition Failed', body: null,
+      }),
+    };
+
+    aem2doc('<main><div><p>user edits</p></div></main>', ydoc);
+    await persistence.update(ydoc, '<main><div><p>old</p></div></main>', docName);
+
+    assert.equal(0, deleteAllCalled.length, 'storage.deleteAll must NOT be called on 412');
+    assert.equal(0, closeCalled.length, 'connections must NOT be closed on 412');
+    assert(docs.has(docName), 'doc must remain in global map on 412');
+
+    ydoc.destroy();
+  });
+
+  it('Test persistence update shows error but preserves state on 412', async () => {
     const docName = 'https://admin.da.live/source/foo.html';
     const ydoc = new WSSharedDoc(docName);
 
-    const storageDeleteAllCalled = [];
-    ydoc.storage = {
-      deleteAll: async () => storageDeleteAllCalled.push('deleteAll'),
-    };
+    const deleteAllCalled = [];
+    ydoc.storage = { deleteAll: async () => deleteAllCalled.push('deleteAll') };
 
     const closeCalled = [];
-    const conn1 = { close: () => closeCalled.push('close1'), readOnly: false };
-    const conn2 = { close: () => closeCalled.push('close2'), readOnly: false };
+    const conn1 = {
+      close: () => closeCalled.push('close1'),
+      readOnly: false,
+      readyState: 1,
+      send() {},
+    };
+    const conn2 = {
+      close: () => closeCalled.push('close2'),
+      readOnly: false,
+      readyState: 1,
+      send() {},
+    };
     ydoc.conns.set(conn1, new Set(['client1']));
     ydoc.conns.set(conn2, new Set(['client2']));
 
-    // Register the doc in the global map
     const docs = setYDoc(docName, ydoc);
     assert(docs.has(docName), 'Precondition: doc should be in global map');
 
     ydoc.daadmin = {
-      fetch: async () => ({ ok: false, status: 412, statusText: 'Precondition Failed' }),
+      fetch: async () => ({
+        ok: false, status: 412, statusText: 'Precondition Failed', body: null,
+      }),
     };
 
     aem2doc('<main><div><p>test content</p></div></main>', ydoc);
 
-    const result = await persistence.update(ydoc, '<main><div><p>old content</p></div></main>', 'test.html');
+    const result = await persistence.update(ydoc, '<main><div><p>old content</p></div></main>', docName);
 
-    // Should have cleaned storage
-    assert.equal(storageDeleteAllCalled.length, 1, 'Should have called storage.deleteAll');
+    // Must NOT clear storage (user edits must survive)
+    assert.equal(0, deleteAllCalled.length, 'storage.deleteAll must NOT be called');
 
-    // Should have closed all connections
-    assert.equal(closeCalled.length, 2, 'Should have closed both connections');
+    // Must NOT close connections (session continues)
+    assert.equal(0, closeCalled.length, 'connections must NOT be closed on 412');
+    assert.equal(2, ydoc.conns.size, 'All connections should remain in ydoc.conns');
+    assert(docs.has(docName), 'Doc must remain in global docs map');
 
-    // Connections should be removed from ydoc.conns
-    assert.equal(ydoc.conns.size, 0, 'All connections should be removed from ydoc.conns');
+    // Error must be surfaced to clients via ydoc error map
+    assert(ydoc.getMap('error').has('message'), 'Error message must be set on ydoc');
 
-    // Doc should be removed from global docs map when last connection closes
-    assert(!docs.has(docName), 'Doc should be removed from global docs map');
+    // Returns old content so the debounced save can retry on the next edit
+    assert.equal('<main><div><p>old content</p></div></main>', result);
 
-    // Should return the original content (update failed)
-    assert.equal(result, '<main><div><p>old content</p></div></main>');
+    ydoc.destroy();
   });
 
   it('Test 412 cleanup allows fresh connection attempt', async () => {
