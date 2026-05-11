@@ -15,6 +15,20 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
+      - name: Validate GITHUB_TOKEN
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/user)
+          echo "GitHub API status: $STATUS"
+          [ "$STATUS" = "200" ] && echo "Token is valid" || echo "Token is invalid or expired"
+      - name: Validate ADOBE_BOT_GITHUB_TOKEN
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.ADOBE_BOT_GITHUB_TOKEN }}" \
+            https://api.github.com/user)
+          echo "GitHub API status: $STATUS"
+          [ "$STATUS" = "200" ] && echo "Token is valid" || echo "Token is invalid or expired"
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
