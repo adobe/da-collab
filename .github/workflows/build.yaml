@@ -46,6 +46,9 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: true
+          token: ${{ secrets.ADOBE_BOT_GITHUB_TOKEN }}
       - name: Use Node.js 24.x
         uses: actions/setup-node@v6
         with:
