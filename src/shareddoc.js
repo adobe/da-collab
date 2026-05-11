@@ -475,11 +475,16 @@ export const persistence = {
       }
     });
 
+    let saving = false;
     ydoc.on('update', debounce(async () => {
       // If we receive an update on the document, store it in da-admin, but debounce it
       // to avoid excessive da-admin calls.
-      if (current && ydoc === docs.get(docName)) {
+      if (saving || !current || ydoc !== docs.get(docName)) return;
+      saving = true;
+      try {
         current = await persistence.update(ydoc, current, docName);
+      } finally {
+        saving = false;
       }
     }, 2000, { maxWait: 10000 }));
 

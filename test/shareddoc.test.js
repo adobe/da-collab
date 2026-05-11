@@ -1034,6 +1034,70 @@ describe('Collab Test Suite', () => {
     }
   });
 
+  it('Test concurrent save calls are guarded by saving flag', async () => {
+    // Scenario: debounced handler fires while a previous PUT is still in flight.
+    // Without the saving flag, both calls race to PUT concurrently.
+    const mockdebounce = (f) => async () => f();
+    const pss = await esmock('../src/shareddoc.js', {
+      'lodash/debounce.js': {
+        default: mockdebounce,
+      },
+    });
+
+    const docName = 'https://admin.da.live/source/foo/bar.html';
+    const storage = { list: async () => new Map() };
+    const updObservers = [];
+    const ydoc = new Y.Doc();
+    ydoc.on = (ev, fun) => {
+      if (ev === 'update') {
+        updObservers.push(fun);
+      }
+    };
+    pss.setYDoc(docName, ydoc);
+
+    const savedSetTimeout = globalThis.setTimeout;
+    const savedGet = pss.persistence.get;
+    const savedPut = pss.persistence.put;
+    try {
+      globalThis.setTimeout = (f) => {
+        globalThis.setTimeout = savedSetTimeout;
+        f();
+      };
+
+      pss.persistence.get = async () => '<main><div>initial</div></main>';
+
+      let concurrentPuts = 0;
+      let maxConcurrentPuts = 0;
+      pss.persistence.put = async () => {
+        concurrentPuts += 1;
+        maxConcurrentPuts = Math.max(maxConcurrentPuts, concurrentPuts);
+        await new Promise((resolve) => {
+          savedSetTimeout(resolve, 30);
+        });
+        concurrentPuts -= 1;
+        return { ok: true, status: 200 };
+      };
+
+      await pss.persistence.bindState(docName, ydoc, {}, storage);
+
+      aem2doc('<main><div>content1</div></main>', ydoc);
+
+      assert.equal(2, updObservers.length, 'Two update observers must be registered');
+
+      // Fire the debounced da-admin handler twice concurrently — simulates rapid
+      // updates while a prior save is still in flight.
+      const p1 = updObservers[1]();
+      const p2 = updObservers[1]();
+      await Promise.all([p1, p2]);
+
+      assert.equal(1, maxConcurrentPuts, 'At most one PUT must be in-flight at a time');
+    } finally {
+      globalThis.setTimeout = savedSetTimeout;
+      pss.persistence.get = savedGet;
+      pss.persistence.put = savedPut;
+    }
+  });
+
   it('test persist state in worker storage on update', async () => {
     const docName = 'https://admin.da.live/source/foo/bar.html';
 
