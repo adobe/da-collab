@@ -1,3 +1,10 @@
+## [1.2.5](https://github.com/adobe/da-collab/compare/v1.2.4...v1.2.5) (2026-05-11)
+
+
+### Bug Fixes
+
+* guard debounced save against concurrent PUT calls ([#140](https://github.com/adobe/da-collab/issues/140)) ([3eba8af](https://github.com/adobe/da-collab/commit/3eba8af5e819525bd4809e82c6939a7189e259d2))
+
 ## [1.2.4](https://github.com/adobe/da-collab/compare/v1.2.3...v1.2.4) (2026-05-05)
 
 
