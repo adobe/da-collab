@@ -362,7 +362,7 @@ export const persistence = {
       }
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[docroom] Failed to update document', err);
+      console.error('[docroom] Failed to update document', docName, err);
       showError(ydoc, err);
     }
     if (closeAll) {

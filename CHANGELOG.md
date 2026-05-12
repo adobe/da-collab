@@ -1,3 +1,10 @@
+## [1.2.6](https://github.com/adobe/da-collab/compare/v1.2.5...v1.2.6) (2026-05-12)
+
+
+### Bug Fixes
+
+* **docroom:** include docName in update-failure log ([#143](https://github.com/adobe/da-collab/issues/143)) ([0c130c5](https://github.com/adobe/da-collab/commit/0c130c5b6040088c1999b8f987e9bdbf2f38a539))
+
 ## [1.2.5](https://github.com/adobe/da-collab/compare/v1.2.4...v1.2.5) (2026-05-11)
 
 
