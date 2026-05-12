@@ -657,13 +657,12 @@ export const messageListener = (conn, doc, message) => {
     switch (messageType) {
       case messageSync: {
         encoding.writeVarUint(encoder, messageSync);
-        const svBefore = Y.encodeStateVector(doc);
-        readSyncMessage(decoder, encoder, doc, conn.readOnly);
-        const svAfter = Y.encodeStateVector(doc);
-        if (svBefore.length !== svAfter.length
-          || svBefore.some((v, i) => v !== svAfter[i])) {
+        const onChange = () => {
           doc.hasClientChanged = true;
-        }
+        };
+        doc.on('update', onChange);
+        readSyncMessage(decoder, encoder, doc, conn.readOnly);
+        doc.off('update', onChange);
 
         // If the `encoder` only contains the type of reply message and no
         // message, there is no need to send the message. When `encoder` only
