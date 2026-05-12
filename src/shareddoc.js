@@ -48,6 +48,11 @@ const messageSync = 0;
 const messageAwareness = 1;
 const MAX_STORAGE_KEYS = 128;
 const MAX_STORAGE_VALUE_SIZE = 131072;
+// Matches da-admin EMPTY_DOC_SIZE — the byte-length of doc2aem(empty ydoc).
+// PUTs at or below this size are the deterministic empty stub; allowing one
+// through when no client edit happened silently overwrites real customer content
+// (and triggers da-admin's Restore Point fallback).
+const EMPTY_DOC_SIZE = 83;
 
 function getDocType(docName) {
   if (docName.endsWith('.json')) return 'json';
@@ -287,9 +292,9 @@ export const persistence = {
 
     opts.headers = new Headers(headers);
 
-    if (blob.size < 84) {
+    if (blob.size <= EMPTY_DOC_SIZE) {
       // eslint-disable-next-line no-console
-      console.warn('[docroom] Writting back an empty document', ydoc.name, blob.size);
+      console.warn('[docroom] Writing back an empty document', ydoc.name, blob.size);
     }
 
     const {
@@ -320,6 +325,17 @@ export const persistence = {
     let closeAll = false;
     try {
       const content = docType === 'json' ? doc2json(ydoc) : doc2aem(ydoc);
+
+      // Never overwrite real content with the deterministic empty stub when no
+      // client edit produced it. Defends customer content against COR-31:
+      // bindState fallbacks, awareness/storage-only updates, or transient
+      // server-side transacts can otherwise debounce a stub PUT through.
+      if (!ydoc.hasClientChanged && content.length <= EMPTY_DOC_SIZE) {
+        // eslint-disable-next-line no-console
+        console.log('[docroom] Skipping empty-stub PUT - no client edit', docName, content.length);
+        return current;
+      }
+
       if (current !== content) {
         // Only store the document if it was actually changed.
         const { ok, status, statusText } = await persistence.put(ydoc, content);
@@ -517,6 +533,9 @@ export class WSSharedDoc extends Y.Doc {
     super({ gc: gcEnabled });
     this.name = name;
     this.conns = new Map();
+    // Flipped by messageListener whenever a sync message advances the state
+    // vector. Gates the empty-stub PUT guard in persistence.update — see COR-31.
+    this.hasClientChanged = false;
     this.awareness = new awarenessProtocol.Awareness(this);
     this.awareness.setLocalState(null);
 
@@ -636,9 +655,15 @@ export const messageListener = (conn, doc, message) => {
     const decoder = decoding.createDecoder(message);
     messageType = decoding.readVarUint(decoder);
     switch (messageType) {
-      case messageSync:
+      case messageSync: {
         encoding.writeVarUint(encoder, messageSync);
+        const svBefore = Y.encodeStateVector(doc);
         readSyncMessage(decoder, encoder, doc, conn.readOnly);
+        const svAfter = Y.encodeStateVector(doc);
+        if (svBefore.length !== svAfter.length
+          || svBefore.some((v, i) => v !== svAfter[i])) {
+          doc.hasClientChanged = true;
+        }
 
         // If the `encoder` only contains the type of reply message and no
         // message, there is no need to send the message. When `encoder` only
@@ -647,6 +672,7 @@ export const messageListener = (conn, doc, message) => {
           send(doc, conn, encoding.toUint8Array(encoder));
         }
         break;
+      }
       case messageAwareness: {
         awarenessProtocol
           .applyAwarenessUpdate(doc.awareness, decoding.readVarUint8Array(decoder), conn);

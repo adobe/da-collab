@@ -10,6 +10,8 @@
  * governing permissions and limitations under the License.
  */
 import * as Y from 'yjs';
+import * as syncProtocol from 'y-protocols/sync.js';
+import * as encoding from 'lib0/encoding.js';
 import assert from 'node:assert';
 import esmock from 'esmock';
 
@@ -357,6 +359,7 @@ describe('Collab Test Suite', () => {
     const mockYDoc = {
       conns: { keys() { return [{}]; } },
       name: 'http://foo.bar/0/123.html',
+      hasClientChanged: true,
     };
 
     let called = false;
@@ -389,6 +392,7 @@ describe('Collab Test Suite', () => {
     const mockYDoc = {
       conns: new Map().set('foo', 'bar'),
       name: 'http://foo.bar/0/123.html',
+      hasClientChanged: true,
       getMap(nm) { return nm === 'error' ? new Map() : null; },
       transact: (f) => f(),
     };
@@ -417,6 +421,100 @@ describe('Collab Test Suite', () => {
   it('Test persistence update closes all on auth failure', async () => {
     await testCloseAllOnAuthFailure(401);
     await testCloseAllOnAuthFailure(403);
+  });
+
+  it('Test persistence update skips PUT when content is empty stub and no client edit', async () => {
+    // Reproduces COR-31 / COR-28: an unedited ydoc whose doc2aem output is the
+    // deterministic empty stub must NOT overwrite real content in da-admin.
+    const EMPTY_STUB = '\n<body>\n  <header></header>\n  <main><div></div></main>\n  <footer></footer>\n</body>\n';
+    const mockDoc2Aem = () => EMPTY_STUB;
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': {
+        doc2aem: mockDoc2Aem,
+      },
+    });
+
+    const mockYDoc = {
+      conns: { keys() { return [{}]; } },
+      name: 'http://foo.bar/0/123.html',
+      hasClientChanged: false,
+    };
+
+    let putCalled = false;
+    pss.persistence.put = async () => {
+      putCalled = true;
+      return { ok: true, status: 200 };
+    };
+
+    const real = '<body><main><div><p>real customer content</p></div></main></body>';
+    const result = await pss.persistence.update(mockYDoc, real, 'test.html');
+    assert.equal(false, putCalled, 'Empty stub PUT must be blocked when no client edit produced it');
+    assert.equal(result, real, 'Returns current unchanged when guard blocks the PUT');
+  });
+
+  it('Test persistence update still PUTs empty content when client edit produced it', async () => {
+    // Defence-in-depth: the guard must not block legitimate empty writes
+    // (e.g. user deletes all content) when hasClientChanged is true.
+    const EMPTY_STUB = '\n<body>\n  <header></header>\n  <main><div></div></main>\n  <footer></footer>\n</body>\n';
+    const mockDoc2Aem = () => EMPTY_STUB;
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': {
+        doc2aem: mockDoc2Aem,
+      },
+    });
+
+    const mockYDoc = {
+      conns: { keys() { return [{}]; } },
+      name: 'http://foo.bar/0/123.html',
+      hasClientChanged: true,
+    };
+
+    const putCalls = [];
+    pss.persistence.put = async (yd, c) => {
+      putCalls.push(c);
+      return { ok: true, status: 200 };
+    };
+
+    const result = await pss.persistence.update(mockYDoc, '<main><div><p>old</p></div></main>', 'test.html');
+    assert.equal(1, putCalls.length, 'PUT must run when client really emptied the doc');
+    assert.equal(putCalls[0], EMPTY_STUB);
+    assert.equal(result, EMPTY_STUB);
+  });
+
+  it('Test messageListener flips hasClientChanged on non-no-op sync update', () => {
+    const ydoc = new WSSharedDoc('test.html');
+    assert.equal(false, ydoc.hasClientChanged, 'Precondition: starts false');
+
+    // Donor doc to encode an authoritative update from
+    const donor = new Y.Doc();
+    donor.getMap('content').set('foo', 'bar');
+    const update = Y.encodeStateAsUpdate(donor);
+
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, 0); // messageSync
+    syncProtocol.writeUpdate(encoder, update);
+    const message = encoding.toUint8Array(encoder);
+
+    const conn = { readyState: 1, send: () => {} };
+    messageListener(conn, ydoc, message);
+
+    assert.equal(true, ydoc.hasClientChanged, 'Non-no-op sync update must flip the flag');
+  });
+
+  it('Test messageListener does NOT flip hasClientChanged on no-op sync (step 1)', () => {
+    const ydoc = new WSSharedDoc('test.html');
+    assert.equal(false, ydoc.hasClientChanged, 'Precondition: starts false');
+
+    // Sync step 1 only writes a reply; it does NOT mutate the receiving doc.
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, 0); // messageSync
+    syncProtocol.writeSyncStep1(encoder, ydoc);
+    const message = encoding.toUint8Array(encoder);
+
+    const conn = { readyState: 1, send: () => {} };
+    messageListener(conn, ydoc, message);
+
+    assert.equal(false, ydoc.hasClientChanged, 'Sync step 1 (no doc mutation) must not flip the flag');
   });
 
   it('Test persistence update closes all and cleans storage on 412', async () => {
