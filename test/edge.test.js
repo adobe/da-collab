@@ -585,6 +585,7 @@ describe('Worker test suite', () => {
 
     // Mock WebSocketPair since it's not available in Node.js test environment
     const messages = [];
+    // eslint-disable-next-line func-names
     const mockWebSocketPair = function () {
       const pair = [null, null];
       pair[0] = { // client side
@@ -641,6 +642,7 @@ describe('Worker test suite', () => {
 
     // Mock WebSocketPair since it's not available in Node.js test environment
     const messages = [];
+    // eslint-disable-next-line func-names
     const mockWebSocketPair = function () {
       const pair = [null, null];
       pair[0] = { // client side

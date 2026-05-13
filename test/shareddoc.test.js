@@ -1149,6 +1149,46 @@ describe('Collab Test Suite', () => {
     assert.equal(testYDoc, aem2DocCalled[1]);
   });
 
+  it('Test bindState includes docName when aem2doc throws while restoring from da-admin', async () => {
+    const throwing = () => {
+      throw new TypeError("Cannot read properties of undefined (reading 'toLowerCase')");
+    };
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': {
+        aem2doc: throwing,
+      },
+    });
+
+    const docName = 'http://lalala.com/ha/ha/failing.html';
+    const testYDoc = new Y.Doc();
+    testYDoc.daadmin = 'daadmin';
+    const mockConn = {
+      auth: 'myauth',
+      authActions: ['read'],
+    };
+    pss.setYDoc(docName, testYDoc);
+
+    const mockStorage = { list: () => new Map() };
+    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    pss.persistence.update = async () => {};
+
+    const logged = [];
+    const savedError = console.error;
+    console.error = (...args) => logged.push(args);
+    try {
+      await pss.persistence.bindState(docName, testYDoc, mockConn, mockStorage);
+      // Wait for the 1s deferred reload + a buffer.
+      await wait(1500);
+    } finally {
+      console.error = savedError;
+    }
+
+    const daAdminLogs = logged.filter((args) => args[0] === '[docroom] Problem restoring state from da-admin');
+    assert.equal(1, daAdminLogs.length, 'da-admin restore failure should be logged exactly once');
+    assert.equal(docName, daAdminLogs[0][1], 'docName must appear in the da-admin restore failure log (Coralogix uses it to identify the failing doc)');
+    assert(daAdminLogs[0][2] instanceof TypeError, 'the underlying error must still be logged for stack capture');
+  });
+
   it('Test bindstate read from worker storage for doc', async () => {
     const docName = 'https://admin.da.live/source/foo/bar.html';
 
@@ -2216,7 +2256,9 @@ describe('Collab Test Suite', () => {
     const ydoc = new pss.WSSharedDoc(docName);
     const originalOn = ydoc.on.bind(ydoc);
     ydoc.on = (ev, handler) => {
-      if (ev === 'update') updObservers.push(handler);
+      if (ev === 'update') {
+        updObservers.push(handler);
+      }
       return originalOn(ev, handler);
     };
     pss.setYDoc(docName, ydoc);
