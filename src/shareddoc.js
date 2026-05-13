@@ -66,7 +66,7 @@ function getDocType(docName) {
  * @param {ydoc} doc - the ydoc to close the connection for.
  * @param {WebSocket} conn - the websocket connection to close.
  */
-export const closeConn = (doc, conn) => {
+export const closeConn = async (doc, conn) => {
   try {
     if (doc.conns.has(conn)) {
       const controlledIds = doc.conns.get(conn);
@@ -81,6 +81,11 @@ export const closeConn = (doc, conn) => {
       }
 
       if (doc.conns.size === 0) {
+        if (doc.flushSave) {
+          // eslint-disable-next-line no-console
+          console.log('[docroom] Flushing pending save on last connection close', doc.name);
+          await doc.flushSave();
+        }
         const duration = conn.connectedAt ? Date.now() - conn.connectedAt : 0;
         // eslint-disable-next-line no-console
         console.log('[docroom] Last connection closed', doc.name, `duration: ${duration}ms`, `unsaved: ${!!doc.hasClientChanged}`);
@@ -371,8 +376,10 @@ export const persistence = {
     }
     if (closeAll) {
       // We had an unauthorized from da-admin - lets reset the connections
-      Array.from(ydoc.conns.keys())
-        .forEach((con) => persistence.closeConn(ydoc, con));
+      for (const con of Array.from(ydoc.conns.keys())) {
+        // eslint-disable-next-line no-await-in-loop
+        await persistence.closeConn(ydoc, con);
+      }
     }
     return current;
   },
@@ -496,9 +503,7 @@ export const persistence = {
     });
 
     let saving = false;
-    ydoc.on('update', debounce(async () => {
-      // If we receive an update on the document, store it in da-admin, but debounce it
-      // to avoid excessive da-admin calls.
+    const saveToAdmin = async () => {
       if (saving) {
         // eslint-disable-next-line no-console
         console.log('[docroom] Skip save: concurrent save in progress', docName);
@@ -513,7 +518,15 @@ export const persistence = {
       } finally {
         saving = false;
       }
-    }, 2000, { maxWait: 10000 }));
+    };
+
+    const debouncedSave = debounce(saveToAdmin, 2000, { maxWait: 10000 });
+    ydoc.on('update', debouncedSave);
+
+    ydoc.flushSave = async () => {
+      debouncedSave.cancel();
+      await saveToAdmin();
+    };
 
     const timingMap = new Map();
     timingMap.set('timingReadStateDuration', timingReadStateDuration);
