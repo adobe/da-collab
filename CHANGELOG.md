@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/adobe/da-collab/compare/v1.2.7...v1.3.0) (2026-05-13)
+
+
+### Features
+
+* add targeted session logging to diagnose content-loss ([#147](https://github.com/adobe/da-collab/issues/147)) ([f96ce19](https://github.com/adobe/da-collab/commit/f96ce19bc39af7916726e5c74e1af58022a01e4b))
+
 ## [1.2.7](https://github.com/adobe/da-collab/compare/v1.2.6...v1.2.7) (2026-05-13)
 
 
