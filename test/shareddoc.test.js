@@ -677,6 +677,12 @@ describe('Collab Test Suite', () => {
     // Trigger 412 which closes all connections and removes from global map
     await pss.persistence.update(ydoc, '<main><div><p>initial</p></div></main>', 'test.html');
 
+    // Flush pending microtasks: the flushSave path inside closeConn (triggered by the
+    // aem2doc update event above) is async and may still be completing.
+    await new Promise((r) => {
+      setTimeout(r, 0);
+    });
+
     assert(!docs.has(docName), 'Doc should be removed from global map');
 
     // Now try to call the update handlers -
@@ -788,7 +794,7 @@ describe('Collab Test Suite', () => {
 
     assert.equal(0, called.length, 'Precondition');
     assert(docs.get(mockDoc.name), 'Precondition');
-    closeConn(mockDoc, mockConn);
+    await closeConn(mockDoc, mockConn);
     assert.deepStrictEqual(['close'], called);
     assert.equal(0, mockDoc.conns.size);
     assert.deepStrictEqual(
@@ -820,6 +826,180 @@ describe('Collab Test Suite', () => {
     assert.equal(0, called.length, 'Precondition');
     closeConn(mockDoc, mockConn);
     assert.deepStrictEqual(['close'], called);
+  });
+
+  it('Flush fires on last connection close', async () => {
+    const flushCalled = [];
+    const destroyCalled = [];
+    const mockDoc = {
+      name: 'http://flush.test/doc.html',
+      destroyed: false,
+      awareness: {
+        emit() {},
+        states: new Map(),
+      },
+      conns: new Map(),
+      destroy() {
+        destroyCalled.push('destroy');
+        this.destroyed = true;
+      },
+      flushSave: async () => {
+        flushCalled.push('flush');
+      },
+    };
+
+    const docs = setYDoc(mockDoc.name, mockDoc);
+    const mockConn = { close() {} };
+    mockDoc.conns.set(mockConn, new Set());
+
+    assert.equal(0, flushCalled.length, 'Precondition: flush not yet called');
+    assert(docs.has(mockDoc.name), 'Precondition: doc in global map');
+
+    await closeConn(mockDoc, mockConn);
+
+    assert.deepStrictEqual(['flush'], flushCalled, 'flushSave must be called');
+    assert.deepStrictEqual(['destroy'], destroyCalled, 'destroy must be called after flush');
+    assert(!docs.has(mockDoc.name), 'Doc must be removed from global map');
+  });
+
+  it('Flush is a no-op when nothing is pending', async () => {
+    const unchangedContent = '<main><div><p>unchanged</p></div></main>';
+    const mockdebounce = (f) => {
+      const debounced = async () => f();
+      debounced.cancel = () => {};
+      return debounced;
+    };
+    const pss = await esmock('../src/shareddoc.js', {
+      'lodash/debounce.js': { default: mockdebounce },
+      '@da-tools/da-parser': {
+        doc2aem: () => unchangedContent,
+        doc2json: () => '{}',
+        aem2doc,
+        json2doc: () => {},
+      },
+    });
+
+    const docName = 'https://admin.da.live/source/flush-noop.html';
+    const storage = { list: async () => new Map() };
+    const ydoc = new pss.WSSharedDoc(docName);
+    pss.setYDoc(docName, ydoc);
+
+    const putCalls = [];
+    pss.persistence.get = async () => unchangedContent;
+    pss.persistence.put = async () => {
+      putCalls.push('put');
+      return { ok: true, status: 200 };
+    };
+
+    const conn = { auth: undefined, close() {} };
+    await pss.persistence.bindState(docName, ydoc, conn, storage);
+
+    assert(typeof ydoc.flushSave === 'function', 'flushSave should be defined after bindState');
+
+    await ydoc.flushSave();
+
+    assert.equal(0, putCalls.length, 'PUT must not be called when nothing has changed');
+  });
+
+  it('Flush saves unsaved changes when debounce has not fired', async () => {
+    let cancelCalled = false;
+    const mockdebounce = (f) => {
+      const debounced = async () => f();
+      debounced.cancel = () => {
+        cancelCalled = true;
+      };
+      return debounced;
+    };
+    const pss = await esmock('../src/shareddoc.js', {
+      'lodash/debounce.js': { default: mockdebounce },
+      '@da-tools/da-parser': {
+        doc2aem: () => '<main><div><p>updated content</p></div></main>',
+        doc2json: () => '{}',
+        aem2doc,
+        json2doc: () => {},
+      },
+    });
+
+    const docName = 'https://admin.da.live/source/flush-saves.html';
+    const storage = { list: async () => new Map() };
+    const ydoc = new pss.WSSharedDoc(docName);
+    pss.setYDoc(docName, ydoc);
+
+    const putCalls = [];
+    pss.persistence.get = async () => '<main><div><p>initial content</p></div></main>';
+    pss.persistence.put = async (doc, content) => {
+      putCalls.push(content);
+      return { ok: true, status: 200 };
+    };
+
+    const conn = { auth: undefined, close() {} };
+    await pss.persistence.bindState(docName, ydoc, conn, storage);
+
+    assert(typeof ydoc.flushSave === 'function', 'flushSave must be set after bindState');
+
+    await ydoc.flushSave();
+
+    assert.equal(1, putCalls.length, 'PUT must be called once with pending changes');
+    assert(putCalls[0].includes('updated content'), 'PUT body must contain the changed content');
+  });
+
+  it('Flush cancels the pending debounce', async () => {
+    let cancelCalled = false;
+    const mockdebounce = (f) => {
+      const debounced = async () => f();
+      debounced.cancel = () => {
+        cancelCalled = true;
+      };
+      return debounced;
+    };
+    const pss = await esmock('../src/shareddoc.js', {
+      'lodash/debounce.js': { default: mockdebounce },
+    });
+
+    const docName = 'https://admin.da.live/source/flush-cancel.html';
+    const storage = { list: async () => new Map() };
+    const ydoc = new pss.WSSharedDoc(docName);
+    pss.setYDoc(docName, ydoc);
+
+    pss.persistence.get = async () => '<main><div><p>content</p></div></main>';
+    pss.persistence.put = async () => ({ ok: true, status: 200 });
+
+    const conn = { auth: undefined, close() {} };
+    await pss.persistence.bindState(docName, ydoc, conn, storage);
+
+    assert(!cancelCalled, 'Precondition: cancel not yet called');
+
+    await ydoc.flushSave();
+
+    assert(cancelCalled, 'debouncedSave.cancel() must be called during flush');
+  });
+
+  it('Non-last connection close does not flush', async () => {
+    const flushCalled = [];
+    const mockDoc = {
+      name: 'http://flush.test/multi-conn.html',
+      awareness: {
+        emit() {},
+        states: new Map(),
+      },
+      conns: new Map(),
+      destroy() {},
+      flushSave: async () => { flushCalled.push('flush'); },
+    };
+
+    const docs = setYDoc(mockDoc.name, mockDoc);
+    const conn1 = { close() {} };
+    const conn2 = { close() {} };
+    mockDoc.conns.set(conn1, new Set());
+    mockDoc.conns.set(conn2, new Set());
+
+    assert.equal(2, mockDoc.conns.size, 'Precondition: two connections');
+
+    await closeConn(mockDoc, conn1);
+
+    assert.equal(0, flushCalled.length, 'flushSave must NOT be called when connections remain');
+    assert.equal(1, mockDoc.conns.size, 'One connection must remain');
+    assert(docs.has(mockDoc.name), 'Doc must still be in global map');
   });
 
   it('Test bindState read from da-admin for doc', async () => {
