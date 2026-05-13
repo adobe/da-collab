@@ -83,7 +83,7 @@ export const closeConn = (doc, conn) => {
       if (doc.conns.size === 0) {
         const duration = conn.connectedAt ? Date.now() - conn.connectedAt : 0;
         // eslint-disable-next-line no-console
-        console.log('[docroom] Last connection closed', doc.name, `duration: ${duration}ms`, `unsaved: ${!!doc.isDirty}`);
+        console.log('[docroom] Last connection closed', doc.name, `duration: ${duration}ms`, `unsaved: ${!!doc.hasClientChanged}`);
         doc.destroy();
         docs.delete(doc.name);
       }
@@ -485,8 +485,6 @@ export const persistence = {
 
     ydoc.on('update', async () => {
       // Whenever we receive an update on the document store it in the local storage
-      // eslint-disable-next-line no-param-reassign
-      ydoc.isDirty = true;
       if (ydoc === docs.get(docName)) { // make sure this ydoc is still active
         try {
           await storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
@@ -511,7 +509,7 @@ export const persistence = {
       try {
         current = await persistence.update(ydoc, current, docName);
         // eslint-disable-next-line no-param-reassign
-        ydoc.isDirty = false;
+        ydoc.hasClientChanged = false;
       } finally {
         saving = false;
       }

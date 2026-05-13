@@ -1917,7 +1917,7 @@ describe('Collab Test Suite', () => {
     }
   });
 
-  it('closeConn logs duration and unsaved: false when isDirty is false', () => {
+  it('closeConn logs duration and unsaved: false when hasClientChanged is false', () => {
     const logged = [];
     const savedLog = console.log;
     console.log = (...args) => logged.push(args);
@@ -1925,7 +1925,7 @@ describe('Collab Test Suite', () => {
     try {
       const docName = 'http://foo.bar/logtest.html';
       const mockDoc = {
-        isDirty: false,
+        hasClientChanged: false,
         name: docName,
         conns: new Map(),
         awareness: { states: new Map() },
@@ -1951,7 +1951,7 @@ describe('Collab Test Suite', () => {
     }
   });
 
-  it('closeConn logs unsaved: true when isDirty is true', () => {
+  it('closeConn logs unsaved: true when hasClientChanged is true', () => {
     const logged = [];
     const savedLog = console.log;
     console.log = (...args) => logged.push(args);
@@ -1959,7 +1959,7 @@ describe('Collab Test Suite', () => {
     try {
       const docName = 'http://foo.bar/logtest-dirty.html';
       const mockDoc = {
-        isDirty: true,
+        hasClientChanged: true,
         name: docName,
         conns: new Map(),
         awareness: { states: new Map() },
@@ -1995,6 +1995,7 @@ describe('Collab Test Suite', () => {
     const mockYDoc = {
       conns: { keys() { return [{}]; } },
       name: 'http://foo.bar/0/save-log.html',
+      hasClientChanged: true,
     };
 
     pss.persistence.put = async () => ({ ok: true, status: 200, statusText: 'OK' });
