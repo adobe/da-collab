@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/adobe/da-collab/compare/v1.3.0...v1.4.0) (2026-05-13)
+
+
+### Features
+
+* flush pending save on last WebSocket connection close ([#148](https://github.com/adobe/da-collab/issues/148)) ([27b5fc0](https://github.com/adobe/da-collab/commit/27b5fc0b3151c9e783bcefdc85818c7135272264))
+
 # [1.3.0](https://github.com/adobe/da-collab/compare/v1.2.7...v1.3.0) (2026-05-13)
 
 
