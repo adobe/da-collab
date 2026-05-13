@@ -1891,4 +1891,193 @@ describe('Collab Test Suite', () => {
     assert.equal(false, isExpectedPlatformEvent(null));
     assert.equal(false, isExpectedPlatformEvent(undefined));
   });
+
+  it('setupWSConnection sets connectedAt on conn', async () => {
+    const savedBind = persistence.bindState;
+    try {
+      persistence.bindState = async () => new Map();
+
+      const docName = 'https://somewhere.com/connectedat.html';
+      const mockConn = {
+        addEventListener() {},
+        close() {},
+        readyState: 1,
+        send() {},
+      };
+
+      const before = Date.now();
+      await setupWSConnection(mockConn, docName, {}, {});
+      const after = Date.now();
+
+      assert(typeof mockConn.connectedAt === 'number', 'connectedAt should be a number');
+      assert(mockConn.connectedAt >= before, 'connectedAt should be >= before timestamp');
+      assert(mockConn.connectedAt <= after, 'connectedAt should be <= after timestamp');
+    } finally {
+      persistence.bindState = savedBind;
+    }
+  });
+
+  it('closeConn logs duration and unsaved: false when isDirty is false', () => {
+    const logged = [];
+    const savedLog = console.log;
+    console.log = (...args) => logged.push(args);
+
+    try {
+      const docName = 'http://foo.bar/logtest.html';
+      const mockDoc = {
+        isDirty: false,
+        name: docName,
+        conns: new Map(),
+        awareness: { states: new Map() },
+        destroy() {},
+      };
+
+      const mockConn = {
+        connectedAt: Date.now() - 1500,
+        close() {},
+      };
+      mockDoc.conns.set(mockConn, new Set());
+      setYDoc(docName, mockDoc);
+
+      closeConn(mockDoc, mockConn);
+
+      const lastCloseLog = logged.find((args) => args[0] === '[docroom] Last connection closed');
+      assert(lastCloseLog, 'Should have logged last connection closed');
+      assert.equal(lastCloseLog[1], docName);
+      assert.match(lastCloseLog[2], /^duration: \d+ms$/);
+      assert.equal(lastCloseLog[3], 'unsaved: false');
+    } finally {
+      console.log = savedLog;
+    }
+  });
+
+  it('closeConn logs unsaved: true when isDirty is true', () => {
+    const logged = [];
+    const savedLog = console.log;
+    console.log = (...args) => logged.push(args);
+
+    try {
+      const docName = 'http://foo.bar/logtest-dirty.html';
+      const mockDoc = {
+        isDirty: true,
+        name: docName,
+        conns: new Map(),
+        awareness: { states: new Map() },
+        destroy() {},
+      };
+
+      const mockConn = {
+        connectedAt: Date.now() - 500,
+        close() {},
+      };
+      mockDoc.conns.set(mockConn, new Set());
+      setYDoc(docName, mockDoc);
+
+      closeConn(mockDoc, mockConn);
+
+      const lastCloseLog = logged.find((args) => args[0] === '[docroom] Last connection closed');
+      assert(lastCloseLog, 'Should have logged last connection closed');
+      assert.equal(lastCloseLog[1], docName);
+      assert.equal(lastCloseLog[3], 'unsaved: true');
+    } finally {
+      console.log = savedLog;
+    }
+  });
+
+  it('persistence.update logs save success when content changed', async () => {
+    const mockDoc2Aem = () => 'new content';
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': {
+        doc2aem: mockDoc2Aem,
+      },
+    });
+
+    const mockYDoc = {
+      conns: { keys() { return [{}]; } },
+      name: 'http://foo.bar/0/save-log.html',
+    };
+
+    pss.persistence.put = async () => ({ ok: true, status: 200, statusText: 'OK' });
+
+    const logged = [];
+    const savedLog = console.log;
+    console.log = (...args) => logged.push(args);
+
+    try {
+      const result = await pss.persistence.update(mockYDoc, 'old content', 'save-log.html');
+      assert.equal(result, 'new content');
+
+      const saveLog = logged.find((args) => args[0] === '[docroom] Saved to da-admin');
+      assert(saveLog, 'Should have logged save success');
+      assert.equal(saveLog[1], 'save-log.html');
+      assert.equal(saveLog[2], `${'new content'.length}b`);
+    } finally {
+      console.log = savedLog;
+    }
+  });
+
+  it('debounced save logs skip when saving is true', async () => {
+    const mockdebounce = (f) => {
+      const debounced = async () => f();
+      debounced.cancel = () => {};
+      return debounced;
+    };
+    const pss = await esmock('../src/shareddoc.js', {
+      'lodash/debounce.js': {
+        default: mockdebounce,
+      },
+    });
+
+    const docName = 'https://admin.da.live/source/skip-save.html';
+    const storage = { list: async () => new Map() };
+    const updObservers = [];
+    const ydoc = new pss.WSSharedDoc(docName);
+    const originalOn = ydoc.on.bind(ydoc);
+    ydoc.on = (ev, handler) => {
+      if (ev === 'update') updObservers.push(handler);
+      return originalOn(ev, handler);
+    };
+    pss.setYDoc(docName, ydoc);
+
+    const savedSetTimeout = globalThis.setTimeout;
+    try {
+      globalThis.setTimeout = (f) => {
+        globalThis.setTimeout = savedSetTimeout;
+        f();
+      };
+
+      pss.persistence.get = async () => '<main><div>initial</div></main>';
+
+      let putCallCount = 0;
+      pss.persistence.put = async () => {
+        putCallCount += 1;
+        await new Promise((resolve) => {
+          savedSetTimeout(resolve, 50);
+        });
+        return { ok: true, status: 200, statusText: 'OK' };
+      };
+
+      await pss.persistence.bindState(docName, ydoc, {}, storage);
+      assert.equal(updObservers.length, 2, 'Precondition: two update observers registered');
+
+      const logged = [];
+      const savedLog = console.log;
+      console.log = (...args) => logged.push(args);
+
+      try {
+        const p1 = updObservers[1]();
+        const p2 = updObservers[1]();
+        await Promise.all([p1, p2]);
+
+        const skipLog = logged.find((args) => args[0] === '[docroom] Skip save: concurrent save in progress');
+        assert(skipLog, 'Should have logged concurrent save skip');
+        assert.equal(skipLog[1], docName);
+        assert.equal(putCallCount, 1, 'Only one PUT should have been made');
+      } finally {
+        console.log = savedLog;
+      }
+    } finally {
+      globalThis.setTimeout = savedSetTimeout;
+    }
+  });
 });

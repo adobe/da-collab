@@ -81,7 +81,9 @@ export const closeConn = (doc, conn) => {
       }
 
       if (doc.conns.size === 0) {
-        // clear event handlers
+        const duration = conn.connectedAt ? Date.now() - conn.connectedAt : 0;
+        // eslint-disable-next-line no-console
+        console.log('[docroom] Last connection closed', doc.name, `duration: ${duration}ms`, `unsaved: ${!!doc.isDirty}`);
         doc.destroy();
         docs.delete(doc.name);
       }
@@ -358,6 +360,8 @@ export const persistence = {
           throw new Error(`${status} - ${statusText}`);
         }
 
+        // eslint-disable-next-line no-console
+        console.log('[docroom] Saved to da-admin', docName, `${content.length}b`);
         return content;
       }
     } catch (err) {
@@ -481,6 +485,8 @@ export const persistence = {
 
     ydoc.on('update', async () => {
       // Whenever we receive an update on the document store it in the local storage
+      // eslint-disable-next-line no-param-reassign
+      ydoc.isDirty = true;
       if (ydoc === docs.get(docName)) { // make sure this ydoc is still active
         try {
           await storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
@@ -495,10 +501,17 @@ export const persistence = {
     ydoc.on('update', debounce(async () => {
       // If we receive an update on the document, store it in da-admin, but debounce it
       // to avoid excessive da-admin calls.
-      if (saving || !current || ydoc !== docs.get(docName)) return;
+      if (saving) {
+        // eslint-disable-next-line no-console
+        console.log('[docroom] Skip save: concurrent save in progress', docName);
+        return;
+      }
+      if (!current || ydoc !== docs.get(docName)) return;
       saving = true;
       try {
         current = await persistence.update(ydoc, current, docName);
+        // eslint-disable-next-line no-param-reassign
+        ydoc.isDirty = false;
       } finally {
         saving = false;
       }
@@ -723,6 +736,8 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
 
   // eslint-disable-next-line no-param-reassign
   conn.binaryType = 'arraybuffer';
+  // eslint-disable-next-line no-param-reassign
+  conn.connectedAt = Date.now();
 
   // Register close listener BEFORE any async operation so cleanup always fires,
   // even if the client disconnects while the document is still loading.
