@@ -1,3 +1,10 @@
+## [1.2.7](https://github.com/adobe/da-collab/compare/v1.2.6...v1.2.7) (2026-05-13)
+
+
+### Bug Fixes
+
+* guard persistence.put against empty-stub overwrites (COR-31) ([#142](https://github.com/adobe/da-collab/issues/142)) ([037976a](https://github.com/adobe/da-collab/commit/037976ac47fcf6a82dca747bd59f2b555c525486))
+
 ## [1.2.6](https://github.com/adobe/da-collab/compare/v1.2.5...v1.2.6) (2026-05-12)
 
 
