@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/adobe/da-collab/compare/v1.4.0...v1.4.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* **docroom:** include docName in da-admin restore failure log ([#146](https://github.com/adobe/da-collab/issues/146)) ([779963d](https://github.com/adobe/da-collab/commit/779963d7adc278c4594a0674d3162768737d808c))
+
 # [1.4.0](https://github.com/adobe/da-collab/compare/v1.3.0...v1.4.0) (2026-05-13)
 
 
