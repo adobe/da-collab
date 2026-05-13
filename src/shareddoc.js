@@ -55,8 +55,12 @@ const MAX_STORAGE_VALUE_SIZE = 131072;
 const EMPTY_DOC_SIZE = 83;
 
 function getDocType(docName) {
-  if (docName.endsWith('.json')) return 'json';
-  if (docName.endsWith('.html')) return 'html';
+  if (docName.endsWith('.json')) {
+    return 'json';
+  }
+  if (docName.endsWith('.html')) {
+    return 'html';
+  }
   return 'html'; // default
 }
 
@@ -429,7 +433,9 @@ export const persistence = {
       }
     } catch (error) {
       logError(error, '[docroom] Problem restoring state from worker storage', error);
-      if (!isExpectedPlatformEvent(error)) showError(ydoc, error);
+      if (!isExpectedPlatformEvent(error)) {
+        showError(ydoc, error);
+      }
     }
 
     if (!restored && current) {
@@ -484,7 +490,9 @@ export const persistence = {
             console.log('[docroom] Restored from da-admin', docName, docType);
           } catch (error) {
             logError(error, '[docroom] Problem restoring state from da-admin', docName, error, current);
-            if (!isExpectedPlatformEvent(error)) showError(ydoc, error);
+            if (!isExpectedPlatformEvent(error)) {
+              showError(ydoc, error);
+            }
           }
         }
       }, 1000);
@@ -509,7 +517,9 @@ export const persistence = {
         console.log('[docroom] Skip save: concurrent save in progress', docName);
         return;
       }
-      if (!current || ydoc !== docs.get(docName)) return;
+      if (!current || ydoc !== docs.get(docName)) {
+        return;
+      }
       saving = true;
       try {
         current = await persistence.update(ydoc, current, docName);
@@ -661,10 +671,14 @@ const readSyncMessage = (decoder, encoder, doc, readOnly, transactionOrigin) => 
       syncProtocol.readSyncStep1(decoder, encoder, doc);
       break;
     case syncProtocol.messageYjsSyncStep2:
-      if (!readOnly) syncProtocol.readSyncStep2(decoder, doc, transactionOrigin);
+      if (!readOnly) {
+        syncProtocol.readSyncStep2(decoder, doc, transactionOrigin);
+      }
       break;
     case syncProtocol.messageYjsUpdate:
-      if (!readOnly) syncProtocol.readUpdate(decoder, doc, transactionOrigin);
+      if (!readOnly) {
+        syncProtocol.readUpdate(decoder, doc, transactionOrigin);
+      }
       break;
     default:
       throw new Error('Unknown message type');
@@ -706,7 +720,9 @@ export const messageListener = (conn, doc, message) => {
     }
   } catch (err) {
     logError(err, '[docroom] messageListener - Message', err.stack, err);
-    if (!isExpectedPlatformEvent(err)) showError(doc, err);
+    if (!isExpectedPlatformEvent(err)) {
+      showError(doc, err);
+    }
   }
 };
 
@@ -754,7 +770,9 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
   // even if the client disconnects while the document is still loading.
   conn.addEventListener('close', () => {
     const doc = docs.get(docName);
-    if (doc) closeConn(doc, conn);
+    if (doc) {
+      closeConn(doc, conn);
+    }
   });
 
   // get doc, initialize if it does not exist yet
