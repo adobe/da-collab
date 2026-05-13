@@ -2216,7 +2216,9 @@ describe('Collab Test Suite', () => {
     const ydoc = new pss.WSSharedDoc(docName);
     const originalOn = ydoc.on.bind(ydoc);
     ydoc.on = (ev, handler) => {
-      if (ev === 'update') updObservers.push(handler);
+      if (ev === 'update') {
+        updObservers.push(handler);
+      }
       return originalOn(ev, handler);
     };
     pss.setYDoc(docName, ydoc);
