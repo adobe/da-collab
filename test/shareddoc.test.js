@@ -937,6 +937,7 @@ describe('Collab Test Suite', () => {
 
     assert(typeof ydoc.flushSave === 'function', 'flushSave must be set after bindState');
 
+    ydoc.hasClientChanged = true;
     await ydoc.flushSave();
 
     assert.equal(1, putCalls.length, 'PUT must be called once with pending changes');
