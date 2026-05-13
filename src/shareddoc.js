@@ -456,7 +456,7 @@ export const persistence = {
             // eslint-disable-next-line no-console
             console.log('[docroom] Restored from da-admin', docName, docType);
           } catch (error) {
-            logError(error, '[docroom] Problem restoring state from da-admin', error, current);
+            logError(error, '[docroom] Problem restoring state from da-admin', docName, error, current);
             if (!isExpectedPlatformEvent(error)) showError(ydoc, error);
           }
         }
