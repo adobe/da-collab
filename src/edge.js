@@ -146,7 +146,9 @@ export function wsAuthFailureResponse(reqHeaders, code, reason) {
   server.close(code, reason);
   const respHeaders = new Headers();
   const protocols = reqHeaders.get('sec-websocket-protocol')?.split(',');
-  if (protocols?.includes('yjs')) respHeaders.set('sec-websocket-protocol', 'yjs');
+  if (protocols?.includes('yjs')) {
+    respHeaders.set('sec-websocket-protocol', 'yjs');
+  }
   return new Response(null, { status: 101, headers: respHeaders, webSocket: client });
 }
 
