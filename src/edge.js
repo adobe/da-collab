@@ -130,6 +130,27 @@ async function handleApiCall(url, request, env) {
 }
 
 /**
+ * Build a 101 response whose server-side WebSocket has already been closed
+ * with a custom code. This lets the client distinguish auth failures
+ * (CloseEvent.code 4401/4403) from generic handshake failures, which the
+ * browser would otherwise surface only as opaque code 1006.
+ *
+ * @param {Headers} reqHeaders
+ * @param {number} code - close code in the application range (4000-4999)
+ * @param {string} reason
+ */
+export function wsAuthFailureResponse(reqHeaders, code, reason) {
+  // eslint-disable-next-line no-undef
+  const [client, server] = new WebSocketPair();
+  server.accept();
+  server.close(code, reason);
+  const respHeaders = new Headers();
+  const protocols = reqHeaders.get('sec-websocket-protocol')?.split(',');
+  if (protocols?.includes('yjs')) respHeaders.set('sec-websocket-protocol', 'yjs');
+  return new Response(null, { status: 101, headers: respHeaders, webSocket: client });
+}
+
+/**
  * This is where the requests for the worker come in. They can either be pure API requests or
  * requests to set up a session with a Durable Object through a Yjs WebSocket.
  *
@@ -192,6 +213,17 @@ export async function handleApiRequest(request, env) {
     if (!initialReq.ok) {
       // eslint-disable-next-line no-console
       console.log(`[worker] Unable to get resource ${docName}: ${initialReq.status} - ${initialReq.statusText}`);
+      // For WebSocket upgrades, signal auth failures via a CloseEvent code so the
+      // client can refresh its token and reconnect (4401) or stop trying (4403).
+      // Otherwise the browser sees only a generic 1006.
+      if (request.headers.get('Upgrade') === 'websocket') {
+        if (initialReq.status === 401) {
+          return wsAuthFailureResponse(request.headers, 4401, 'auth');
+        }
+        if (initialReq.status === 403) {
+          return wsAuthFailureResponse(request.headers, 4403, 'forbidden');
+        }
+      }
       return new Response('unable to get resource', { status: initialReq.status });
     }
 
