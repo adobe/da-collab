@@ -1,3 +1,10 @@
+## [1.4.2](https://github.com/adobe/da-collab/compare/v1.4.1...v1.4.2) (2026-05-15)
+
+
+### Bug Fixes
+
+* **edge:** signal WebSocket auth failures with custom close codes ([#149](https://github.com/adobe/da-collab/issues/149)) ([5b192a9](https://github.com/adobe/da-collab/commit/5b192a9f730702c5cbd247ff7c21506cd63a381d))
+
 ## [1.4.1](https://github.com/adobe/da-collab/compare/v1.4.0...v1.4.1) (2026-05-13)
 
 
