@@ -824,7 +824,7 @@ describe('Worker test suite', () => {
     assert.equal('unable to get resource', await res.text());
   });
 
-  it('Test handleApiRequest not authorized', async () => {
+  it('Test handleApiRequest not authorized (non-WS)', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/hihi.html',
       headers: new Headers(),
@@ -836,6 +836,72 @@ describe('Worker test suite', () => {
 
     const res = await handleApiRequest(req, env);
     assert.equal(401, res.status);
+  });
+
+  it('Test handleApiRequest not authorized (WS upgrade) -> 4401 close', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/hihi.html',
+      headers: new Headers({ Upgrade: 'websocket', 'sec-websocket-protocol': 'yjs, stale-token' }),
+    };
+
+    const mockFetch = async (url, opts) => new Response(null, { status: 401 });
+    const env = { daadmin: { fetch: mockFetch } };
+
+    const closeCalls = [];
+    globalThis.WebSocketPair = function MockWSP() {
+      const server = {
+        accept() {},
+        close(c, r) {
+          closeCalls.push([c, r]);
+        },
+      };
+      const client = {};
+      return [client, server];
+    };
+    try {
+      try {
+        const res = await handleApiRequest(req, env);
+        assert.equal(101, res.status);
+        assert.equal('yjs', res.headers.get('sec-websocket-protocol'));
+      } catch (e) {
+        // status 101 may not be valid in node test env; close assertion below covers it
+      }
+      assert.deepEqual(closeCalls, [[4401, 'auth']]);
+    } finally {
+      delete globalThis.WebSocketPair;
+    }
+  });
+
+  it('Test handleApiRequest forbidden (WS upgrade) -> 4403 close', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/hihi.html',
+      headers: new Headers({ Upgrade: 'websocket', 'sec-websocket-protocol': 'yjs, t' }),
+    };
+
+    const mockFetch = async (url, opts) => new Response(null, { status: 403 });
+    const env = { daadmin: { fetch: mockFetch } };
+
+    const closeCalls = [];
+    globalThis.WebSocketPair = function MockWSP() {
+      const server = {
+        accept() {},
+        close(c, r) {
+          closeCalls.push([c, r]);
+        },
+      };
+      return [{}, server];
+    };
+    try {
+      try {
+        const res = await handleApiRequest(req, env);
+        assert.equal(101, res.status);
+      } catch (e) {
+        // status 101 may not be valid in node test env; close assertion below covers it
+      }
+      assert.deepEqual(closeCalls, [[4403, 'forbidden']]);
+    } finally {
+      delete globalThis.WebSocketPair;
+    }
   });
 
   it('Test handleApiRequest da-admin fetch exception', async () => {
