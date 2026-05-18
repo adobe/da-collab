@@ -423,6 +423,72 @@ describe('Collab Test Suite', () => {
     await testCloseAllOnAuthFailure(403);
   });
 
+  async function testMarksUnsavedOnAuthFailure(httpError) {
+    const mockDoc2Aem = () => 'Svr content update';
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': { doc2aem: mockDoc2Aem },
+    });
+
+    const storageState = new Map();
+    const mockYDoc = {
+      conns: new Map().set('foo', 'bar'),
+      name: 'http://foo.bar/0/123.html',
+      hasClientChanged: true,
+      getMap(nm) { return nm === 'error' ? new Map() : null; },
+      transact: (f) => f(),
+      storage: {
+        async put(k, v) { storageState.set(k, v); },
+        async delete(k) { storageState.delete(k); },
+        async get(k) { return storageState.get(k); },
+      },
+    };
+
+    pss.persistence.put = async () => ({ ok: false, status: httpError, statusText: 'Unauthorized' });
+    pss.persistence.closeConn = () => {};
+
+    await pss.persistence.update(mockYDoc, 'Svr content', 'test.html');
+
+    assert.strictEqual(
+      storageState.get('unsavedSinceSave'),
+      true,
+      `unsavedSinceSave marker must be set after ${httpError}`,
+    );
+  }
+
+  it('Test persistence update marks unsavedSinceSave on 401/403', async () => {
+    await testMarksUnsavedOnAuthFailure(401);
+    await testMarksUnsavedOnAuthFailure(403);
+  });
+
+  it('Test persistence update clears unsavedSinceSave on successful put', async () => {
+    const mockDoc2Aem = () => 'Svr content update';
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': { doc2aem: mockDoc2Aem },
+    });
+
+    const storageState = new Map([['unsavedSinceSave', true]]);
+    const mockYDoc = {
+      conns: { keys() { return [{}]; } },
+      name: 'http://foo.bar/0/123.html',
+      hasClientChanged: true,
+      storage: {
+        async put(k, v) { storageState.set(k, v); },
+        async delete(k) { storageState.delete(k); },
+        async get(k) { return storageState.get(k); },
+      },
+    };
+
+    pss.persistence.put = async () => ({ ok: true, status: 201, statusText: 'Created' });
+
+    await pss.persistence.update(mockYDoc, 'Svr content', 'test.html');
+
+    assert.strictEqual(
+      storageState.has('unsavedSinceSave'),
+      false,
+      'unsavedSinceSave marker must be cleared after a successful save',
+    );
+  });
+
   it('Test persistence update skips PUT when content is empty stub and no client edit', async () => {
     // Reproduces COR-31 / COR-28: an unedited ydoc whose doc2aem output is the
     // deterministic empty stub must NOT overwrite real content in da-admin.
@@ -1113,6 +1179,58 @@ describe('Collab Test Suite', () => {
     await wait(1500);
 
     assert.equal(0, aem2DocCalled.length, 'da-admin reload should be skipped when the client sent state first');
+  });
+
+  it('Test bindState trusts worker storage and skips da-admin reload when unsavedSinceSave marker is set', async () => {
+    // Regression: when a prior persist failed with 401/403, persistence.update
+    // sets an unsavedSinceSave marker in DO storage and the closeAll cascade
+    // destroys the doc. The next bindState reads worker storage (which holds
+    // the unsaved edits) — without the marker check it would notice
+    // fromStorage !== current and schedule the setTimeout reload from da-admin
+    // that wipes the user's edits.
+    const aem2DocCalled = [];
+    const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': { aem2doc: mockAem2Doc },
+    });
+
+    const docName = 'https://admin.da.live/source/org/repo/with-unsaved.html';
+
+    // Worker storage has yjs state with a client edit baked in
+    const seedYDoc = new Y.Doc();
+    seedYDoc.getMap('edits').set('typed', 'while-token-expired');
+    const storedState = Y.encodeStateAsUpdate(seedYDoc);
+    const storageMap = new Map();
+    storageMap.set('doc', docName);
+    storageMap.set('docstore', storedState);
+    storageMap.set('unsavedSinceSave', true);
+
+    const mockStorage = {
+      list: async () => storageMap,
+      get: async (k) => storageMap.get(k),
+    };
+
+    const testYDoc = new Y.Doc();
+    testYDoc.daadmin = 'daadmin';
+    const mockConn = { auth: 'myauth', authActions: ['read'] };
+    pss.setYDoc(docName, testYDoc);
+
+    // da-admin returns a STALE version that doesn't include the unsaved edit.
+    pss.persistence.get = async () => '<main><div><p>stale-from-da-admin</p></div></main>';
+    pss.persistence.update = async () => {};
+
+    await pss.persistence.bindState(docName, testYDoc, mockConn, mockStorage);
+
+    // Wait past the 1s setTimeout window — the reload must NOT fire because
+    // the marker tells us storage is ahead of da-admin.
+    await wait(1500);
+
+    assert.equal(
+      0,
+      aem2DocCalled.length,
+      'aem2doc must NOT be invoked when unsavedSinceSave is set — storage is the source of truth',
+    );
+    assert.equal('while-token-expired', testYDoc.getMap('edits').get('typed'));
   });
 
   it('Test bindState still reloads from da-admin when no client update arrives before timeout', async () => {

@@ -366,11 +366,33 @@ export const persistence = {
             }
           }
           closeAll = (status === 401 || status === 403 || status === 412);
+          if ((status === 401 || status === 403) && ydoc.storage) {
+            // Mark that worker storage holds edits that never reached da-admin.
+            // bindState on the next reconnect will see this and skip its
+            // setTimeout fallback that reloads from the (stale) da-admin
+            // snapshot — which would otherwise silently overwrite the
+            // user's typed-but-unsaved edits when the rooted closeAll
+            // cascade below tears the doc down.
+            try {
+              await ydoc.storage.put('unsavedSinceSave', true);
+            } catch (markErr) {
+              // eslint-disable-next-line no-console
+              console.error('[docroom] Failed to mark unsavedSinceSave', markErr);
+            }
+          }
           throw new Error(`${status} - ${statusText}`);
         }
 
         // eslint-disable-next-line no-console
         console.log('[docroom] Saved to da-admin', docName, `${content.length}b`);
+        if (ydoc.storage) {
+          // Clear the unsaved-since-save marker now that da-admin has the
+          // current content. Tolerated failure — the marker is a hint, not
+          // a correctness requirement for this save's success.
+          try {
+            await ydoc.storage.delete('unsavedSinceSave');
+          } catch { /* ignore */ }
+        }
         return content;
       }
     } catch (err) {
@@ -411,6 +433,15 @@ export const persistence = {
     current = await persistence.get(docName, conn.auth, ydoc.daadmin);
     const timingDaAdminGetDuration = Date.now() - timingBeforeDaAdminGet;
 
+    // If the previous incarnation of this room tore down on a persist 401/403,
+    // worker storage holds edits that never made it to da-admin. Read the
+    // marker before applying any state so the fallback below trusts storage
+    // instead of overwriting it with the stale da-admin snapshot.
+    let unsavedSinceSave = false;
+    try {
+      unsavedSinceSave = !!(await storage.get('unsavedSinceSave'));
+    } catch { /* non-fatal — marker is a hint */ }
+
     // Read the stored state from internal worker storage (errors are non-fatal)
     try {
       const timingBeforeReadState = Date.now();
@@ -429,6 +460,13 @@ export const persistence = {
 
           // eslint-disable-next-line no-console
           console.log('[docroom] Restored from worker persistence', docName);
+        } else if (unsavedSinceSave) {
+          // Worker storage diverges from da-admin because the last persist
+          // failed with 401/403, not because da-admin moved ahead. Treat
+          // storage as the source of truth and skip the da-admin fallback.
+          restored = true;
+          // eslint-disable-next-line no-console
+          console.log('[docroom] Trusting worker persistence (unsaved-since-save marker set)', docName);
         }
       }
     } catch (error) {
