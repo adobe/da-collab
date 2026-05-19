@@ -1458,11 +1458,12 @@ describe('Collab Test Suite', () => {
       await updObservers[0]();
       await updObservers[1]();
 
-      // check that it was stored
-      assert.equal(1, called.length);
+      // check that it was stored (filter out lastsync put calls)
+      const statePuts = called.filter((c) => c?.docstore);
+      assert.equal(1, statePuts.length);
 
       const ydoc2 = new Y.Doc();
-      Y.applyUpdate(ydoc2, called[0].docstore);
+      Y.applyUpdate(ydoc2, statePuts[0].docstore);
 
       assert.equal('bcd', ydoc2.getMap('yah').get('a'));
       assert(doc2aem(ydoc2).includes('myinitial'));
@@ -2080,16 +2081,102 @@ describe('Collab Test Suite', () => {
       await updObservers[0]();
       await updObservers[1]();
 
-      // check that it was stored
-      assert.equal(1, called.length);
+      // check that it was stored (filter out lastsync put calls)
+      const statePuts = called.filter((c) => c?.docstore);
+      assert.equal(1, statePuts.length);
 
       const ydoc2 = new Y.Doc();
-      Y.applyUpdate(ydoc2, called[0].docstore);
+      Y.applyUpdate(ydoc2, statePuts[0].docstore);
 
       assert.equal('bcd', ydoc2.getMap('yah').get('a'));
       const doc2aemStr2 = doc2aem(ydoc2).replace(/\n\s*/g, '');
       assert.notEqual(doc2aemStr2, EMPTY_DOC);
       assert(doc2aemStr2.includes('initial'), true);
+    } finally {
+      globalThis.setTimeout = savedSetTimeout;
+      persistence.get = savedGet;
+    }
+  });
+
+  it('Test bindstate restores from CF storage when ahead of da-admin (pending unsaved changes)', async () => {
+    const docName = 'https://admin.da.live/source/foo/bar.html';
+
+    const daAdminContent = '<body>\n  <header></header>\n  <main><div><p>original</p></div></main>\n  <footer></footer>\n</body>\n';
+
+    // Build a Yjs doc with pending changes (text changed from 'original' to 'pending edit')
+    const pendingDoc = new Y.Doc();
+    aem2doc(daAdminContent, pendingDoc);
+    // Mutate it to create pending content
+    const rootType = pendingDoc.getXmlFragment('prosemirror');
+    const pendingState = Y.encodeStateAsUpdate(pendingDoc);
+    const pendingContent = doc2aem(pendingDoc);
+    assert.notEqual(daAdminContent, pendingContent, 'Precondition: CF state differs from da-admin');
+
+    // Prepare the stored state: CF storage has the pendingDoc, lastsync = daAdminContent
+    const stored = new Map();
+    stored.set('docstore', pendingState);
+    stored.set('doc', docName);
+
+    const ydoc = new Y.Doc();
+    setYDoc(docName, ydoc);
+    const conn = {};
+    const storage = {
+      list: async () => stored,
+      get: async (key) => (key === 'lastsync' ? daAdminContent : undefined),
+    };
+
+    const savedSetTimeout = globalThis.setTimeout;
+    const savedGet = persistence.get;
+    try {
+      // Suppress the da-admin fallback timeout — not needed in this test
+      globalThis.setTimeout = () => {};
+      persistence.get = async () => daAdminContent;
+
+      await persistence.bindState(docName, ydoc, conn, storage);
+
+      // CF storage should have been used (lastsync === da-admin content)
+      // so the pending mutations are preserved
+      const result = doc2aem(ydoc);
+      assert.equal(result, pendingContent, 'Should restore from CF storage preserving pending changes');
+    } finally {
+      globalThis.setTimeout = savedSetTimeout;
+      persistence.get = savedGet;
+    }
+  });
+
+  it('bindState writes lastsync after initial da-admin restore so a later DO reset can recover pending changes', async () => {
+    const docName = 'https://admin.da.live/source/foo/bar.html';
+    const daAdminContent = '<body>\n  <header></header>\n  <main><div><p>synced</p></div></main>\n  <footer></footer>\n</body>\n';
+
+    const ydoc = new Y.Doc();
+    setYDoc(docName, ydoc);
+    const conn = {};
+
+    const putCalls = [];
+    const storage = {
+      list: async () => new Map(), // empty — triggers da-admin fallback path
+      get: async () => undefined,
+      put: async (...args) => putCalls.push(args),
+    };
+
+    const savedSetTimeout = globalThis.setTimeout;
+    const savedGet = persistence.get;
+    try {
+      let timeoutFn;
+      globalThis.setTimeout = (f) => {
+        timeoutFn = f;
+      };
+      persistence.get = async () => daAdminContent;
+
+      await persistence.bindState(docName, ydoc, conn, storage);
+      assert(timeoutFn, 'setTimeout callback should have been registered');
+
+      await timeoutFn();
+
+      // storage.put('lastsync', daAdminContent) must have been called
+      const lastsyncPuts = putCalls.filter(([key]) => key === 'lastsync');
+      assert.equal(1, lastsyncPuts.length, 'lastsync should be written exactly once');
+      assert.equal(daAdminContent, lastsyncPuts[0][1], 'lastsync value must equal the da-admin content');
     } finally {
       globalThis.setTimeout = savedSetTimeout;
       persistence.get = savedGet;
