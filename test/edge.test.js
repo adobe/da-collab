@@ -848,13 +848,12 @@ describe('Worker test suite', () => {
     const mockFetch = async (url, opts) => new Response(null, { status: 401 });
     const env = { daadmin: { fetch: mockFetch } };
 
-    const closeCalls = [];
-    const addedListeners = [];
+    const ops = [];
     globalThis.WebSocketPair = function MockWSP() {
       const server = {
-        accept() {},
-        addEventListener(type) { addedListeners.push(type); },
-        close(c, r) { closeCalls.push([c, r]); },
+        accept() { ops.push('accept'); },
+        send(msg) { ops.push(['send', msg]); },
+        close(c, r) { ops.push(['close', c, r]); },
       };
       const client = {};
       return [client, server];
@@ -867,9 +866,8 @@ describe('Worker test suite', () => {
       } catch (e) {
         // status 101 may not be valid in node test env; close assertion below covers it
       }
-      assert.deepEqual(closeCalls, [[4401, 'auth']]);
-      assert.ok(addedListeners.includes('error'), 'error listener must be registered to suppress CF "Network connection lost." exceptions');
-      assert.ok(addedListeners.includes('close'), 'close listener must be registered');
+      // send() must precede close() — CF requires it to avoid "Network connection lost." exception
+      assert.deepEqual(ops, ['accept', ['send', 'auth'], ['close', 4401, 'auth']]);
     } finally {
       delete globalThis.WebSocketPair;
     }
@@ -884,13 +882,12 @@ describe('Worker test suite', () => {
     const mockFetch = async (url, opts) => new Response(null, { status: 403 });
     const env = { daadmin: { fetch: mockFetch } };
 
-    const closeCalls = [];
-    const addedListeners = [];
+    const ops = [];
     globalThis.WebSocketPair = function MockWSP() {
       const server = {
-        accept() {},
-        addEventListener(type) { addedListeners.push(type); },
-        close(c, r) { closeCalls.push([c, r]); },
+        accept() { ops.push('accept'); },
+        send(msg) { ops.push(['send', msg]); },
+        close(c, r) { ops.push(['close', c, r]); },
       };
       return [{}, server];
     };
@@ -901,9 +898,8 @@ describe('Worker test suite', () => {
       } catch (e) {
         // status 101 may not be valid in node test env; close assertion below covers it
       }
-      assert.deepEqual(closeCalls, [[4403, 'forbidden']]);
-      assert.ok(addedListeners.includes('error'), 'error listener must be registered to suppress CF "Network connection lost." exceptions');
-      assert.ok(addedListeners.includes('close'), 'close listener must be registered');
+      // send() must precede close() — CF requires it to avoid "Network connection lost." exception
+      assert.deepEqual(ops, ['accept', ['send', 'forbidden'], ['close', 4403, 'forbidden']]);
     } finally {
       delete globalThis.WebSocketPair;
     }

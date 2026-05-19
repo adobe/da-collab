@@ -144,8 +144,9 @@ export function wsAuthFailureResponse(reqHeaders, code, reason) {
   // eslint-disable-next-line no-undef
   const [client, server] = new WebSocketPair();
   server.accept();
-  server.addEventListener('error', () => {});
-  server.addEventListener('close', () => {});
+  // CF Workers requires at least one send() before close(); without it, close() throws
+  // a runtime-level "Network connection lost." exception that bypasses event listeners.
+  server.send(reason);
   server.close(code, reason);
   const respHeaders = new Headers();
   const protocols = reqHeaders.get('sec-websocket-protocol')?.split(',');
