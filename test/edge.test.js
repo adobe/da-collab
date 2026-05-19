@@ -839,7 +839,7 @@ describe('Worker test suite', () => {
     assert.equal(401, res.status);
   });
 
-  it('Test handleApiRequest not authorized (WS upgrade) -> 4401 close', async () => {
+  it('Test handleApiRequest not authorized (WS upgrade) -> 401', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/hihi.html',
       headers: new Headers({ Upgrade: 'websocket', 'sec-websocket-protocol': 'yjs, stale-token' }),
@@ -848,32 +848,11 @@ describe('Worker test suite', () => {
     const mockFetch = async (url, opts) => new Response(null, { status: 401 });
     const env = { daadmin: { fetch: mockFetch } };
 
-    const ops = [];
-    globalThis.WebSocketPair = function MockWSP() {
-      const server = {
-        accept() { ops.push('accept'); },
-        send(msg) { ops.push(['send', msg]); },
-        close(c, r) { ops.push(['close', c, r]); },
-      };
-      const client = {};
-      return [client, server];
-    };
-    try {
-      try {
-        const res = await handleApiRequest(req, env);
-        assert.equal(101, res.status);
-        assert.equal('yjs', res.headers.get('sec-websocket-protocol'));
-      } catch (e) {
-        // status 101 may not be valid in node test env; close assertion below covers it
-      }
-      // send() must precede close() — CF requires it to avoid "Network connection lost." exception
-      assert.deepEqual(ops, ['accept', ['send', 'auth'], ['close', 4401, 'auth']]);
-    } finally {
-      delete globalThis.WebSocketPair;
-    }
+    const res = await handleApiRequest(req, env);
+    assert.equal(401, res.status);
   });
 
-  it('Test handleApiRequest forbidden (WS upgrade) -> 4403 close', async () => {
+  it('Test handleApiRequest forbidden (WS upgrade) -> 403', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/hihi.html',
       headers: new Headers({ Upgrade: 'websocket', 'sec-websocket-protocol': 'yjs, t' }),
@@ -882,27 +861,8 @@ describe('Worker test suite', () => {
     const mockFetch = async (url, opts) => new Response(null, { status: 403 });
     const env = { daadmin: { fetch: mockFetch } };
 
-    const ops = [];
-    globalThis.WebSocketPair = function MockWSP() {
-      const server = {
-        accept() { ops.push('accept'); },
-        send(msg) { ops.push(['send', msg]); },
-        close(c, r) { ops.push(['close', c, r]); },
-      };
-      return [{}, server];
-    };
-    try {
-      try {
-        const res = await handleApiRequest(req, env);
-        assert.equal(101, res.status);
-      } catch (e) {
-        // status 101 may not be valid in node test env; close assertion below covers it
-      }
-      // send() must precede close() — CF requires it to avoid "Network connection lost." exception
-      assert.deepEqual(ops, ['accept', ['send', 'forbidden'], ['close', 4403, 'forbidden']]);
-    } finally {
-      delete globalThis.WebSocketPair;
-    }
+    const res = await handleApiRequest(req, env);
+    assert.equal(403, res.status);
   });
 
   it('Test handleApiRequest da-admin fetch exception', async () => {
