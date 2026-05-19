@@ -1,3 +1,10 @@
+## [1.5.2](https://github.com/adobe/da-collab/compare/v1.5.1...v1.5.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* **edge:** send() before close() to prevent CF runtime exception ([38f8b90](https://github.com/adobe/da-collab/commit/38f8b907ccf65499dae120449c74aace488c6816))
+
 ## [1.5.1](https://github.com/adobe/da-collab/compare/v1.5.0...v1.5.1) (2026-05-19)
 
 
