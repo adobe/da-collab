@@ -46,6 +46,8 @@ const docs = new Map();
 
 const messageSync = 0;
 const messageAwareness = 1;
+export const messageFlushRequest = 2;
+export const messageFlushResponse = 3;
 const MAX_STORAGE_KEYS = 128;
 const MAX_STORAGE_VALUE_SIZE = 131072;
 // Matches da-admin EMPTY_DOC_SIZE — the byte-length of doc2aem(empty ydoc).
@@ -371,6 +373,18 @@ export const persistence = {
 
         // eslint-disable-next-line no-console
         console.log('[docroom] Saved to da-admin', docName, `${content.length}b`);
+        // Record what we just PUT so that on DO restart we can tell whether
+        // CF storage is ahead of da-admin (safe to use) vs. da-admin was
+        // externally modified (must use da-admin).
+        if (ydoc.storage?.put) {
+          try {
+            await ydoc.storage.put('lastsync', content);
+          } catch (storageErr) {
+            // non-fatal: worst case the restore falls back to da-admin
+            // eslint-disable-next-line no-console
+            console.error('[docroom] Failed to write lastsync marker', storageErr);
+          }
+        }
         return content;
       }
     } catch (err) {
@@ -420,15 +434,22 @@ export const persistence = {
       if (stored && stored.length > 0) {
         Y.applyUpdate(ydoc, stored);
 
-        // Check if the state from the worker storage is the same as the current state in da-admin.
-        // So for example if da-admin doesn't have the doc any more, or if it has been altered in
-        // another way, we don't use the state of the worker storage.
+        // CF storage is valid to use if:
+        // 1. Its rendered content matches da-admin exactly (nothing pending), OR
+        // 2. da-admin still has the same content as the last successful sync —
+        //    meaning CF storage is ahead of da-admin (unsaved pending changes) but
+        //    was built on top of it. Using CF storage preserves those pending changes.
+        //    This correctly handles DO migration while a debounced save is in flight.
+        //    If da-admin was externally modified since the last sync, lastSynced !==
+        //    current, so we fall back to da-admin (external edit wins).
         const fromStorage = docType === 'json' ? doc2json(ydoc) : doc2aem(ydoc);
-        if (fromStorage === current) {
+        const lastSynced = storage.get ? await storage.get('lastsync') : undefined;
+        if (fromStorage === current || lastSynced === current) {
           restored = true;
 
+          const syncState = fromStorage === current ? '(in sync with da-admin)' : '(has pending unsaved changes)';
           // eslint-disable-next-line no-console
-          console.log('[docroom] Restored from worker persistence', docName);
+          console.log('[docroom] Restored from worker persistence', docName, syncState);
         }
       }
     } catch (error) {
@@ -451,7 +472,7 @@ export const persistence = {
       // and we must NOT overwrite with the stale da-admin snapshot.
       const svBefore = Y.encodeStateVector(ydoc);
 
-      setTimeout(() => {
+      setTimeout(async () => {
         if (ydoc === docs.get(docName)) {
           const svAfter = Y.encodeStateVector(ydoc);
           const clientHasUpdated = svBefore.length !== svAfter.length
@@ -459,39 +480,53 @@ export const persistence = {
           if (clientHasUpdated) {
             // eslint-disable-next-line no-console
             console.log('[docroom] Skipping da-admin reload: client state received', docName);
-            return;
-          }
-          try {
-            ydoc.transact(() => {
-              if (docType === 'json') {
-                // Clear JSON structure
-                const ysheets = ydoc.getArray('sheets');
-                if (ysheets.length > 0) {
-                  ysheets.delete(0, ysheets.length);
-                }
-                // restore from da-admin
-                json2doc(current, ydoc);
-              } else {
-                // Clear HTML structure
-                const rootType = ydoc.getXmlFragment('prosemirror');
-                rootType.delete(0, rootType.length);
-                // clear all maps
-                ydoc.share.forEach((type) => {
-                  if (type instanceof Y.Map) {
-                    type.clear();
+          } else {
+            try {
+              ydoc.transact(() => {
+                if (docType === 'json') {
+                  // Clear JSON structure
+                  const ysheets = ydoc.getArray('sheets');
+                  if (ysheets.length > 0) {
+                    ysheets.delete(0, ysheets.length);
                   }
-                });
-                // Restore from da-admin
-                aem2doc(current, ydoc);
-              }
-            });
+                  // restore from da-admin
+                  json2doc(current, ydoc);
+                } else {
+                  // Clear HTML structure
+                  const rootType = ydoc.getXmlFragment('prosemirror');
+                  rootType.delete(0, rootType.length);
+                  // clear all maps
+                  ydoc.share.forEach((type) => {
+                    if (type instanceof Y.Map) {
+                      type.clear();
+                    }
+                  });
+                  // Restore from da-admin
+                  aem2doc(current, ydoc);
+                }
+              });
 
-            // eslint-disable-next-line no-console
-            console.log('[docroom] Restored from da-admin', docName, docType);
-          } catch (error) {
-            logError(error, '[docroom] Problem restoring state from da-admin', docName, error, current);
-            if (!isExpectedPlatformEvent(error)) {
-              showError(ydoc, error);
+              // eslint-disable-next-line no-console
+              console.log('[docroom] Restored from da-admin', docName, docType);
+            } catch (error) {
+              logError(error, '[docroom] Problem restoring state from da-admin', docName, error, current);
+              if (!isExpectedPlatformEvent(error)) {
+                showError(ydoc, error);
+              }
+            }
+          }
+
+          // Write lastsync anchor regardless of whether we restored or the client
+          // had already sent updates. CF storage is now anchored to `current`, so
+          // on DO restart we can detect it as a valid continuation even if no PUT
+          // to da-admin has happened yet.
+          if (storage?.put) {
+            try {
+              await storage.put('lastsync', current);
+            } catch (storageErr) {
+              // non-fatal
+              // eslint-disable-next-line no-console
+              console.error('[docroom] Failed to write lastsync after da-admin fetch', storageErr);
             }
           }
         }
@@ -511,23 +546,26 @@ export const persistence = {
     });
 
     let saving = false;
+    let savingPromise = null;
     const saveToAdmin = async () => {
       if (saving) {
-        // eslint-disable-next-line no-console
-        console.log('[docroom] Skip save: concurrent save in progress', docName);
         return;
       }
       if (!current || ydoc !== docs.get(docName)) {
         return;
       }
       saving = true;
-      try {
-        current = await persistence.update(ydoc, current, docName);
-        // eslint-disable-next-line no-param-reassign
-        ydoc.hasClientChanged = false;
-      } finally {
-        saving = false;
-      }
+      savingPromise = (async () => {
+        try {
+          current = await persistence.update(ydoc, current, docName);
+          // eslint-disable-next-line no-param-reassign
+          ydoc.hasClientChanged = false;
+        } finally {
+          saving = false;
+          savingPromise = null;
+        }
+      })();
+      await savingPromise;
     };
 
     const debouncedSave = debounce(saveToAdmin, 2000, { maxWait: 10000 });
@@ -535,7 +573,16 @@ export const persistence = {
 
     ydoc.flushSave = async () => {
       debouncedSave.cancel();
+      // If a save is already in flight, wait for it to complete before
+      // starting a new one — ensures the ack is not sent before the PUT finishes.
+      if (savingPromise) {
+        await savingPromise;
+      }
       await saveToAdmin();
+    };
+
+    ydoc.cancelSave = () => {
+      debouncedSave.cancel();
     };
 
     const timingMap = new Map();
@@ -686,7 +733,7 @@ const readSyncMessage = (decoder, encoder, doc, readOnly, transactionOrigin) => 
   return messageType;
 };
 
-export const messageListener = (conn, doc, message) => {
+export const messageListener = async (conn, doc, message) => {
   let messageType;
   try {
     const encoder = encoding.createEncoder();
@@ -713,6 +760,22 @@ export const messageListener = (conn, doc, message) => {
       case messageAwareness: {
         awarenessProtocol
           .applyAwarenessUpdate(doc.awareness, decoding.readVarUint8Array(decoder), conn);
+        break;
+      }
+      case messageFlushRequest: {
+        const ackEncoder = encoding.createEncoder();
+        encoding.writeVarUint(ackEncoder, messageFlushResponse);
+        try {
+          if (doc.flushSave) {
+            await doc.flushSave();
+          }
+          encoding.writeVarUint(ackEncoder, 1); // ok
+        } catch (flushErr) {
+          logError(flushErr, '[docroom] flushSave failed', flushErr);
+          encoding.writeVarUint(ackEncoder, 0); // not ok
+          encoding.writeVarString(ackEncoder, flushErr.message || 'flush failed');
+        }
+        send(doc, conn, encoding.toUint8Array(ackEncoder));
         break;
       }
       default:
@@ -756,9 +819,11 @@ export const invalidateFromAdmin = async (docName) => {
  * @param {string} docName - The name of the document
  * @param {object} env - The durable object environment object
  * @param {TransactionalStorage} storage - The worker transactional storage object
+ * @param {boolean} hibernation - When true, skip event listener registration (CF Hibernation API
+ *   handles message/close routing via class methods instead of addEventListener).
  * @returns {Promise<void>} - The return value of this
  */
-export const setupWSConnection = async (conn, docName, env, storage) => {
+export const setupWSConnection = async (conn, docName, env, storage, hibernation = false) => {
   const timingData = new Map();
 
   // eslint-disable-next-line no-param-reassign
@@ -766,20 +831,25 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
   // eslint-disable-next-line no-param-reassign
   conn.connectedAt = Date.now();
 
-  // Register close listener BEFORE any async operation so cleanup always fires,
-  // even if the client disconnects while the document is still loading.
-  conn.addEventListener('close', () => {
-    const doc = docs.get(docName);
-    if (doc) {
-      closeConn(doc, conn);
-    }
-  });
+  if (!hibernation) {
+    // Register close listener BEFORE any async operation so cleanup always fires,
+    // even if the client disconnects while the document is still loading.
+    conn.addEventListener('close', () => {
+      const doc = docs.get(docName);
+      if (doc) {
+        closeConn(doc, conn);
+      }
+    });
+  }
 
   // get doc, initialize if it does not exist yet
   const doc = await getYDoc(docName, conn, env, storage, timingData, true);
 
-  // listen and reply to events
-  conn.addEventListener('message', (message) => messageListener(conn, doc, new Uint8Array(message.data)));
+  if (!hibernation) {
+    // listen and reply to events
+    conn.addEventListener('message', (message) => messageListener(conn, doc, new Uint8Array(message.data)));
+  }
+
   // put the following in a variables in a block so the interval handlers don't keep in in
   // scope
   try {
@@ -801,4 +871,37 @@ export const setupWSConnection = async (conn, docName, env, storage) => {
   }
 
   return timingData;
+};
+
+/**
+ * Handle an incoming WebSocket message from the Cloudflare Hibernation API.
+ * Re-establishes the Yjs session if the DO was hibernated (doc not in memory).
+ * @param {WebSocket} conn - The WebSocket connection
+ * @param {string} docName - The document name
+ * @param {object} env - The durable object environment
+ * @param {TransactionalStorage} storage - The durable object storage
+ * @param {ArrayBuffer|string} message - The raw message from the WebSocket
+ */
+export const handleWebSocketMessage = async (conn, docName, env, storage, message) => {
+  let doc = docs.get(docName);
+  if (!doc) {
+    // DO was hibernated; re-establish Yjs state without re-registering event listeners
+    await setupWSConnection(conn, docName, env, storage, true);
+    doc = docs.get(docName);
+  }
+  if (doc) {
+    messageListener(conn, doc, new Uint8Array(message));
+  }
+};
+
+/**
+ * Handle a WebSocket close event from the Cloudflare Hibernation API.
+ * @param {WebSocket} conn - The WebSocket connection
+ * @param {string} docName - The document name
+ */
+export const handleWebSocketClose = (conn, docName) => {
+  const doc = docs.get(docName);
+  if (doc) {
+    closeConn(doc, conn);
+  }
 };

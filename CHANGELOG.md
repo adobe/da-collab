@@ -1,3 +1,16 @@
+# [1.5.0](https://github.com/adobe/da-collab/compare/v1.4.2...v1.5.0) (2026-05-19)
+
+
+### Bug Fixes
+
+* preserve pending Yjs changes across DO evictions via lastsync CF storage marker ([#153](https://github.com/adobe/da-collab/issues/153)) ([defb16c](https://github.com/adobe/da-collab/commit/defb16c3479b8b703b49c8962ceb83c4bfe5b8f0))
+
+
+### Features
+
+* adopt Cloudflare WebSocket Hibernation API ([#137](https://github.com/adobe/da-collab/issues/137)) ([61e6000](https://github.com/adobe/da-collab/commit/61e6000db0bd101a45bac63c95dc8505008bbad3))
+* WebSocket flush protocol for force-save before Preview/Publish ([#152](https://github.com/adobe/da-collab/issues/152)) ([8bf0ff4](https://github.com/adobe/da-collab/commit/8bf0ff4b391de25fb031ce823497bea074d8818e))
+
 ## [1.4.2](https://github.com/adobe/da-collab/compare/v1.4.1...v1.4.2) (2026-05-15)
 
 
