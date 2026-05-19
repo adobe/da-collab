@@ -15,6 +15,15 @@ import assert from 'node:assert';
 import defaultEdge, { DocRoom, handleApiRequest, handleErrors } from '../src/edge.js';
 import { WSSharedDoc, persistence, setYDoc } from '../src/shareddoc.js';
 
+function makeCtx(storage = null) {
+  const accepted = [];
+  return {
+    storage,
+    accepted,
+    acceptWebSocket(ws) { accepted.push(ws); },
+  };
+}
+
 async function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -301,17 +310,17 @@ describe('Worker test suite', () => {
         return new Map();
       };
 
-      const wspCalled = [];
+      const attachCalled = [];
       const wsp0 = {};
       const wsp1 = {
-        accept() { wspCalled.push('accept'); },
-        addEventListener(type) { wspCalled.push(`addEventListener ${type}`); },
-        close() { wspCalled.push('close'); },
+        serializeAttachment(data) { attachCalled.push(data); },
+        close() {},
       };
       DocRoom.newWebSocketPair = () => [wsp0, wsp1];
 
       const daadmin = { blah: 1234 };
-      const dr = new DocRoom({ storage: null }, { daadmin });
+      const ctx = makeCtx(null);
+      const dr = new DocRoom(ctx, { daadmin });
       const headers = new Headers({
         Upgrade: 'websocket',
         Authorization: 'au123',
@@ -323,14 +332,22 @@ describe('Worker test suite', () => {
         url: 'http://localhost:4711/',
       };
 
-      // fetch returns the 101 immediately — accept() is synchronous, but the
-      // addEventListener calls happen in the async setupWSConnection.
+      // fetch returns 101 immediately; Hibernation API accepts the socket synchronously.
       const resp = await dr.fetch(req, {}, 306);
       assert.equal(resp.headers.get('sec-websocket-protocol'), undefined);
       assert.equal(306 /* fabricated websocket response code */, resp.status);
 
-      // accept() must have happened before the response was returned
-      assert(wspCalled.includes('accept'), 'accept must be called before returning 101');
+      // CF Hibernation API: acceptWebSocket must be called before the response is returned
+      assert.equal(1, ctx.accepted.length, 'acceptWebSocket must be called');
+      assert.equal(wsp1, ctx.accepted[0], 'acceptWebSocket called with server socket');
+
+      // serializeAttachment must carry docName and auth for hibernation recovery
+      assert.equal(1, attachCalled.length);
+      assert.equal('http://foo.bar/1/2/3.html', attachCalled[0].docName);
+      assert.equal('au123', attachCalled[0].auth);
+
+      // Auth set synchronously before initSession runs
+      assert.equal('au123', wsp1.auth);
 
       // Wait for the async session setup to complete
       await sleep(10);
@@ -338,19 +355,6 @@ describe('Worker test suite', () => {
       assert.equal(1, bindCalled.length);
       assert.equal('http://foo.bar/1/2/3.html', bindCalled[0].nm);
       assert.equal('1234', bindCalled[0].d.daadmin.blah);
-
-      assert.equal('au123', wsp1.auth);
-
-      const acceptIdx = wspCalled.indexOf('accept');
-      const alClsIdx = wspCalled.indexOf('addEventListener close');
-      const alMessIdx = wspCalled.indexOf('addEventListener message');
-      const clsIdx = wspCalled.indexOf('close');
-
-      assert(acceptIdx >= 0);
-      // close listener must be registered before message listener (early cleanup on disconnect)
-      assert(alClsIdx > acceptIdx, 'close listener registered after accept');
-      assert(alMessIdx > alClsIdx, 'message listener registered after close listener');
-      assert(clsIdx > alMessIdx, 'close called after listeners registered');
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
       persistence.bindState = savedBS;
@@ -366,14 +370,13 @@ describe('Worker test suite', () => {
 
       const wsp0 = {};
       const wsp1 = {
-        accept() { },
-        addEventListener(type) { },
-        close() { },
+        serializeAttachment() {},
+        close() {},
       };
       DocRoom.newWebSocketPair = () => [wsp0, wsp1];
 
       const daadmin = { blah: 1234 };
-      const dr = new DocRoom({ storage: null }, { daadmin });
+      const dr = new DocRoom(makeCtx(null), { daadmin });
       const headers = new Headers({
         Upgrade: 'websocket',
         Authorization: 'au123',
@@ -437,14 +440,13 @@ describe('Worker test suite', () => {
       const closeCalled = [];
       const wsp0 = {};
       const wsp1 = {
-        accept() {},
-        addEventListener() {},
+        serializeAttachment() {},
         close(...args) { closeCalled.push(args); },
       };
       DocRoom.newWebSocketPair = () => [wsp0, wsp1];
 
       const daadmin = { fetch: async () => ({ ok: true }) };
-      const dr = new DocRoom({ storage: null }, { daadmin });
+      const dr = new DocRoom(makeCtx(null), { daadmin });
       const headers = new Map();
       headers.set('Upgrade', 'websocket');
       headers.set('X-collab-room', 'http://foo.bar/test.html');
@@ -500,14 +502,13 @@ describe('Worker test suite', () => {
       const closeCalled = [];
       const wsp0 = {};
       const wsp1 = {
-        accept() {},
-        addEventListener() {},
+        serializeAttachment() {},
         close(...args) { closeCalled.push(args); },
       };
       DocRoom.newWebSocketPair = () => [wsp0, wsp1];
 
       const daadmin = { test: 'value' };
-      const dr = new DocRoom({ storage: null }, { daadmin });
+      const dr = new DocRoom(makeCtx(null), { daadmin });
       const headers = new Map();
       headers.set('Upgrade', 'websocket');
       headers.set('Authorization', 'au123');
@@ -1023,5 +1024,175 @@ describe('Worker test suite', () => {
     const json = await res.json();
     assert.equal('ok', json.status);
     assert.deepStrictEqual(['da-admin'], json.service_bindings);
+  });
+
+  it('Test DocRoom webSocketMessage restores auth and processes message (cold start)', async () => {
+    const savedBS = persistence.bindState;
+    try {
+      const bindCalled = [];
+      persistence.bindState = async (nm, d, c) => {
+        bindCalled.push({ nm, c });
+        return new Map();
+      };
+
+      const docName = 'http://foo.bar/cold-start.html';
+      // Doc is NOT in the map — simulates hibernation eviction
+
+      const closeCalled = [];
+      const mockConn = {
+        auth: undefined,
+        readOnly: undefined,
+        binaryType: undefined,
+        readyState: 1,
+        send() {},
+        close() { closeCalled.push('close'); },
+        deserializeAttachment() {
+          // authActions format: comma-separated values extracted after '=' from X-da-actions header
+          return { docName, auth: 'Bearer session-token', authActions: 'read,write' };
+        },
+      };
+
+      const dr = new DocRoom(makeCtx({}), { daadmin: {} });
+      const msg = new Uint8Array([0, 0]).buffer; // minimal message
+
+      await dr.webSocketMessage(mockConn, msg);
+
+      // Auth must be restored from the serialized attachment
+      assert.equal('Bearer session-token', mockConn.auth);
+      assert.equal(undefined, mockConn.readOnly); // write is in authActions
+      // Doc should have been initialized (bindState called)
+      assert.equal(1, bindCalled.length);
+      assert.equal(docName, bindCalled[0].nm);
+    } finally {
+      persistence.bindState = savedBS;
+    }
+  });
+
+  it('Test DocRoom webSocketMessage warm start (doc already in memory)', async () => {
+    const savedBS = persistence.bindState;
+    try {
+      const bindCalled = [];
+      persistence.bindState = async (nm) => {
+        bindCalled.push(nm);
+        return new Map();
+      };
+
+      const docName = 'http://foo.bar/warm-start.html';
+      const testYdoc = new WSSharedDoc(docName);
+      const mockConn = {
+        auth: undefined,
+        binaryType: undefined,
+        readyState: 1,
+        send() {},
+        close() {},
+        deserializeAttachment() {
+          return { docName, auth: 'Bearer warm-token', authActions: 'write' };
+        },
+      };
+      testYdoc.conns.set(mockConn, new Set());
+      setYDoc(docName, testYdoc);
+
+      try {
+        const dr = new DocRoom(makeCtx({}), { daadmin: {} });
+        const msg = new Uint8Array([0]).buffer;
+        await dr.webSocketMessage(mockConn, msg);
+
+        assert.equal('Bearer warm-token', mockConn.auth);
+        // Doc was in memory — bindState must NOT be called again
+        assert.equal(0, bindCalled.length);
+      } finally {
+        testYdoc.destroy();
+      }
+    } finally {
+      persistence.bindState = savedBS;
+    }
+  });
+
+  it('Test DocRoom webSocketClose cleans up connection', async () => {
+    const docName = 'http://foo.bar/ws-close.html';
+    const testYdoc = new WSSharedDoc(docName);
+
+    const closeCalled = [];
+    const mockConn = {
+      close() { closeCalled.push('close'); },
+      deserializeAttachment() {
+        return { docName, auth: 'test-auth', authActions: 'write=allow' };
+      },
+    };
+    testYdoc.conns.set(mockConn, new Set());
+    const m = setYDoc(docName, testYdoc);
+
+    const dr = new DocRoom(makeCtx(null), {});
+    dr.webSocketClose(mockConn, 1000, 'Normal', true);
+
+    assert.deepStrictEqual(['close'], closeCalled);
+    assert(!m.has(docName), 'Doc should be removed when no connections remain');
+
+    testYdoc.destroy();
+  });
+
+  it('Test DocRoom webSocketError logs and cleans up connection', async () => {
+    const docName = 'http://foo.bar/ws-error.html';
+    const testYdoc = new WSSharedDoc(docName);
+
+    const closeCalled = [];
+    const mockConn = {
+      close() { closeCalled.push('close'); },
+      deserializeAttachment() {
+        return { docName, auth: undefined, authActions: '' };
+      },
+    };
+    testYdoc.conns.set(mockConn, new Set());
+    const m = setYDoc(docName, testYdoc);
+
+    const dr = new DocRoom(makeCtx(null), {});
+    dr.webSocketError(mockConn, new Error('connection reset'));
+
+    assert.deepStrictEqual(['close'], closeCalled);
+    assert(!m.has(docName), 'Doc should be removed on error');
+
+    testYdoc.destroy();
+  });
+
+  it('Test DocRoom webSocketClose no-op when doc not in memory', async () => {
+    const mockConn = {
+      close() { assert.fail('close must not be called when doc is not in memory'); },
+      deserializeAttachment() {
+        return { docName: 'http://foo.bar/gone.html', auth: undefined, authActions: '' };
+      },
+    };
+
+    const dr = new DocRoom(makeCtx(null), {});
+    dr.webSocketClose(mockConn, 1000, 'Normal', true);
+    // No assertion needed — test passes if close() is not called
+  });
+
+  it('Test DocRoom webSocketMessage read-only auth restored', async () => {
+    const savedBS = persistence.bindState;
+    try {
+      persistence.bindState = async () => new Map();
+
+      const docName = 'http://foo.bar/readonly.html';
+      const mockConn = {
+        auth: undefined,
+        readOnly: undefined,
+        binaryType: undefined,
+        readyState: 1,
+        send() {},
+        close() {},
+        deserializeAttachment() {
+          // authActions without 'write' — should be read-only
+          return { docName, auth: 'Bearer ro-token', authActions: 'read' };
+        },
+      };
+
+      const dr = new DocRoom(makeCtx({}), { daadmin: {} });
+      await dr.webSocketMessage(mockConn, new Uint8Array([0]).buffer);
+
+      assert.equal('Bearer ro-token', mockConn.auth);
+      assert.equal(true, mockConn.readOnly);
+    } finally {
+      persistence.bindState = savedBS;
+    }
   });
 });
