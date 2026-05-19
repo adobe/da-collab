@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/adobe/da-collab/compare/v1.5.0...v1.5.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* **edge:** suppress CF "Network connection lost." exceptions on WS auth failures ([#155](https://github.com/adobe/da-collab/issues/155)) ([d7b5b59](https://github.com/adobe/da-collab/commit/d7b5b595310c78ba7f7665a1982d000981ab5847))
+
 # [1.5.0](https://github.com/adobe/da-collab/compare/v1.4.2...v1.5.0) (2026-05-19)
 
 
