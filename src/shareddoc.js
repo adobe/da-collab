@@ -46,6 +46,8 @@ const docs = new Map();
 
 const messageSync = 0;
 const messageAwareness = 1;
+export const messageFlushRequest = 2;
+export const messageFlushResponse = 3;
 const MAX_STORAGE_KEYS = 128;
 const MAX_STORAGE_VALUE_SIZE = 131072;
 // Matches da-admin EMPTY_DOC_SIZE — the byte-length of doc2aem(empty ydoc).
@@ -511,23 +513,26 @@ export const persistence = {
     });
 
     let saving = false;
+    let savingPromise = null;
     const saveToAdmin = async () => {
       if (saving) {
-        // eslint-disable-next-line no-console
-        console.log('[docroom] Skip save: concurrent save in progress', docName);
         return;
       }
       if (!current || ydoc !== docs.get(docName)) {
         return;
       }
       saving = true;
-      try {
-        current = await persistence.update(ydoc, current, docName);
-        // eslint-disable-next-line no-param-reassign
-        ydoc.hasClientChanged = false;
-      } finally {
-        saving = false;
-      }
+      savingPromise = (async () => {
+        try {
+          current = await persistence.update(ydoc, current, docName);
+          // eslint-disable-next-line no-param-reassign
+          ydoc.hasClientChanged = false;
+        } finally {
+          saving = false;
+          savingPromise = null;
+        }
+      })();
+      await savingPromise;
     };
 
     const debouncedSave = debounce(saveToAdmin, 2000, { maxWait: 10000 });
@@ -535,7 +540,16 @@ export const persistence = {
 
     ydoc.flushSave = async () => {
       debouncedSave.cancel();
+      // If a save is already in flight, wait for it to complete before
+      // starting a new one — ensures the ack is not sent before the PUT finishes.
+      if (savingPromise) {
+        await savingPromise;
+      }
       await saveToAdmin();
+    };
+
+    ydoc.cancelSave = () => {
+      debouncedSave.cancel();
     };
 
     const timingMap = new Map();
@@ -686,7 +700,7 @@ const readSyncMessage = (decoder, encoder, doc, readOnly, transactionOrigin) => 
   return messageType;
 };
 
-export const messageListener = (conn, doc, message) => {
+export const messageListener = async (conn, doc, message) => {
   let messageType;
   try {
     const encoder = encoding.createEncoder();
@@ -713,6 +727,22 @@ export const messageListener = (conn, doc, message) => {
       case messageAwareness: {
         awarenessProtocol
           .applyAwarenessUpdate(doc.awareness, decoding.readVarUint8Array(decoder), conn);
+        break;
+      }
+      case messageFlushRequest: {
+        const ackEncoder = encoding.createEncoder();
+        encoding.writeVarUint(ackEncoder, messageFlushResponse);
+        try {
+          if (doc.flushSave) {
+            await doc.flushSave();
+          }
+          encoding.writeVarUint(ackEncoder, 1); // ok
+        } catch (flushErr) {
+          logError(flushErr, '[docroom] flushSave failed', flushErr);
+          encoding.writeVarUint(ackEncoder, 0); // not ok
+          encoding.writeVarString(ackEncoder, flushErr.message || 'flush failed');
+        }
+        send(doc, conn, encoding.toUint8Array(ackEncoder));
         break;
       }
       default:
