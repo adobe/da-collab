@@ -848,12 +848,12 @@ describe('Worker test suite', () => {
     const env = { daadmin: { fetch: mockFetch } };
 
     const closeCalls = [];
+    const addedListeners = [];
     globalThis.WebSocketPair = function MockWSP() {
       const server = {
         accept() {},
-        close(c, r) {
-          closeCalls.push([c, r]);
-        },
+        addEventListener(type) { addedListeners.push(type); },
+        close(c, r) { closeCalls.push([c, r]); },
       };
       const client = {};
       return [client, server];
@@ -867,6 +867,8 @@ describe('Worker test suite', () => {
         // status 101 may not be valid in node test env; close assertion below covers it
       }
       assert.deepEqual(closeCalls, [[4401, 'auth']]);
+      assert.ok(addedListeners.includes('error'), 'error listener must be registered to suppress CF "Network connection lost." exceptions');
+      assert.ok(addedListeners.includes('close'), 'close listener must be registered');
     } finally {
       delete globalThis.WebSocketPair;
     }
@@ -882,12 +884,12 @@ describe('Worker test suite', () => {
     const env = { daadmin: { fetch: mockFetch } };
 
     const closeCalls = [];
+    const addedListeners = [];
     globalThis.WebSocketPair = function MockWSP() {
       const server = {
         accept() {},
-        close(c, r) {
-          closeCalls.push([c, r]);
-        },
+        addEventListener(type) { addedListeners.push(type); },
+        close(c, r) { closeCalls.push([c, r]); },
       };
       return [{}, server];
     };
@@ -899,6 +901,8 @@ describe('Worker test suite', () => {
         // status 101 may not be valid in node test env; close assertion below covers it
       }
       assert.deepEqual(closeCalls, [[4403, 'forbidden']]);
+      assert.ok(addedListeners.includes('error'), 'error listener must be registered to suppress CF "Network connection lost." exceptions');
+      assert.ok(addedListeners.includes('close'), 'close listener must be registered');
     } finally {
       delete globalThis.WebSocketPair;
     }

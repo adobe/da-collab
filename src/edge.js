@@ -143,6 +143,8 @@ export function wsAuthFailureResponse(reqHeaders, code, reason) {
   // eslint-disable-next-line no-undef
   const [client, server] = new WebSocketPair();
   server.accept();
+  server.addEventListener('error', () => {});
+  server.addEventListener('close', () => {});
   server.close(code, reason);
   const respHeaders = new Headers();
   const protocols = reqHeaders.get('sec-websocket-protocol')?.split(',');
