@@ -12,6 +12,7 @@
 import * as Y from 'yjs';
 import * as syncProtocol from 'y-protocols/sync.js';
 import * as encoding from 'lib0/encoding.js';
+import * as decoding from 'lib0/decoding.js';
 import assert from 'node:assert';
 import esmock from 'esmock';
 
@@ -19,7 +20,8 @@ import {
   aem2doc, doc2aem, doc2json, EMPTY_DOC,
 } from '@da-tools/da-parser';
 import {
-  closeConn, getYDoc, invalidateFromAdmin, isExpectedPlatformEvent, messageListener, persistence,
+  closeConn, getYDoc, invalidateFromAdmin, isExpectedPlatformEvent, messageFlushRequest,
+  messageFlushResponse, messageListener, persistence,
   readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
 
@@ -975,6 +977,78 @@ describe('Collab Test Suite', () => {
     assert(cancelCalled, 'debouncedSave.cancel() must be called during flush');
   });
 
+  it('Flush waits for an in-flight save before resolving', async () => {
+    let resolvePut;
+    let putStarted = false;
+
+    const mockdebounce = (f) => {
+      const debounced = async () => f();
+      debounced.cancel = () => {};
+      return debounced;
+    };
+    const pss = await esmock('../src/shareddoc.js', {
+      'lodash/debounce.js': { default: mockdebounce },
+      '@da-tools/da-parser': {
+        doc2aem: () => '<main><div><p>content</p></div></main>',
+        doc2json: () => '{}',
+        aem2doc,
+        json2doc: () => {},
+      },
+    });
+
+    const docName = 'https://admin.da.live/source/flush-inflight.html';
+    const storage = { list: async () => new Map() };
+    const ydoc = new pss.WSSharedDoc(docName);
+    pss.setYDoc(docName, ydoc);
+
+    pss.persistence.get = async () => '<main><div><p>initial</p></div></main>';
+    pss.persistence.put = async () => {
+      putStarted = true;
+      // Stall until released by the test
+      await new Promise((res) => {
+        resolvePut = res;
+      });
+      return { ok: true, status: 200 };
+    };
+
+    const conn = { auth: undefined, close() {} };
+    await pss.persistence.bindState(docName, ydoc, conn, storage);
+
+    ydoc.hasClientChanged = true;
+    // Kick off the first save (in-flight, stalls inside PUT)
+    let firstFlushDone = false;
+    const firstSave = ydoc.flushSave().then(() => {
+      firstFlushDone = true;
+    });
+
+    // Yield so the first save enters the in-flight state
+    await new Promise((r) => {
+      setTimeout(r, 0);
+    });
+    assert(putStarted, 'Precondition: first PUT must have started');
+    assert(!firstFlushDone, 'First flush must not be done while PUT is stalled');
+
+    // Second flush while first is in-flight — must wait
+    let secondFlushDone = false;
+    const secondSave = ydoc.flushSave().then(() => {
+      secondFlushDone = true;
+    });
+
+    // Yield once more — second flush is waiting on savingPromise
+    await new Promise((r) => {
+      setTimeout(r, 0);
+    });
+    assert(!secondFlushDone, 'Second flush must not resolve while first PUT is still in-flight');
+
+    // Release the stalled PUT
+    resolvePut();
+    await firstSave;
+    await secondSave;
+
+    assert(firstFlushDone, 'First flush must be done after PUT resolves');
+    assert(secondFlushDone, 'Second flush must also be done after PUT resolves');
+  });
+
   it('Non-last connection close does not flush', async () => {
     const flushCalled = [];
     const mockDoc = {
@@ -1836,6 +1910,86 @@ describe('Collab Test Suite', () => {
     }
   });
 
+  it('messageFlushRequest sends flush response ack with ok=1 after flushSave', async () => {
+    const flushed = [];
+    const sent = [];
+
+    const doc = new Y.Doc();
+    doc.conns = new Map();
+    doc.awareness = { getStates: () => new Map(), on: () => {}, off: () => {} };
+    doc.flushSave = async () => {
+      flushed.push('flush');
+    };
+
+    const conn = {
+      readyState: 1,
+      send(data) { sent.push(data); },
+    };
+    doc.conns.set(conn, new Set());
+
+    const message = new Uint8Array([messageFlushRequest]);
+    await messageListener(conn, doc, message);
+
+    assert.deepStrictEqual(['flush'], flushed, 'flushSave must be called');
+    assert.equal(1, sent.length, 'exactly one ack message must be sent');
+
+    // Decode the ack: first varint = messageFlushResponse, second varint = 1 (ok)
+    const decoder = decoding.createDecoder(sent[0]);
+    assert.equal(messageFlushResponse, decoding.readVarUint(decoder), 'ack type must be messageFlushResponse');
+    assert.equal(1, decoding.readVarUint(decoder), 'ok flag must be 1');
+  });
+
+  it('messageFlushRequest sends flush response with ok=0 when flushSave throws', async () => {
+    const sent = [];
+
+    const doc = new Y.Doc();
+    doc.conns = new Map();
+    doc.awareness = { getStates: () => new Map(), on: () => {}, off: () => {} };
+    doc.flushSave = async () => {
+      throw new Error('save failed');
+    };
+
+    const conn = {
+      readyState: 1,
+      send(data) { sent.push(data); },
+    };
+    doc.conns.set(conn, new Set());
+
+    const message = new Uint8Array([messageFlushRequest]);
+    await messageListener(conn, doc, message);
+
+    assert.equal(1, sent.length, 'exactly one ack message must be sent');
+
+    const decoder = decoding.createDecoder(sent[0]);
+    assert.equal(messageFlushResponse, decoding.readVarUint(decoder), 'ack type must be messageFlushResponse');
+    assert.equal(0, decoding.readVarUint(decoder), 'ok flag must be 0 on error');
+    assert.equal('save failed', decoding.readVarString(decoder), 'error message must be included');
+  });
+
+  it('messageFlushRequest works when doc has no flushSave (still sends ok ack)', async () => {
+    const sent = [];
+
+    const doc = new Y.Doc();
+    doc.conns = new Map();
+    doc.awareness = { getStates: () => new Map(), on: () => {}, off: () => {} };
+    // no flushSave defined
+
+    const conn = {
+      readyState: 1,
+      send(data) { sent.push(data); },
+    };
+    doc.conns.set(conn, new Set());
+
+    const message = new Uint8Array([messageFlushRequest]);
+    await messageListener(conn, doc, message);
+
+    assert.equal(1, sent.length);
+
+    const decoder = decoding.createDecoder(sent[0]);
+    assert.equal(messageFlushResponse, decoding.readVarUint(decoder));
+    assert.equal(1, decoding.readVarUint(decoder), 'ok must be 1 when no flushSave (nothing to flush)');
+  });
+
   it('readState not chunked', async () => {
     const docName = 'http://foo.bar/doc123.html';
     const stored = new Map();
@@ -2238,7 +2392,7 @@ describe('Collab Test Suite', () => {
     }
   });
 
-  it('debounced save logs skip when saving is true', async () => {
+  it('debounced save skips concurrent saves (only one PUT in-flight)', async () => {
     const mockdebounce = (f) => {
       const debounced = async () => f();
       debounced.cancel = () => {};
@@ -2284,22 +2438,11 @@ describe('Collab Test Suite', () => {
       await pss.persistence.bindState(docName, ydoc, {}, storage);
       assert.equal(updObservers.length, 2, 'Precondition: two update observers registered');
 
-      const logged = [];
-      const savedLog = console.log;
-      console.log = (...args) => logged.push(args);
+      const p1 = updObservers[1]();
+      const p2 = updObservers[1]();
+      await Promise.all([p1, p2]);
 
-      try {
-        const p1 = updObservers[1]();
-        const p2 = updObservers[1]();
-        await Promise.all([p1, p2]);
-
-        const skipLog = logged.find((args) => args[0] === '[docroom] Skip save: concurrent save in progress');
-        assert(skipLog, 'Should have logged concurrent save skip');
-        assert.equal(skipLog[1], docName);
-        assert.equal(putCallCount, 1, 'Only one PUT should have been made');
-      } finally {
-        console.log = savedLog;
-      }
+      assert.equal(putCallCount, 1, 'Only one PUT should have been made');
     } finally {
       globalThis.setTimeout = savedSetTimeout;
     }
