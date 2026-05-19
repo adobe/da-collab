@@ -1,6 +1,6 @@
 {
   "name": "da-collab",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "",
   "main": "src/edge.js",
   "type": "module",
