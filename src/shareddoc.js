@@ -391,8 +391,16 @@ export const persistence = {
         return content;
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[docroom] Failed to update document', docName, err);
+      if (err?.message?.startsWith('401')) {
+        // eslint-disable-next-line no-console
+        console.warn('[docroom] Failed to update document', docName, err.message);
+      } else if (err?.message?.startsWith('403')) {
+        // eslint-disable-next-line no-console
+        console.log('[docroom] Failed to update document', docName, err.message);
+      } else {
+        // eslint-disable-next-line no-console
+        console.error('[docroom] Failed to update document', docName, err);
+      }
       showError(ydoc, err);
     }
     if (closeAll) {
