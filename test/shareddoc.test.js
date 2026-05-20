@@ -457,21 +457,66 @@ describe('Collab Test Suite', () => {
     const updateLog = logged.find(([, msg]) => msg === '[docroom] Failed to update document');
     assert(updateLog, `Expected a log entry for status ${status}`);
     assert.equal(updateLog[0], expectedLevel, `Expected '${expectedLevel}' for status ${status}`);
+    // For auth failures the third arg must be the Error object, not just err.message
     if (expectedLevel !== 'error') {
-      assert.equal(typeof updateLog[3], 'string', `Expected string message for status ${status}, not an Error object`);
+      assert(updateLog[3] instanceof Error, `Expected Error object for status ${status}`);
     }
   }
 
-  it('Test persistence update logs console.warn (no stack) on 401', async () => {
+  it('Test persistence update logs console.warn (with Error) on 401', async () => {
     await testUpdateLogLevel(401, 'Unauthorized', 'warn');
   });
 
-  it('Test persistence update logs console.log (no stack) on 403', async () => {
-    await testUpdateLogLevel(403, 'Forbidden', 'log');
+  it('Test persistence update logs console.warn (with Error) on 403', async () => {
+    await testUpdateLogLevel(403, 'Forbidden', 'warn');
   });
 
   it('Test persistence update logs console.error (with stack) on other failures', async () => {
     await testUpdateLogLevel(500, 'Internal Server Error', 'error');
+  });
+
+  it('closeConn called re-entrantly from persistence.update closeAll skips flushSave without deadlock', async () => {
+    // Regression guard: when persistence.update closes all connections after a 401/403,
+    // closeConn must skip flushSave (isReentrant=true). Awaiting flushSave here would
+    // deadlock because savingPromise cannot resolve until persistence.update returns.
+    const mockdebounce = (f) => {
+      const debounced = async () => f();
+      debounced.cancel = () => {};
+      return debounced;
+    };
+    const pss = await esmock('../src/shareddoc.js', {
+      'lodash/debounce.js': { default: mockdebounce },
+      '@da-tools/da-parser': {
+        doc2aem: () => '<main><div><p>content</p></div></main>',
+        doc2json: () => '{}',
+        aem2doc,
+        json2doc: () => {},
+      },
+    });
+
+    const docName = 'https://admin.da.live/source/reentrant.html';
+    const storage = { list: async () => new Map() };
+    const ydoc = new pss.WSSharedDoc(docName);
+    pss.setYDoc(docName, ydoc);
+
+    pss.persistence.get = async () => '<main><div><p>initial</p></div></main>';
+
+    let putResolved = false;
+    pss.persistence.put = async () => ({ ok: false, status: 401, statusText: 'Unauthorized' });
+
+    const conn = { auth: undefined, close() {} };
+    await pss.persistence.bindState(docName, ydoc, conn, storage);
+    ydoc.hasClientChanged = true;
+
+    // This must resolve — no deadlock — even though closeConn is called
+    // from within persistence.update while the save is in-flight.
+    const result = await Promise.race([
+      ydoc.flushSave().then(() => 'resolved'),
+      new Promise((r) => { setTimeout(r, 500, 'timeout'); }),
+    ]);
+    putResolved = true;
+    assert.equal(result, 'resolved', 'flushSave must resolve; deadlock detected if timeout fires');
+    assert(putResolved);
   });
 
   it('Test persistence update skips PUT when content is empty stub and no client edit', async () => {

@@ -147,11 +147,20 @@ export function wsAuthFailureResponse(reqHeaders, code, reason) {
   // Close with the auth failure code only AFTER the WebSocket is established.
   // Calling close() before the 101 response is sent causes CF Workers to throw
   // an unhandled "Network connection lost." runtime exception.
-  // The y-websocket client always sends a sync message immediately on open,
-  // so we use that as the trigger to close with the appropriate code.
-  server.addEventListener('message', () => server.close(code, reason));
-  server.addEventListener('error', () => {});
-  server.addEventListener('close', () => {});
+  // The y-websocket client sends a sync message immediately on open; use that
+  // as the trigger. A 5-second safety timeout handles clients that never send.
+  // eslint-disable-next-line no-undef
+  const closeTimer = setTimeout(() => server.close(code, reason), 5000);
+  server.addEventListener('message', () => {
+    clearTimeout(closeTimer);
+    server.close(code, reason);
+  });
+  server.addEventListener('error', () => {
+    clearTimeout(closeTimer);
+  });
+  server.addEventListener('close', () => {
+    clearTimeout(closeTimer);
+  });
   const respHeaders = new Headers();
   const protocols = reqHeaders.get('sec-websocket-protocol')?.split(',');
   if (protocols?.includes('yjs')) {
