@@ -72,7 +72,7 @@ function getDocType(docName) {
  * @param {ydoc} doc - the ydoc to close the connection for.
  * @param {WebSocket} conn - the websocket connection to close.
  */
-export const closeConn = async (doc, conn) => {
+export const closeConn = async (doc, conn, isReentrant = false) => {
   try {
     if (doc.conns.has(conn)) {
       const controlledIds = doc.conns.get(conn);
@@ -87,7 +87,10 @@ export const closeConn = async (doc, conn) => {
       }
 
       if (doc.conns.size === 0) {
-        if (doc.flushSave) {
+        // Skip flushSave when called re-entrantly from persistence.update's closeAll
+        // loop — the in-flight save owns persistence; awaiting savingPromise here
+        // would deadlock because persistence.update hasn't returned yet.
+        if (doc.flushSave && !isReentrant) {
           // eslint-disable-next-line no-console
           console.log('[docroom] Flushing pending save on last connection close', doc.name);
           await doc.flushSave();
@@ -388,15 +391,25 @@ export const persistence = {
         return content;
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[docroom] Failed to update document', docName, err);
+      if (err?.message?.startsWith('401')) {
+        // eslint-disable-next-line no-console
+        console.warn('[docroom] Failed to update document', docName, err.message);
+      } else if (err?.message?.startsWith('403')) {
+        // eslint-disable-next-line no-console
+        console.log('[docroom] Failed to update document', docName, err.message);
+      } else {
+        // eslint-disable-next-line no-console
+        console.error('[docroom] Failed to update document', docName, err);
+      }
       showError(ydoc, err);
     }
     if (closeAll) {
-      // We had an unauthorized from da-admin - lets reset the connections
+      // We had an unauthorized from da-admin - lets reset the connections.
+      // Pass isReentrant=true so closeConn skips flushSave here; the outer
+      // save already handled (or failed to handle) persistence.
       for (const con of Array.from(ydoc.conns.keys())) {
         // eslint-disable-next-line no-await-in-loop
-        await persistence.closeConn(ydoc, con);
+        await persistence.closeConn(ydoc, con, true);
       }
     }
     return current;
