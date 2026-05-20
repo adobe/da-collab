@@ -1,3 +1,15 @@
+## [1.5.3](https://github.com/adobe/da-collab/compare/v1.5.2...v1.5.3) (2026-05-20)
+
+
+### Bug Fixes
+
+* **edge,shareddoc:** ws auth close via message listener + flush save deadlock ([#157](https://github.com/adobe/da-collab/issues/157)) ([ed718ee](https://github.com/adobe/da-collab/commit/ed718ee1a57a681821722fd27610b75fd2437829))
+
+
+### Reverts
+
+* remove wsAuthFailureResponse ([#149](https://github.com/adobe/da-collab/issues/149)) ([#156](https://github.com/adobe/da-collab/issues/156)) ([cf6ad46](https://github.com/adobe/da-collab/commit/cf6ad462fc5ab68f6936aca1a8fd9c37330c6c3b))
+
 ## [1.5.2](https://github.com/adobe/da-collab/compare/v1.5.1...v1.5.2) (2026-05-19)
 
 
