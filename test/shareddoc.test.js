@@ -425,6 +425,55 @@ describe('Collab Test Suite', () => {
     await testCloseAllOnAuthFailure(403);
   });
 
+  async function testUpdateLogLevel(status, statusText, expectedLevel) {
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': { doc2aem: () => 'updated content' },
+    });
+    const mockYDoc = {
+      conns: new Map(),
+      name: 'http://foo.bar/log-level.html',
+      hasClientChanged: true,
+      getMap(nm) { return nm === 'error' ? new Map() : null; },
+      transact: (f) => f(),
+    };
+    pss.persistence.put = async () => ({ ok: false, status, statusText });
+    pss.persistence.closeConn = () => {};
+
+    const logged = [];
+    const origWarn = console.warn;
+    const origLog = console.log;
+    const origError = console.error;
+    console.warn = (...a) => logged.push(['warn', ...a]);
+    console.log = (...a) => logged.push(['log', ...a]);
+    console.error = (...a) => logged.push(['error', ...a]);
+    try {
+      await pss.persistence.update(mockYDoc, 'old content', 'log-level.html');
+    } finally {
+      console.warn = origWarn;
+      console.log = origLog;
+      console.error = origError;
+    }
+
+    const updateLog = logged.find(([, msg]) => msg === '[docroom] Failed to update document');
+    assert(updateLog, `Expected a log entry for status ${status}`);
+    assert.equal(updateLog[0], expectedLevel, `Expected '${expectedLevel}' for status ${status}`);
+    if (expectedLevel !== 'error') {
+      assert.equal(typeof updateLog[3], 'string', `Expected string message for status ${status}, not an Error object`);
+    }
+  }
+
+  it('Test persistence update logs console.warn (no stack) on 401', async () => {
+    await testUpdateLogLevel(401, 'Unauthorized', 'warn');
+  });
+
+  it('Test persistence update logs console.log (no stack) on 403', async () => {
+    await testUpdateLogLevel(403, 'Forbidden', 'log');
+  });
+
+  it('Test persistence update logs console.error (with stack) on other failures', async () => {
+    await testUpdateLogLevel(500, 'Internal Server Error', 'error');
+  });
+
   it('Test persistence update skips PUT when content is empty stub and no client edit', async () => {
     // Reproduces COR-31 / COR-28: an unedited ydoc whose doc2aem output is the
     // deterministic empty stub must NOT overwrite real content in da-admin.

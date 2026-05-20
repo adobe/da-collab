@@ -87,7 +87,7 @@ export const closeConn = async (doc, conn) => {
       }
 
       if (doc.conns.size === 0) {
-        if (doc.flushSave) {
+        if (doc.flushSave && !doc.saving) {
           // eslint-disable-next-line no-console
           console.log('[docroom] Flushing pending save on last connection close', doc.name);
           await doc.flushSave();
@@ -388,8 +388,16 @@ export const persistence = {
         return content;
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[docroom] Failed to update document', docName, err);
+      if (err.message.startsWith('401')) {
+        // eslint-disable-next-line no-console
+        console.warn('[docroom] Failed to update document', docName, err.message);
+      } else if (err.message.startsWith('403')) {
+        // eslint-disable-next-line no-console
+        console.log('[docroom] Failed to update document', docName, err.message);
+      } else {
+        // eslint-disable-next-line no-console
+        console.error('[docroom] Failed to update document', docName, err);
+      }
       showError(ydoc, err);
     }
     if (closeAll) {
@@ -555,6 +563,8 @@ export const persistence = {
         return;
       }
       saving = true;
+      // eslint-disable-next-line no-param-reassign
+      ydoc.saving = true;
       savingPromise = (async () => {
         try {
           current = await persistence.update(ydoc, current, docName);
@@ -562,6 +572,8 @@ export const persistence = {
           ydoc.hasClientChanged = false;
         } finally {
           saving = false;
+          // eslint-disable-next-line no-param-reassign
+          ydoc.saving = false;
           savingPromise = null;
         }
       })();

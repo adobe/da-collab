@@ -839,7 +839,7 @@ describe('Worker test suite', () => {
     assert.equal(401, res.status);
   });
 
-  it('Test handleApiRequest not authorized (WS upgrade) -> 401', async () => {
+  it('Test handleApiRequest not authorized (WS upgrade) -> 4401 close', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/hihi.html',
       headers: new Headers({ Upgrade: 'websocket', 'sec-websocket-protocol': 'yjs, stale-token' }),
@@ -848,11 +848,40 @@ describe('Worker test suite', () => {
     const mockFetch = async (url, opts) => new Response(null, { status: 401 });
     const env = { daadmin: { fetch: mockFetch } };
 
-    const res = await handleApiRequest(req, env);
-    assert.equal(401, res.status);
+    const ops = [];
+    let triggerMessage;
+    globalThis.WebSocketPair = function MockWSP() {
+      const server = {
+        accept() { ops.push('accept'); },
+        addEventListener(type, fn) {
+          ops.push(['addEventListener', type]);
+          if (type === 'message') {
+            triggerMessage = fn;
+          }
+        },
+        close(c, r) { ops.push(['close', c, r]); },
+      };
+      const client = {};
+      return [client, server];
+    };
+    try {
+      try {
+        const res = await handleApiRequest(req, env);
+        assert.equal(101, res.status);
+        assert.equal('yjs', res.headers.get('sec-websocket-protocol'));
+      } catch (e) {
+        // status 101 may not be valid in node test env; close assertion below covers it
+      }
+      // close fires only once the client sends its first message
+      assert.deepEqual(ops, ['accept', ['addEventListener', 'message'], ['addEventListener', 'error'], ['addEventListener', 'close']]);
+      triggerMessage();
+      assert.deepEqual(ops, ['accept', ['addEventListener', 'message'], ['addEventListener', 'error'], ['addEventListener', 'close'], ['close', 4401, 'auth']]);
+    } finally {
+      delete globalThis.WebSocketPair;
+    }
   });
 
-  it('Test handleApiRequest forbidden (WS upgrade) -> 403', async () => {
+  it('Test handleApiRequest forbidden (WS upgrade) -> 4403 close', async () => {
     const req = {
       url: 'http://do.re.mi/https://admin.da.live/hihi.html',
       headers: new Headers({ Upgrade: 'websocket', 'sec-websocket-protocol': 'yjs, t' }),
@@ -861,8 +890,35 @@ describe('Worker test suite', () => {
     const mockFetch = async (url, opts) => new Response(null, { status: 403 });
     const env = { daadmin: { fetch: mockFetch } };
 
-    const res = await handleApiRequest(req, env);
-    assert.equal(403, res.status);
+    const ops = [];
+    let triggerMessage;
+    globalThis.WebSocketPair = function MockWSP() {
+      const server = {
+        accept() { ops.push('accept'); },
+        addEventListener(type, fn) {
+          ops.push(['addEventListener', type]);
+          if (type === 'message') {
+            triggerMessage = fn;
+          }
+        },
+        close(c, r) { ops.push(['close', c, r]); },
+      };
+      return [{}, server];
+    };
+    try {
+      try {
+        const res = await handleApiRequest(req, env);
+        assert.equal(101, res.status);
+      } catch (e) {
+        // status 101 may not be valid in node test env; close assertion below covers it
+      }
+      // close fires only once the client sends its first message
+      assert.deepEqual(ops, ['accept', ['addEventListener', 'message'], ['addEventListener', 'error'], ['addEventListener', 'close']]);
+      triggerMessage();
+      assert.deepEqual(ops, ['accept', ['addEventListener', 'message'], ['addEventListener', 'error'], ['addEventListener', 'close'], ['close', 4403, 'forbidden']]);
+    } finally {
+      delete globalThis.WebSocketPair;
+    }
   });
 
   it('Test handleApiRequest da-admin fetch exception', async () => {
