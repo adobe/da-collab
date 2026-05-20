@@ -4,13 +4,6 @@ compatibility_date = "2023-10-30"
 main = "src/edge.js"
 keep_vars = true
 
-[observability.logs]
-enabled = true
-invocation_logs = true
-
-[observability.traces]
-enabled = true
-
 [dev]
 port = 4711
 
