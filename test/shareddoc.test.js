@@ -425,56 +425,6 @@ describe('Collab Test Suite', () => {
     await testCloseAllOnAuthFailure(403);
   });
 
-  async function testUpdateLogLevel(status, statusText, expectedLevel) {
-    const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': { doc2aem: () => 'updated content' },
-    });
-    const mockYDoc = {
-      conns: new Map(),
-      name: 'http://foo.bar/log-level.html',
-      hasClientChanged: true,
-      getMap(nm) { return nm === 'error' ? new Map() : null; },
-      transact: (f) => f(),
-    };
-    pss.persistence.put = async () => ({ ok: false, status, statusText });
-    pss.persistence.closeConn = () => {};
-
-    const logged = [];
-    const origWarn = console.warn;
-    const origLog = console.log;
-    const origError = console.error;
-    console.warn = (...a) => logged.push(['warn', ...a]);
-    console.log = (...a) => logged.push(['log', ...a]);
-    console.error = (...a) => logged.push(['error', ...a]);
-    try {
-      await pss.persistence.update(mockYDoc, 'old content', 'log-level.html');
-    } finally {
-      console.warn = origWarn;
-      console.log = origLog;
-      console.error = origError;
-    }
-
-    const updateLog = logged.find(([, msg]) => msg === '[docroom] Failed to update document');
-    assert(updateLog, `Expected a log entry for status ${status}`);
-    assert.equal(updateLog[0], expectedLevel, `Expected '${expectedLevel}' for status ${status}`);
-    // For auth failures the third arg must be the Error object, not just err.message
-    if (expectedLevel !== 'error') {
-      assert(updateLog[3] instanceof Error, `Expected Error object for status ${status}`);
-    }
-  }
-
-  it('Test persistence update logs console.warn (with Error) on 401', async () => {
-    await testUpdateLogLevel(401, 'Unauthorized', 'warn');
-  });
-
-  it('Test persistence update logs console.warn (with Error) on 403', async () => {
-    await testUpdateLogLevel(403, 'Forbidden', 'warn');
-  });
-
-  it('Test persistence update logs console.error (with stack) on other failures', async () => {
-    await testUpdateLogLevel(500, 'Internal Server Error', 'error');
-  });
-
   it('closeConn called re-entrantly from persistence.update closeAll skips flushSave without deadlock', async () => {
     // Regression guard: when persistence.update closes all connections after a 401/403,
     // closeConn must skip flushSave (isReentrant=true). Awaiting flushSave here would

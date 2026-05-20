@@ -391,14 +391,8 @@ export const persistence = {
         return content;
       }
     } catch (err) {
-      if (err?.message?.startsWith('401') || err?.message?.startsWith('403')) {
-        // Expected auth failures — warn without a full stack trace
-        // eslint-disable-next-line no-console
-        console.warn('[docroom] Failed to update document', docName, err);
-      } else {
-        // eslint-disable-next-line no-console
-        console.error('[docroom] Failed to update document', docName, err);
-      }
+      // eslint-disable-next-line no-console
+      console.error('[docroom] Failed to update document', docName, err);
       showError(ydoc, err);
     }
     if (closeAll) {
