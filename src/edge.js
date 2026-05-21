@@ -209,7 +209,6 @@ export async function handleApiRequest(request, env) {
     docName = docName.substring(0, docName.indexOf('?'));
   }
 
-  // Make sure we only work with da.live, da.page or localhost
   if (!docName.startsWith('https://admin.da.live/')
       && !docName.startsWith('https://admin.da.page/')
       && !docName.startsWith('https://stage-admin.da.live/')
@@ -442,9 +441,13 @@ export class DocRoom {
         server.readOnly = true;
       }
 
+      let authLabel = 'none';
+      if (connAuth) {
+        authLabel = connAuth.includes(' ') ? connAuth.substring(0, connAuth.indexOf(' ')) : 'token';
+      }
+
       // eslint-disable-next-line no-console
-      console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${
-        connAuth ? (connAuth.includes(' ') ? connAuth.substring(0, connAuth.indexOf(' ')) : 'token') : 'none'})`);
+      console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${authLabel})`);
 
       // Kick off async document initialization; response is returned immediately.
       this.initSession(server, docName);
