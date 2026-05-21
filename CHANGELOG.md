@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/adobe/da-collab/compare/v1.5.3...v1.6.0) (2026-05-21)
+
+
+### Features
+
+* **dep:** replace lodash with a local debounce utility ([#158](https://github.com/adobe/da-collab/issues/158)) ([6131311](https://github.com/adobe/da-collab/commit/6131311d9796dc7697c4b20b778f3304c67c7c09))
+
 ## [1.5.3](https://github.com/adobe/da-collab/compare/v1.5.2...v1.5.3) (2026-05-20)
 
 
