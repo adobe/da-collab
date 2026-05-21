@@ -484,7 +484,7 @@ describe('Collab Test Suite', () => {
       return debounced;
     };
     const pss = await esmock('../src/shareddoc.js', {
-      'lodash/debounce.js': { default: mockdebounce },
+      '../src/debounce.js': { default: mockdebounce },
       '@da-tools/da-parser': {
         doc2aem: () => '<main><div><p>content</p></div></main>',
         doc2json: () => '{}',
@@ -725,7 +725,7 @@ describe('Collab Test Suite', () => {
       return debounced;
     };
     const pss = await esmock('../src/shareddoc.js', {
-      'lodash/debounce.js': {
+      '../src/debounce.js': {
         default: mockdebounce,
       },
     });
@@ -965,7 +965,7 @@ describe('Collab Test Suite', () => {
       return debounced;
     };
     const pss = await esmock('../src/shareddoc.js', {
-      'lodash/debounce.js': { default: mockdebounce },
+      '../src/debounce.js': { default: mockdebounce },
       '@da-tools/da-parser': {
         doc2aem: () => unchangedContent,
         doc2json: () => '{}',
@@ -1006,7 +1006,7 @@ describe('Collab Test Suite', () => {
       return debounced;
     };
     const pss = await esmock('../src/shareddoc.js', {
-      'lodash/debounce.js': { default: mockdebounce },
+      '../src/debounce.js': { default: mockdebounce },
       '@da-tools/da-parser': {
         doc2aem: () => '<main><div><p>updated content</p></div></main>',
         doc2json: () => '{}',
@@ -1049,7 +1049,7 @@ describe('Collab Test Suite', () => {
       return debounced;
     };
     const pss = await esmock('../src/shareddoc.js', {
-      'lodash/debounce.js': { default: mockdebounce },
+      '../src/debounce.js': { default: mockdebounce },
     });
 
     const docName = 'https://admin.da.live/source/flush-cancel.html';
@@ -1080,7 +1080,7 @@ describe('Collab Test Suite', () => {
       return debounced;
     };
     const pss = await esmock('../src/shareddoc.js', {
-      'lodash/debounce.js': { default: mockdebounce },
+      '../src/debounce.js': { default: mockdebounce },
       '@da-tools/da-parser': {
         doc2aem: () => '<main><div><p>content</p></div></main>',
         doc2json: () => '{}',
@@ -1464,7 +1464,7 @@ describe('Collab Test Suite', () => {
   it('test persistence update on storage update', async () => {
     const mockdebounce = (f) => async () => f();
     const pss = await esmock('../src/shareddoc.js', {
-      'lodash/debounce.js': {
+      '../src/debounce.js': {
         default: mockdebounce,
       },
     });
@@ -1525,7 +1525,7 @@ describe('Collab Test Suite', () => {
     // Without the saving flag, both calls race to PUT concurrently.
     const mockdebounce = (f) => async () => f();
     const pss = await esmock('../src/shareddoc.js', {
-      'lodash/debounce.js': {
+      '../src/debounce.js': {
         default: mockdebounce,
       },
     });
@@ -2579,7 +2579,7 @@ describe('Collab Test Suite', () => {
       return debounced;
     };
     const pss = await esmock('../src/shareddoc.js', {
-      'lodash/debounce.js': {
+      '../src/debounce.js': {
         default: mockdebounce,
       },
     });

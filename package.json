@@ -46,7 +46,6 @@
     "@cloudflare/workers-types": "4.20260519.1",
     "@da-tools/da-parser": "^1.2.0",
     "lib0": "0.2.114",
-    "lodash": "4.17.21",
     "y-protocols": "1.0.6",
     "yjs": "13.6.29"
   },
