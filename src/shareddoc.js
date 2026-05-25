@@ -939,12 +939,13 @@ export const setupWSConnection = async (
  * @param {object} env - The durable object environment
  * @param {TransactionalStorage} storage - The durable object storage
  * @param {ArrayBuffer|string} message - The raw message from the WebSocket
+ * @param {boolean} isHelix - True when the document is stored in Helix.
  */
-export const handleWebSocketMessage = async (conn, docName, env, storage, message) => {
+export const handleWebSocketMessage = async (conn, docName, env, storage, message, isHelix) => {
   let doc = docs.get(docName);
   if (!doc) {
     // DO was hibernated; re-establish Yjs state without re-registering event listeners
-    await setupWSConnection(conn, docName, env, storage, true); // TODO set isHelix!!!
+    await setupWSConnection(conn, docName, env, storage, true, isHelix);
     doc = docs.get(docName);
   }
   if (doc) {

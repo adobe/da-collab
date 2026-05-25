@@ -420,7 +420,9 @@ export class DocRoom {
       // Register with CF Hibernation API: the DO can sleep between messages
       // without losing its WebSocket connections.
       this.ctx.acceptWebSocket(server);
-      server.serializeAttachment({ docName, auth, authActions });
+      server.serializeAttachment({
+        docName, auth, authActions, isHelix,
+      });
 
       server.auth = auth;
       if (!authActions.split(',').includes('write')) {
@@ -480,14 +482,16 @@ export class DocRoom {
    * @param {ArrayBuffer|string} message
    */
   async webSocketMessage(webSocket, message) {
-    const { docName, auth, authActions } = webSocket.deserializeAttachment();
+    const {
+      docName, auth, authActions, isHelix,
+    } = webSocket.deserializeAttachment();
     // eslint-disable-next-line no-param-reassign
     webSocket.auth = auth;
     if (!authActions.split(',').includes('write')) {
       // eslint-disable-next-line no-param-reassign
       webSocket.readOnly = true;
     }
-    await handleWebSocketMessage(webSocket, docName, this.env, this.storage, message);
+    await handleWebSocketMessage(webSocket, docName, this.env, this.storage, message, isHelix);
   }
 
   /**
