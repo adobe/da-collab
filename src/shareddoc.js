@@ -22,6 +22,10 @@ import debounce from './debounce.js';
 const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
 
+export function getFetchObj(isHelix, daadmin) {
+  return isHelix ? globalThis : daadmin;
+}
+
 /**
  * Returns true for Cloudflare platform events that are expected during normal operation
  * (deployments, DO live migrations) and should not be treated as errors.
@@ -249,16 +253,19 @@ export const persistence = {
    * @param {string} docName - The document name
    * @param {string} auth - The authorization header
    * @param {object} daadmin - The da-admin worker service binding
+   * @param {boolean} isHelix - True when the document needs to be read from Helix.
    * @returns {Promise<string>} - The content of the document
    * @throws {Error} - If the document cannot be retrieved (including 404)
    */
-  get: async (docName, auth, daadmin) => {
+  get: async (docName, auth, daadmin, isHelix) => {
     const docType = getDocType(docName);
     const initalOpts = {};
     if (auth) {
       initalOpts.headers = new Headers({ Authorization: auth });
     }
-    const initialReq = await daadmin.fetch(docName, initalOpts);
+
+    const fetchObj = getFetchObj(isHelix, daadmin);
+    const initialReq = await fetchObj.fetch(docName, initalOpts);
     if (initialReq.ok) {
       return docType === 'json' ? initialReq.json() : initialReq.text();
     } else {
@@ -275,16 +282,29 @@ export const persistence = {
    * @param {WSSharedDoc} ydoc - The Yjs document, which among other things contains the service
    * binding to da-admin.
    * @param {string} content - The content to store
+   * @param {boolean} isHelix - True when the document needs to be stored in Helix.
    * @returns {Promise<object>} The response from da-admin.
    */
-  put: async (ydoc, content) => {
+  put: async (ydoc, content, isHelix) => {
+    // eslint-disable-next-line no-console
+    console.log('[docroom] Storing in Helix:', isHelix);
+
     const mimeType = getDocType(ydoc.name) === 'json' ? 'application/json' : 'text/html';
-    const blob = new Blob([content], { type: mimeType });
 
-    const formData = new FormData();
-    formData.append('data', blob);
+    let putBody;
+    let bodySize;
+    if (isHelix) {
+      putBody = content;
+      bodySize = content.length;
+    } else {
+      const blob = new Blob([content], { type: mimeType });
+      const formData = new FormData();
+      formData.append('data', blob);
+      putBody = formData;
+      bodySize = blob.size;
+    }
 
-    const opts = { method: 'PUT', body: formData };
+    const opts = { method: 'PUT', body: putBody };
     const keys = Array.from(ydoc.conns.keys());
     const allReadOnly = keys.length > 0 && keys.every((con) => con.readOnly === true);
     if (allReadOnly) {
@@ -297,6 +317,9 @@ export const persistence = {
       'If-Match': '*',
       'X-DA-Initiator': 'collab',
     };
+    if (isHelix) {
+      headers['Content-Type'] = mimeType;
+    }
 
     const auth = keys
       .filter((con) => con.readOnly !== true)
@@ -308,14 +331,15 @@ export const persistence = {
 
     opts.headers = new Headers(headers);
 
-    if (blob.size <= EMPTY_DOC_SIZE) {
+    if (bodySize <= EMPTY_DOC_SIZE) {
       // eslint-disable-next-line no-console
-      console.warn('[docroom] Writing back an empty document', ydoc.name, blob.size);
+      console.warn('[docroom] Writing back an empty document', ydoc.name, bodySize);
     }
 
+    const fetchObj = getFetchObj(isHelix, ydoc.daadmin);
     const {
       ok, status, statusText, body,
-    } = await ydoc.daadmin.fetch(ydoc.name, opts);
+    } = await fetchObj.fetch(ydoc.name, opts);
 
     if (body) {
       // tell CloudFlare to consider the request as completed
@@ -334,9 +358,11 @@ export const persistence = {
    * @param {WSSharedDoc} ydoc - the ydoc that has been updated.
    * @param {string} current - the current content of the document previously
    * obtained from da-admin
+   * @param {string} docName - the name of the document
+   * @param {boolean} isHelix - True when the document needs to be stored in Helix.
    * @returns {Promise<string>} - the new content of the document in da-admin.
    */
-  update: async (ydoc, current, docName) => {
+  update: async (ydoc, current, docName, isHelix = false) => {
     const docType = getDocType(docName);
     let closeAll = false;
     try {
@@ -354,7 +380,7 @@ export const persistence = {
 
       if (current !== content) {
         // Only store the document if it was actually changed.
-        const { ok, status, statusText } = await persistence.put(ydoc, content);
+        const { ok, status, statusText } = await persistence.put(ydoc, content, isHelix);
 
         if (!ok) {
           if (status === 412) {
@@ -421,8 +447,9 @@ export const persistence = {
    * @param {WSSharedDoc} ydoc - the new ydoc to be bound
    * @param {WebSocket} conn - the websocket connection
    * @param {TransactionalStorage} storage - the worker transactional storage object
+   * @param {boolean} isHelix - True when the document needs to be stored in Helix.
    */
-  bindState: async (docName, ydoc, conn, storage) => {
+  bindState: async (docName, ydoc, conn, storage, isHelix = false) => {
     const docType = getDocType(docName);
     let timingReadStateDuration;
 
@@ -435,7 +462,7 @@ export const persistence = {
 
     // Get document from da-admin (throws on error including 404)
     const timingBeforeDaAdminGet = Date.now();
-    current = await persistence.get(docName, conn.auth, ydoc.daadmin);
+    current = await persistence.get(docName, conn.auth, ydoc.daadmin, isHelix);
     const timingDaAdminGetDuration = Date.now() - timingBeforeDaAdminGet;
 
     // Read the stored state from internal worker storage (errors are non-fatal)
@@ -570,7 +597,7 @@ export const persistence = {
       saving = true;
       savingPromise = (async () => {
         try {
-          current = await persistence.update(ydoc, current, docName);
+          current = await persistence.update(ydoc, current, docName, isHelix);
           // eslint-disable-next-line no-param-reassign
           ydoc.hasClientChanged = false;
         } finally {
@@ -672,10 +699,20 @@ export class WSSharedDoc extends Y.Doc {
  * @param {WebSocket} conn - the WebSocket connection being initiated
  * @param {object} env - the durable object environment object
  * @param {TransactionalStorage} storage - the durable object storage object
+ * @param {Map} [timingData] - optional map to receive bindState timing measurements
  * @param {boolean} gc - whether garbage collection is enabled
+ * @param {boolean} isHelix - True when the document needs to be stored in Helix.
  * @returns The Yjs document object, which may be shared across multiple sockets.
  */
-export const getYDoc = async (docname, conn, env, storage, timingData, gc = true) => {
+export const getYDoc = async (
+  docname,
+  conn,
+  env,
+  storage,
+  timingData,
+  gc = true,
+  isHelix = false,
+) => {
   let doc = docs.get(docname);
   if (doc === undefined) {
     // The doc is not yet in the cache, create a new one.
@@ -698,7 +735,7 @@ export const getYDoc = async (docname, conn, env, storage, timingData, gc = true
   if (!doc.promise) {
     // The doc is not yet bound to the persistence layer, do so now. The promise will be resolved
     // when bound.
-    doc.promise = persistence.bindState(docname, doc, conn, storage);
+    doc.promise = persistence.bindState(docname, doc, conn, storage, isHelix);
   }
 
   // We wait for the promise, for second and subsequent connections to the same doc, this will
@@ -834,9 +871,17 @@ export const invalidateFromAdmin = async (docName) => {
  * @param {TransactionalStorage} storage - The worker transactional storage object
  * @param {boolean} hibernation - When true, skip event listener registration (CF Hibernation API
  *   handles message/close routing via class methods instead of addEventListener).
+   * @param {boolean} isHelix - True when the document needs to be stored in Helix.
  * @returns {Promise<void>} - The return value of this
  */
-export const setupWSConnection = async (conn, docName, env, storage, hibernation = false) => {
+export const setupWSConnection = async (
+  conn,
+  docName,
+  env,
+  storage,
+  hibernation = false,
+  isHelix = false,
+) => {
   const timingData = new Map();
 
   // eslint-disable-next-line no-param-reassign
@@ -856,7 +901,7 @@ export const setupWSConnection = async (conn, docName, env, storage, hibernation
   }
 
   // get doc, initialize if it does not exist yet
-  const doc = await getYDoc(docName, conn, env, storage, timingData, true);
+  const doc = await getYDoc(docName, conn, env, storage, timingData, true, isHelix);
 
   if (!hibernation) {
     // listen and reply to events
@@ -899,7 +944,7 @@ export const handleWebSocketMessage = async (conn, docName, env, storage, messag
   let doc = docs.get(docName);
   if (!doc) {
     // DO was hibernated; re-establish Yjs state without re-registering event listeners
-    await setupWSConnection(conn, docName, env, storage, true);
+    await setupWSConnection(conn, docName, env, storage, true); // TODO set isHelix!!!
     doc = docs.get(docName);
   }
   if (doc) {

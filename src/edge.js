@@ -10,7 +10,7 @@
  * governing permissions and limitations under the License.
  */
 import {
-  handleWebSocketClose, handleWebSocketMessage,
+  getFetchObj, handleWebSocketClose, handleWebSocketMessage,
   invalidateFromAdmin, logError, setupWSConnection,
 } from './shareddoc.js';
 
@@ -178,11 +178,14 @@ export function wsAuthFailureResponse(reqHeaders, code, reason) {
  * @returns {Promise<*|Response>}
  */
 export async function handleApiRequest(request, env) {
+  const url = new URL(request.url);
+  const isHelix = url.searchParams.get('x-forwarded-host') === 'api.aem.live';
+  const fetchObj = getFetchObj(isHelix, env.daadmin);
+
   let timingDaAdminHeadDuration;
   const timingStartTime = Date.now();
 
   // We've received a pure API request - handle it and return.
-  const url = new URL(request.url);
   if (url.pathname.startsWith('/api/')) {
     return handleApiCall(url, request, env);
   }
@@ -211,6 +214,7 @@ export async function handleApiRequest(request, env) {
   if (!docName.startsWith('https://admin.da.live/')
       && !docName.startsWith('https://admin.da.page/')
       && !docName.startsWith('https://stage-admin.da.live/')
+      && !docName.startsWith('https://api.aem.live/')
       && !docName.startsWith('http://localhost:')) {
     return new Response('unable to get resource', { status: 404 });
   }
@@ -225,7 +229,7 @@ export async function handleApiRequest(request, env) {
     }
 
     const timingBeforeDaAdminHead = Date.now();
-    const initialReq = await env.daadmin.fetch(docName, opts);
+    const initialReq = await fetchObj.fetch(docName, opts);
 
     timingDaAdminHeadDuration = Date.now() - timingBeforeDaAdminHead;
 
@@ -279,6 +283,7 @@ export async function handleApiRequest(request, env) {
       ['X-timing-da-admin-head-duration', timingDaAdminHeadDuration],
       ['X-timing-docroom-get-duration', timingDocRoomGetDuration],
       ['X-auth-actions', authActions],
+      ['X-is-helix', String(isHelix)],
     ];
 
     if (auth) {
@@ -395,7 +400,10 @@ export class DocRoom {
         return new Response('expected websocket', { status: 400 });
       }
       const auth = request.headers.get('Authorization');
-      const authActions = request.headers.get('X-auth-actions') ?? '';
+      const isHelix = request.headers.get('X-is-helix') === 'true';
+      const authActions = isHelix
+        ? 'read,write' // TODO remove once Helix supports auth actions
+        : request.headers.get('X-auth-actions') ?? '';
       const docName = request.headers.get('X-collab-room');
 
       if (!docName) {
@@ -425,7 +433,7 @@ export class DocRoom {
         auth ? auth.substring(0, auth.indexOf(' ')) : 'none'})`);
 
       // Kick off async document initialization; response is returned immediately.
-      this.initSession(server, docName);
+      this.initSession(server, docName, isHelix);
 
       const reqHeaders = request.headers;
       const respheaders = new Headers({
@@ -451,10 +459,12 @@ export class DocRoom {
    * Auth properties must already be set on webSocket before calling this.
    * @param {WebSocket} webSocket - The WebSocket connection to the client
    * @param {string} docName - The document name
+   * @param {boolean} isHelix - True when the originating request had
+   *   the `x-forwarded-host: api.aem.live` header (i.e. proxied via Helix).
    */
-  async initSession(webSocket, docName) {
+  async initSession(webSocket, docName, isHelix) {
     try {
-      await setupWSConnection(webSocket, docName, this.env, this.storage, true);
+      await setupWSConnection(webSocket, docName, this.env, this.storage, true, isHelix);
     } catch (err) {
       logError(err, '[docroom] Error during session setup', docName, err);
       try {
