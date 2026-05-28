@@ -179,8 +179,6 @@ export function wsAuthFailureResponse(reqHeaders, code, reason) {
  */
 export async function handleApiRequest(request, env) {
   const url = new URL(request.url);
-  const isHelix = url.searchParams.get('x-forwarded-host') === 'api.aem.live';
-  const fetchObj = getFetchObj(isHelix, env.daadmin);
 
   let timingDaAdminHeadDuration;
   const timingStartTime = Date.now();
@@ -209,6 +207,9 @@ export async function handleApiRequest(request, env) {
   if (docName.indexOf('?') > 0) {
     docName = docName.substring(0, docName.indexOf('?'));
   }
+
+  const isHelix = docName.startsWith('https://api.aem.live');
+  const fetchObj = getFetchObj(isHelix, env.daadmin);
 
   // Make sure we only work with da.live, da.page or localhost
   if (!docName.startsWith('https://admin.da.live/')
