@@ -40,11 +40,11 @@
     "mocha-multi-reporters": "1.5.1",
     "semantic-release": "25.0.3",
     "semantic-release-slack-bot": "4.0.2",
-    "wrangler": "4.92.0"
+    "wrangler": "4.95.0"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "4.20260519.1",
-    "@da-tools/da-parser": "^1.2.0",
+    "@cloudflare/workers-types": "4.20260529.1",
+    "@da-tools/da-parser": "^1.2.1",
     "lib0": "0.2.114",
     "y-protocols": "1.0.6",
     "yjs": "13.6.29"
