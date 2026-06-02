@@ -903,7 +903,7 @@ export const handleWebSocketMessage = async (conn, docName, env, storage, messag
     doc = docs.get(docName);
   }
   if (doc) {
-    messageListener(conn, doc, new Uint8Array(message));
+    await messageListener(conn, doc, new Uint8Array(message));
   }
 };
 
