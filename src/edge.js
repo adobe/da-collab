@@ -454,7 +454,7 @@ export class DocRoom {
    */
   async initSession(webSocket, docName) {
     try {
-      await setupWSConnection(webSocket, docName, this.env, this.storage, true);
+      await setupWSConnection(webSocket, docName, this.env, this.storage, this.ctx, true);
     } catch (err) {
       logError(err, '[docroom] Error during session setup', docName, err);
       try {
@@ -477,7 +477,7 @@ export class DocRoom {
       // eslint-disable-next-line no-param-reassign
       webSocket.readOnly = true;
     }
-    await handleWebSocketMessage(webSocket, docName, this.env, this.storage, message);
+    await handleWebSocketMessage(webSocket, docName, this.env, this.storage, message, this.ctx);
   }
 
   /**

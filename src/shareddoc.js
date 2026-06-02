@@ -422,7 +422,7 @@ export const persistence = {
    * @param {WebSocket} conn - the websocket connection
    * @param {TransactionalStorage} storage - the worker transactional storage object
    */
-  bindState: async (docName, ydoc, conn, storage) => {
+  bindState: async (docName, ydoc, conn, storage, ctx) => {
     const docType = getDocType(docName);
     let timingReadStateDuration;
 
@@ -485,65 +485,74 @@ export const persistence = {
       // and we must NOT overwrite with the stale da-admin snapshot.
       const svBefore = Y.encodeStateVector(ydoc);
 
-      setTimeout(async () => {
-        if (ydoc === docs.get(docName)) {
-          const svAfter = Y.encodeStateVector(ydoc);
-          const clientHasUpdated = svBefore.length !== svAfter.length
-            || svBefore.some((v, i) => v !== svAfter[i]);
-          if (clientHasUpdated) {
-            // eslint-disable-next-line no-console
-            console.log('[docroom] Skipping da-admin reload: client state received', docName);
-          } else {
-            try {
-              ydoc.transact(() => {
-                if (docType === 'json') {
-                  // Clear JSON structure
-                  const ysheets = ydoc.getArray('sheets');
-                  if (ysheets.length > 0) {
-                    ysheets.delete(0, ysheets.length);
-                  }
-                  // restore from da-admin
-                  json2doc(current, ydoc);
-                } else {
-                  // Clear HTML structure
-                  const rootType = ydoc.getXmlFragment('prosemirror');
-                  rootType.delete(0, rootType.length);
-                  // clear all maps
-                  ydoc.share.forEach((type) => {
-                    if (type instanceof Y.Map) {
-                      type.clear();
-                    }
-                  });
-                  // Restore from da-admin
-                  aem2doc(current, ydoc);
-                }
-              });
-
+      const restoreAfterDelay = new Promise((resolve) => {
+        setTimeout(resolve, 1000);
+      })
+        .then(async () => {
+          if (ydoc === docs.get(docName)) {
+            const svAfter = Y.encodeStateVector(ydoc);
+            const clientHasUpdated = svBefore.length !== svAfter.length
+              || svBefore.some((v, i) => v !== svAfter[i]);
+            if (clientHasUpdated) {
               // eslint-disable-next-line no-console
-              console.log('[docroom] Restored from da-admin', docName, docType);
-            } catch (error) {
-              logError(error, '[docroom] Problem restoring state from da-admin', docName, error, current);
-              if (!isExpectedPlatformEvent(error)) {
-                showError(ydoc, error);
+              console.log('[docroom] Skipping da-admin reload: client state received', docName);
+            } else {
+              try {
+                ydoc.transact(() => {
+                  if (docType === 'json') {
+                    // Clear JSON structure
+                    const ysheets = ydoc.getArray('sheets');
+                    if (ysheets.length > 0) {
+                      ysheets.delete(0, ysheets.length);
+                    }
+                    // restore from da-admin
+                    json2doc(current, ydoc);
+                  } else {
+                    // Clear HTML structure
+                    const rootType = ydoc.getXmlFragment('prosemirror');
+                    rootType.delete(0, rootType.length);
+                    // clear all maps
+                    ydoc.share.forEach((type) => {
+                      if (type instanceof Y.Map) {
+                        type.clear();
+                      }
+                    });
+                    // Restore from da-admin
+                    aem2doc(current, ydoc);
+                  }
+                });
+
+                // eslint-disable-next-line no-console
+                console.log('[docroom] Restored from da-admin', docName, docType);
+              } catch (error) {
+                logError(error, '[docroom] Problem restoring state from da-admin', docName, error, current);
+                if (!isExpectedPlatformEvent(error)) {
+                  showError(ydoc, error);
+                }
+              }
+            }
+
+            // Write lastsync anchor regardless of whether we restored or the client
+            // had already sent updates. CF storage is now anchored to `current`, so
+            // on DO restart we can detect it as a valid continuation even if no PUT
+            // to da-admin has happened yet.
+            if (storage?.put) {
+              try {
+                await storage.put('lastsync', current);
+              } catch (storageErr) {
+                // non-fatal
+                // eslint-disable-next-line no-console
+                console.error('[docroom] Failed to write lastsync after da-admin fetch', storageErr);
               }
             }
           }
+        });
 
-          // Write lastsync anchor regardless of whether we restored or the client
-          // had already sent updates. CF storage is now anchored to `current`, so
-          // on DO restart we can detect it as a valid continuation even if no PUT
-          // to da-admin has happened yet.
-          if (storage?.put) {
-            try {
-              await storage.put('lastsync', current);
-            } catch (storageErr) {
-              // non-fatal
-              // eslint-disable-next-line no-console
-              console.error('[docroom] Failed to write lastsync after da-admin fetch', storageErr);
-            }
-          }
-        }
-      }, 1000);
+      if (ctx?.waitUntil) {
+        ctx.waitUntil(restoreAfterDelay);
+      } else {
+        restoreAfterDelay.catch(() => {});
+      }
     }
 
     ydoc.on('update', async () => {
@@ -675,7 +684,7 @@ export class WSSharedDoc extends Y.Doc {
  * @param {boolean} gc - whether garbage collection is enabled
  * @returns The Yjs document object, which may be shared across multiple sockets.
  */
-export const getYDoc = async (docname, conn, env, storage, timingData, gc = true) => {
+export const getYDoc = async (docname, conn, env, storage, timingData, ctx, gc = true) => {
   let doc = docs.get(docname);
   if (doc === undefined) {
     // The doc is not yet in the cache, create a new one.
@@ -698,7 +707,7 @@ export const getYDoc = async (docname, conn, env, storage, timingData, gc = true
   if (!doc.promise) {
     // The doc is not yet bound to the persistence layer, do so now. The promise will be resolved
     // when bound.
-    doc.promise = persistence.bindState(docname, doc, conn, storage);
+    doc.promise = persistence.bindState(docname, doc, conn, storage, ctx);
   }
 
   // We wait for the promise, for second and subsequent connections to the same doc, this will
@@ -836,7 +845,7 @@ export const invalidateFromAdmin = async (docName) => {
  *   handles message/close routing via class methods instead of addEventListener).
  * @returns {Promise<void>} - The return value of this
  */
-export const setupWSConnection = async (conn, docName, env, storage, hibernation = false) => {
+export const setupWSConnection = async (conn, docName, env, storage, ctx, hibernation = false) => {
   const timingData = new Map();
 
   // eslint-disable-next-line no-param-reassign
@@ -856,7 +865,7 @@ export const setupWSConnection = async (conn, docName, env, storage, hibernation
   }
 
   // get doc, initialize if it does not exist yet
-  const doc = await getYDoc(docName, conn, env, storage, timingData, true);
+  const doc = await getYDoc(docName, conn, env, storage, timingData, ctx, true);
 
   if (!hibernation) {
     // listen and reply to events
@@ -895,11 +904,11 @@ export const setupWSConnection = async (conn, docName, env, storage, hibernation
  * @param {TransactionalStorage} storage - The durable object storage
  * @param {ArrayBuffer|string} message - The raw message from the WebSocket
  */
-export const handleWebSocketMessage = async (conn, docName, env, storage, message) => {
+export const handleWebSocketMessage = async (conn, docName, env, storage, message, ctx) => {
   let doc = docs.get(docName);
   if (!doc) {
     // DO was hibernated; re-establish Yjs state without re-registering event listeners
-    await setupWSConnection(conn, docName, env, storage, true);
+    await setupWSConnection(conn, docName, env, storage, ctx, true);
     doc = docs.get(docName);
   }
   if (doc) {
