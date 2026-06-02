@@ -9,6 +9,8 @@
  * OF ANY KIND, either express or implied. See the License for the specific language
  * governing permissions and limitations under the License.
  */
+// eslint-disable-next-line import/no-unresolved
+import { DurableObject } from 'cloudflare:workers';
 import {
   handleWebSocketClose, handleWebSocketMessage,
   invalidateFromAdmin, logError, setupWSConnection,
@@ -318,20 +320,7 @@ export default {
  *
  * @tpye {Fetcher}
  */
-export class DocRoom {
-  constructor(controller, env) {
-    // `controller.storage` provides access to our durable storage. It provides a simple KV
-    // get()/put() interface.
-    this.storage = controller?.storage;
-
-    // `env` is our environment bindings (discussed earlier).
-    this.env = env;
-    this.id = controller?.id?.toString() || `no-controller-${new Date().getTime()}`;
-
-    // `ctx` is the Durable Object controller, used for the Hibernation API
-    this.ctx = controller;
-  }
-
+export class DocRoom extends DurableObject {
   /**
    * Handle the API calls. Supported API calls right now are to sync the doc with the da-admin
    * state or to indicate that the document has been deleted from da-admin.
@@ -454,7 +443,7 @@ export class DocRoom {
    */
   async initSession(webSocket, docName) {
     try {
-      await setupWSConnection(webSocket, docName, this.env, this.storage, true);
+      await setupWSConnection(webSocket, docName, this.env, this.ctx?.storage, true);
     } catch (err) {
       logError(err, '[docroom] Error during session setup', docName, err);
       try {
@@ -477,7 +466,7 @@ export class DocRoom {
       // eslint-disable-next-line no-param-reassign
       webSocket.readOnly = true;
     }
-    await handleWebSocketMessage(webSocket, docName, this.env, this.storage, message);
+    await handleWebSocketMessage(webSocket, docName, this.env, this.ctx?.storage, message);
   }
 
   /**
