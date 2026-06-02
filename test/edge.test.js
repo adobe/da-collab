@@ -1144,7 +1144,7 @@ describe('Worker test suite', () => {
     const m = setYDoc(docName, testYdoc);
 
     const dr = new DocRoom(makeCtx(null), {});
-    dr.webSocketClose(mockConn, 1000, 'Normal', true);
+    await dr.webSocketClose(mockConn, 1000, 'Normal', true);
 
     assert.deepStrictEqual(['close'], closeCalled);
     assert(!m.has(docName), 'Doc should be removed when no connections remain');
@@ -1167,7 +1167,7 @@ describe('Worker test suite', () => {
     const m = setYDoc(docName, testYdoc);
 
     const dr = new DocRoom(makeCtx(null), {});
-    dr.webSocketError(mockConn, new Error('connection reset'));
+    await dr.webSocketError(mockConn, new Error('connection reset'));
 
     assert.deepStrictEqual(['close'], closeCalled);
     assert(!m.has(docName), 'Doc should be removed on error');
@@ -1184,7 +1184,7 @@ describe('Worker test suite', () => {
     };
 
     const dr = new DocRoom(makeCtx(null), {});
-    dr.webSocketClose(mockConn, 1000, 'Normal', true);
+    await dr.webSocketClose(mockConn, 1000, 'Normal', true);
     // No assertion needed — test passes if close() is not called
   });
 

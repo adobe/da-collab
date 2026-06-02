@@ -912,9 +912,9 @@ export const handleWebSocketMessage = async (conn, docName, env, storage, messag
  * @param {WebSocket} conn - The WebSocket connection
  * @param {string} docName - The document name
  */
-export const handleWebSocketClose = (conn, docName) => {
+export const handleWebSocketClose = async (conn, docName) => {
   const doc = docs.get(docName);
   if (doc) {
-    closeConn(doc, conn);
+    await closeConn(doc, conn);
   }
 };
