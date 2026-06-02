@@ -23,6 +23,7 @@ function makeCtx(storage = null) {
     storage,
     accepted,
     acceptWebSocket(ws) { accepted.push(ws); },
+    waitUntil(p) { return p; },
   };
 }
 
