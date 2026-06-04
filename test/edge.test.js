@@ -1217,7 +1217,15 @@ describe('Worker test suite', () => {
     }
   });
 
-  it('Test handleApiRequest for api.aem.live routes HEAD through globalThis.fetch', async () => {
+  // ---------------------------------------------------------------------------
+  // Backend resolution (api-live-switch branch)
+  //
+  // The backend is derived from the doc URL alone — there is no X-is-helix
+  // header or isHelix attachment field. api.aem.live docs are reached via the
+  // global fetch; everything else via the da-admin service binding.
+  // ---------------------------------------------------------------------------
+
+  it('Test handleApiRequest routes an api.aem.live HEAD through the global fetch', async () => {
     const savedFetch = globalThis.fetch;
     const helixCalls = [];
     globalThis.fetch = async (url, opts) => {
@@ -1253,50 +1261,63 @@ describe('Worker test suite', () => {
       const res = await handleApiRequest(req, env);
       assert.equal(306, res.status);
 
-      assert.equal(1, helixCalls.length, 'globalThis.fetch must be used for the Helix HEAD');
+      assert.equal(1, helixCalls.length, 'the global fetch must be used for the Helix HEAD');
       assert.equal('HEAD', helixCalls[0].opts.method);
       assert.equal('https://api.aem.live/o/r/p.html', helixCalls[0].url);
       assert.equal(0, daadminCalls.length, 'daadmin.fetch must NOT be called for Helix docs');
 
       assert.equal(1, roomFetchCalls.length);
-      assert.equal('true', roomFetchCalls[0].headers.get('X-is-helix'));
       assert.equal(
         'https://api.aem.live/o/r/p.html',
         roomFetchCalls[0].headers.get('X-collab-room'),
+      );
+      assert.equal(
+        null,
+        roomFetchCalls[0].headers.get('X-is-helix'),
+        'X-is-helix header must no longer be sent — the room derives the backend from the doc URL',
       );
     } finally {
       globalThis.fetch = savedFetch;
     }
   });
 
-  it('Test handleApiRequest non-Helix doc forwards X-is-helix=false', async () => {
-    const roomFetchCalls = [];
-    const myRoom = {
-      fetch(req) {
-        roomFetchCalls.push(req);
-        return new Response(null, { status: 306 });
+  it('Test handleApiRequest routes a da-admin HEAD through the daadmin binding', async () => {
+    const savedFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      assert.fail('global fetch must not be used for da-admin docs');
+    };
+
+    const daadminCalls = [];
+    const daadmin = {
+      fetch: async (url, opts) => {
+        daadminCalls.push({ url, opts });
+        return new Response(null, { status: 200 });
       },
     };
-    const daadmin = {
-      fetch: async () => new Response(null, { status: 200 }),
+    const myRoom = {
+      fetch() { return new Response(null, { status: 306 }); },
     };
     const rooms = {
       idFromName(nm) { return `id${hash(nm)}`; },
       get() { return myRoom; },
     };
     const env = { rooms, daadmin };
-    const req = {
-      url: 'http://do.re.mi/https://admin.da.live/some.html',
-      headers: new Headers(),
-    };
 
-    const res = await handleApiRequest(req, env);
-    assert.equal(306, res.status);
-    assert.equal(1, roomFetchCalls.length);
-    assert.equal('false', roomFetchCalls[0].headers.get('X-is-helix'));
+    try {
+      const req = {
+        url: 'http://do.re.mi/https://admin.da.live/some.html',
+        headers: new Headers(),
+      };
+      const res = await handleApiRequest(req, env);
+      assert.equal(306, res.status);
+      assert.equal(1, daadminCalls.length, 'daadmin.fetch must be used for da-admin docs');
+      assert.equal('HEAD', daadminCalls[0].opts.method);
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
   });
 
-  it('Test handleApiRequest still rejects unknown hosts that resemble Helix', async () => {
+  it('Test handleApiRequest still rejects api.aem.* hosts that are not api.aem.live', async () => {
     const req = {
       url: 'http://do.re.mi/https://api.aem.fake/laaa.html',
       headers: new Headers(),
@@ -1305,7 +1326,7 @@ describe('Worker test suite', () => {
     assert.equal(404, res.status, 'Only api.aem.live (with trailing slash) is whitelisted');
   });
 
-  it('Test DocRoom fetch with X-is-helix=true forces read,write authActions', async () => {
+  it('Test DocRoom fetch forces read,write authActions for an api.aem.live doc', async () => {
     const savedNWSP = DocRoom.newWebSocketPair;
     const savedBS = persistence.bindState;
 
@@ -1313,23 +1334,20 @@ describe('Worker test suite', () => {
       persistence.bindState = async () => new Map();
 
       const attachCalled = [];
-      const wsp0 = {};
       const wsp1 = {
         serializeAttachment(data) { attachCalled.push(data); },
         close() {},
       };
-      DocRoom.newWebSocketPair = () => [wsp0, wsp1];
+      DocRoom.newWebSocketPair = () => [{}, wsp1];
 
-      const ctx = makeCtx(null);
-      const dr = new DocRoom(ctx, { daadmin: {} });
+      const dr = new DocRoom(makeCtx(null), { daadmin: {} });
       const headers = new Headers({
         Upgrade: 'websocket',
         Authorization: 'au-helix',
         'X-collab-room': 'https://api.aem.live/o/r/p.html',
-        // Empty X-auth-actions would normally mark the conn as readOnly;
-        // isHelix must override and force read,write while Helix lacks auth-action support.
+        // Empty X-auth-actions would normally mark the conn read-only; for a
+        // Helix doc the backend's read,write default must override it.
         'X-auth-actions': '',
-        'X-is-helix': 'true',
       });
       const req = { headers, url: 'http://localhost:4711/' };
       const resp = await dr.fetch(req, {}, 306);
@@ -1341,36 +1359,70 @@ describe('Worker test suite', () => {
       assert.equal(
         'read,write',
         attachCalled[0].authActions,
-        'isHelix must force read,write authActions until Helix supports them',
+        'Helix backend must force read,write authActions until Helix reports them',
       );
-      assert.equal(true, attachCalled[0].isHelix, 'isHelix flag must be serialized for hibernation recovery');
-      assert.notEqual(true, wsp1.readOnly, 'must not be marked readOnly when isHelix forces write');
+      assert.equal(
+        false,
+        Object.prototype.hasOwnProperty.call(attachCalled[0], 'isHelix'),
+        'attachment must no longer carry an isHelix field',
+      );
+      assert.notEqual(true, wsp1.readOnly, 'must not be marked readOnly when the backend forces write');
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
       persistence.bindState = savedBS;
     }
   });
 
-  it('Test DocRoom fetch propagates isHelix to persistence.bindState via initSession', async () => {
+  it('Test DocRoom fetch honours X-auth-actions for a da-admin doc', async () => {
+    const savedNWSP = DocRoom.newWebSocketPair;
+    const savedBS = persistence.bindState;
+
+    try {
+      persistence.bindState = async () => new Map();
+
+      const attachCalled = [];
+      const wsp1 = {
+        serializeAttachment(data) { attachCalled.push(data); },
+        close() {},
+      };
+      DocRoom.newWebSocketPair = () => [{}, wsp1];
+
+      const dr = new DocRoom(makeCtx(null), { daadmin: {} });
+      const headers = new Headers({
+        Upgrade: 'websocket',
+        'X-collab-room': 'https://admin.da.live/foo.html',
+        'X-auth-actions': 'read',
+      });
+      const req = { headers, url: 'http://localhost:4711/' };
+      await dr.fetch(req, {}, 306);
+
+      assert.equal('read', attachCalled[0].authActions, 'da-admin authActions must come from the header');
+      assert.equal(true, wsp1.readOnly, 'a read-only da-admin connection must be marked readOnly');
+    } finally {
+      DocRoom.newWebSocketPair = savedNWSP;
+      persistence.bindState = savedBS;
+    }
+  });
+
+  it('Test DocRoom routes an api.aem.live doc to bindState (Helix backend derived from URL)', async () => {
     const savedNWSP = DocRoom.newWebSocketPair;
     const savedBS = persistence.bindState;
 
     try {
       const bindCalled = [];
-      persistence.bindState = async (nm, d, c, s, isHelix) => {
-        bindCalled.push({ nm, isHelix });
+      persistence.bindState = async (nm, ydoc) => {
+        bindCalled.push({ nm, daadmin: ydoc.daadmin });
         return new Map();
       };
 
       const wsp1 = { serializeAttachment() {}, close() {} };
       DocRoom.newWebSocketPair = () => [{}, wsp1];
 
-      const ctx = makeCtx(null);
-      const dr = new DocRoom(ctx, { daadmin: {} });
+      const daadmin = { mark: 'da' };
+      const dr = new DocRoom(makeCtx(null), { daadmin });
       const headers = new Headers({
         Upgrade: 'websocket',
         'X-collab-room': 'https://api.aem.live/x.html',
-        'X-is-helix': 'true',
       });
       const req = { headers, url: 'http://localhost:4711/' };
       const resp = await dr.fetch(req, {}, 306);
@@ -1381,58 +1433,18 @@ describe('Worker test suite', () => {
 
       assert.equal(1, bindCalled.length);
       assert.equal('https://api.aem.live/x.html', bindCalled[0].nm);
-      assert.equal(true, bindCalled[0].isHelix);
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
       persistence.bindState = savedBS;
     }
   });
 
-  it('Test DocRoom fetch without X-is-helix defaults to non-Helix path', async () => {
-    const savedNWSP = DocRoom.newWebSocketPair;
-    const savedBS = persistence.bindState;
-
-    try {
-      const bindCalled = [];
-      persistence.bindState = async (nm, d, c, s, isHelix) => {
-        bindCalled.push({ nm, isHelix });
-        return new Map();
-      };
-
-      const attachCalled = [];
-      const wsp1 = {
-        serializeAttachment(data) { attachCalled.push(data); },
-        close() {},
-      };
-      DocRoom.newWebSocketPair = () => [{}, wsp1];
-
-      const ctx = makeCtx(null);
-      const dr = new DocRoom(ctx, { daadmin: {} });
-      const headers = new Headers({
-        Upgrade: 'websocket',
-        'X-collab-room': 'https://admin.da.live/foo.html',
-        'X-auth-actions': 'read,write',
-        'X-is-helix': 'false',
-      });
-      const req = { headers, url: 'http://localhost:4711/' };
-      await dr.fetch(req, {}, 306);
-      await sleep(10);
-
-      assert.equal(false, attachCalled[0].isHelix, 'isHelix must be false for non-Helix docs');
-      assert.equal('read,write', attachCalled[0].authActions, 'authActions must come from the header when not Helix');
-      assert.equal(false, bindCalled[0].isHelix);
-    } finally {
-      DocRoom.newWebSocketPair = savedNWSP;
-      persistence.bindState = savedBS;
-    }
-  });
-
-  it('Test DocRoom webSocketMessage propagates isHelix from attachment to setupWSConnection', async () => {
+  it('Test DocRoom webSocketMessage works with an attachment that has no isHelix field', async () => {
     const savedBS = persistence.bindState;
     try {
       const bindCalled = [];
-      persistence.bindState = async (nm, d, c, s, isHelix) => {
-        bindCalled.push({ nm, isHelix });
+      persistence.bindState = async (nm) => {
+        bindCalled.push(nm);
         return new Map();
       };
 
@@ -1445,9 +1457,7 @@ describe('Worker test suite', () => {
         send() {},
         close() {},
         deserializeAttachment() {
-          return {
-            docName, auth: 'Bearer t', authActions: 'read,write', isHelix: true,
-          };
+          return { docName, auth: 'Bearer t', authActions: 'read,write' };
         },
       };
 
@@ -1455,9 +1465,9 @@ describe('Worker test suite', () => {
       const msg = new Uint8Array([0, 0]).buffer;
       await dr.webSocketMessage(mockConn, msg);
 
+      assert.equal('Bearer t', mockConn.auth);
       assert.equal(1, bindCalled.length);
-      assert.equal(docName, bindCalled[0].nm);
-      assert.equal(true, bindCalled[0].isHelix);
+      assert.equal(docName, bindCalled[0]);
     } finally {
       persistence.bindState = savedBS;
     }

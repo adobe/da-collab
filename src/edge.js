@@ -10,8 +10,8 @@
  * governing permissions and limitations under the License.
  */
 import {
-  getFetchObj, handleWebSocketClose, handleWebSocketMessage,
-  invalidateFromAdmin, logError, setupWSConnection,
+  getBackend, handleWebSocketClose, handleWebSocketMessage,
+  invalidateFromAdmin, isHelixDoc, logError, setupWSConnection,
 } from './shareddoc.js';
 
 /**
@@ -208,9 +208,6 @@ export async function handleApiRequest(request, env) {
     docName = docName.substring(0, docName.indexOf('?'));
   }
 
-  const isHelix = docName.startsWith('https://api.aem.live');
-  const fetchObj = getFetchObj(isHelix, env.daadmin);
-
   // Make sure we only work with da.live, da.page or localhost
   if (!docName.startsWith('https://admin.da.live/')
       && !docName.startsWith('https://admin.da.page/')
@@ -230,7 +227,7 @@ export async function handleApiRequest(request, env) {
     }
 
     const timingBeforeDaAdminHead = Date.now();
-    const initialReq = await fetchObj.fetch(docName, opts);
+    const initialReq = await getBackend(docName, env.daadmin).fetch(docName, opts);
 
     timingDaAdminHeadDuration = Date.now() - timingBeforeDaAdminHead;
 
@@ -284,7 +281,6 @@ export async function handleApiRequest(request, env) {
       ['X-timing-da-admin-head-duration', timingDaAdminHeadDuration],
       ['X-timing-docroom-get-duration', timingDocRoomGetDuration],
       ['X-auth-actions', authActions],
-      ['X-is-helix', String(isHelix)],
     ];
 
     if (auth) {
@@ -401,15 +397,18 @@ export class DocRoom {
         return new Response('expected websocket', { status: 400 });
       }
       const auth = request.headers.get('Authorization');
-      const isHelix = request.headers.get('X-is-helix') === 'true';
-      const authActions = isHelix
-        ? 'read,write' // TODO remove once Helix supports auth actions
-        : request.headers.get('X-auth-actions') ?? '';
       const docName = request.headers.get('X-collab-room');
 
       if (!docName) {
         return new Response('expected docName', { status: 400 });
       }
+
+      // Helix does not yet report auth actions, so grant collaborators
+      // read,write; otherwise honour what da-admin reported.
+      // TODO: remove the isHelixDoc branch once Helix reports auth actions.
+      const authActions = isHelixDoc(docName)
+        ? 'read,write'
+        : request.headers.get('X-auth-actions') ?? '';
 
       // To accept the WebSocket request, we create a WebSocketPair (which is like a socketpair,
       // i.e. two WebSockets that talk to each other), we return one end of the pair in the
@@ -421,9 +420,7 @@ export class DocRoom {
       // Register with CF Hibernation API: the DO can sleep between messages
       // without losing its WebSocket connections.
       this.ctx.acceptWebSocket(server);
-      server.serializeAttachment({
-        docName, auth, authActions, isHelix,
-      });
+      server.serializeAttachment({ docName, auth, authActions });
 
       server.auth = auth;
       if (!authActions.split(',').includes('write')) {
@@ -436,7 +433,7 @@ export class DocRoom {
         auth ? auth.substring(0, auth.indexOf(' ')) : 'none'})`);
 
       // Kick off async document initialization; response is returned immediately.
-      this.initSession(server, docName, isHelix);
+      this.initSession(server, docName);
 
       const reqHeaders = request.headers;
       const respheaders = new Headers({
@@ -462,12 +459,10 @@ export class DocRoom {
    * Auth properties must already be set on webSocket before calling this.
    * @param {WebSocket} webSocket - The WebSocket connection to the client
    * @param {string} docName - The document name
-   * @param {boolean} isHelix - True when the originating request had
-   *   the `x-forwarded-host: api.aem.live` header (i.e. proxied via Helix).
    */
-  async initSession(webSocket, docName, isHelix) {
+  async initSession(webSocket, docName) {
     try {
-      await setupWSConnection(webSocket, docName, this.env, this.storage, true, isHelix);
+      await setupWSConnection(webSocket, docName, this.env, this.storage, true);
     } catch (err) {
       logError(err, '[docroom] Error during session setup', docName, err);
       try {
@@ -483,16 +478,14 @@ export class DocRoom {
    * @param {ArrayBuffer|string} message
    */
   async webSocketMessage(webSocket, message) {
-    const {
-      docName, auth, authActions, isHelix,
-    } = webSocket.deserializeAttachment();
+    const { docName, auth, authActions } = webSocket.deserializeAttachment();
     // eslint-disable-next-line no-param-reassign
     webSocket.auth = auth;
     if (!authActions.split(',').includes('write')) {
       // eslint-disable-next-line no-param-reassign
       webSocket.readOnly = true;
     }
-    await handleWebSocketMessage(webSocket, docName, this.env, this.storage, message, isHelix);
+    await handleWebSocketMessage(webSocket, docName, this.env, this.storage, message);
   }
 
   /**

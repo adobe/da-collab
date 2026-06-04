@@ -20,7 +20,7 @@ import {
   aem2doc, doc2aem, doc2json, EMPTY_DOC,
 } from '@da-tools/da-parser';
 import {
-  closeConn, getFetchObj, getYDoc, handleWebSocketMessage,
+  closeConn, getBackend, getYDoc, isHelixDoc,
   invalidateFromAdmin, isExpectedPlatformEvent, messageFlushRequest,
   messageFlushResponse, messageListener, persistence,
   readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
@@ -2629,21 +2629,77 @@ describe('Collab Test Suite', () => {
     }
   });
 
-  it('getFetchObj returns daadmin when isHelix is false', () => {
-    const daadmin = { mark: 'da' };
-    assert.strictEqual(getFetchObj(false, daadmin), daadmin);
+  // ---------------------------------------------------------------------------
+  // Backend resolution (api-live-switch branch)
+  //
+  // The storage backend is determined entirely by the doc URL: docs under
+  // https://api.aem.live live in Helix (global fetch); everything else goes
+  // through the da-admin service binding. There is no isHelix flag to thread.
+  // ---------------------------------------------------------------------------
+
+  it('getBackend routes da-admin docs through the daadmin binding', async () => {
+    const calls = [];
+    const daadmin = {
+      fetch: async (url, opts) => {
+        calls.push({ url, opts });
+        return 'da-resp';
+      },
+    };
+    const backend = getBackend('https://admin.da.live/x.html', daadmin);
+    const resp = await backend.fetch('https://admin.da.live/x.html', { method: 'HEAD' });
+
+    assert.equal('da-resp', resp);
+    assert.equal(1, calls.length);
+    assert.equal('https://admin.da.live/x.html', calls[0].url);
   });
 
-  it('getFetchObj returns daadmin when isHelix is undefined', () => {
-    const daadmin = { mark: 'da' };
-    assert.strictEqual(getFetchObj(undefined, daadmin), daadmin);
+  it('getBackend routes api.aem.live docs through the global fetch', async () => {
+    const savedFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return 'helix-resp';
+    };
+    try {
+      const daadmin = {
+        fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
+      };
+      const backend = getBackend('https://api.aem.live/o/r/p.html', daadmin);
+      const resp = await backend.fetch('https://api.aem.live/o/r/p.html', { method: 'HEAD' });
+
+      assert.equal('helix-resp', resp);
+      assert.equal(1, calls.length);
+      assert.equal('https://api.aem.live/o/r/p.html', calls[0].url);
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
   });
 
-  it('getFetchObj returns globalThis when isHelix is true', () => {
-    assert.strictEqual(getFetchObj(true, { mark: 'da' }), globalThis);
+  it('getBackend.putReqData builds multipart form-data for da-admin docs', () => {
+    const backend = getBackend('https://admin.da.live/x.html', {});
+    const { body, size, headers } = backend.putReqData('hello world', 'text/html');
+
+    assert(body instanceof FormData, 'da-admin PUT body must be FormData');
+    assert.equal(size, new Blob(['hello world']).size);
+    assert.deepStrictEqual(headers, {}, 'da-admin path must not set Content-Type (FormData boundary handles it)');
   });
 
-  it('persistence.get routes to globalThis.fetch when isHelix is true', async () => {
+  it('getBackend.putReqData sends raw body + Content-Type for Helix docs', () => {
+    const backend = getBackend('https://api.aem.live/o/r/p.html', {});
+    const { body, size, headers } = backend.putReqData('hello world', 'text/html');
+
+    assert.strictEqual(body, 'hello world', 'Helix PUT body must be the raw content string');
+    assert.equal(size, 'hello world'.length);
+    assert.deepStrictEqual(headers, { 'Content-Type': 'text/html' });
+  });
+
+  it('isHelixDoc is true only for api.aem.live doc URLs', () => {
+    assert.equal(isHelixDoc('https://api.aem.live/o/r/p.html'), true);
+    assert.equal(isHelixDoc('https://admin.da.live/x.html'), false);
+    assert.equal(isHelixDoc('http://localhost:8080/x.html'), false);
+  });
+
+  it('persistence.get routes to the global fetch for an api.aem.live doc', async () => {
     const savedFetch = globalThis.fetch;
     const calls = [];
     globalThis.fetch = async (url, opts) => {
@@ -2654,13 +2710,12 @@ describe('Collab Test Suite', () => {
     };
     try {
       const daadmin = {
-        fetch: async () => { assert.fail('daadmin.fetch must not be called when isHelix is true'); },
+        fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
       };
       const result = await persistence.get(
         'https://api.aem.live/owner/repo/page.html',
         'Bearer t',
         daadmin,
-        true,
       );
       assert.equal(result, 'helix content');
       assert.equal(1, calls.length);
@@ -2671,22 +2726,7 @@ describe('Collab Test Suite', () => {
     }
   });
 
-  it('persistence.get still routes to daadmin.fetch when isHelix is false', async () => {
-    const calls = [];
-    const daadmin = {
-      fetch: async (url, opts) => {
-        calls.push({ url, opts });
-        return {
-          ok: true, text: async () => 'da content', status: 200, statusText: 'OK',
-        };
-      },
-    };
-    const result = await persistence.get('https://admin.da.live/x.html', undefined, daadmin, false);
-    assert.equal(result, 'da content');
-    assert.equal(1, calls.length);
-  });
-
-  it('persistence.put with isHelix sends raw body and Content-Type header', async () => {
+  it('persistence.put for a Helix doc sends raw body and Content-Type header', async () => {
     const savedFetch = globalThis.fetch;
     const calls = [];
     globalThis.fetch = async (url, opts) => {
@@ -2700,11 +2740,11 @@ describe('Collab Test Suite', () => {
         name: 'https://api.aem.live/owner/repo/page.html',
         conns,
         daadmin: {
-          fetch: async () => { assert.fail('daadmin.fetch must not be called when isHelix'); },
+          fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
         },
       };
       const body = '<main><div><p>some helix content that is long enough to avoid the empty-stub warning padding</p></div></main>';
-      const result = await persistence.put(ydoc, body, true);
+      const result = await persistence.put(ydoc, body);
 
       assert(result.ok);
       assert.equal(1, calls.length);
@@ -2721,7 +2761,7 @@ describe('Collab Test Suite', () => {
     }
   });
 
-  it('persistence.put with isHelix sets application/json Content-Type for .json docs', async () => {
+  it('persistence.put for a Helix .json doc sets application/json Content-Type', async () => {
     const savedFetch = globalThis.fetch;
     let captured;
     globalThis.fetch = async (url, opts) => {
@@ -2737,7 +2777,7 @@ describe('Collab Test Suite', () => {
         daadmin: {},
       };
       const longBody = '{"data":"long enough to not trigger empty stub warning padding padding padding"}';
-      await persistence.put(ydoc, longBody, true);
+      await persistence.put(ydoc, longBody);
       assert.equal(captured.headers.get('Content-Type'), 'application/json');
       assert.strictEqual(captured.body, longBody);
     } finally {
@@ -2745,7 +2785,7 @@ describe('Collab Test Suite', () => {
     }
   });
 
-  it('persistence.put without isHelix preserves FormData path and omits Content-Type', async () => {
+  it('persistence.put for a da-admin doc uses FormData and omits Content-Type', async () => {
     const calls = [];
     const daadmin = {
       fetch: async (url, opts) => {
@@ -2757,10 +2797,10 @@ describe('Collab Test Suite', () => {
     conns.set({ auth: 'a' }, new Set());
     const ydoc = { name: 'https://admin.da.live/source/x.html', conns, daadmin };
     const body = 'plain html content larger than empty stub padding padding padding padding padding padding';
-    await persistence.put(ydoc, body, false);
+    await persistence.put(ydoc, body);
 
     assert.equal(1, calls.length);
-    assert(calls[0].opts.body instanceof FormData, 'non-Helix PUT must use FormData');
+    assert(calls[0].opts.body instanceof FormData, 'da-admin PUT must use FormData');
     assert.equal(
       await calls[0].opts.body.get('data').text(),
       body,
@@ -2769,166 +2809,39 @@ describe('Collab Test Suite', () => {
     assert.equal(
       calls[0].opts.headers.get('Content-Type'),
       null,
-      'non-Helix path must not set Content-Type explicitly (FormData boundary handles it)',
+      'da-admin path must not set Content-Type explicitly (FormData boundary handles it)',
     );
   });
 
-  it('persistence.update forwards isHelix to persistence.put', async () => {
-    const longContent = 'new content padding padding padding padding padding padding padding padding';
-    const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
-        doc2aem: () => longContent,
-      },
-    });
-    const mockYDoc = {
-      conns: { keys() { return [{}]; } },
-      name: 'http://foo.bar/0/123.html',
-      hasClientChanged: true,
-    };
-    const putCalls = [];
-    pss.persistence.put = async (ydoc, content, isHelix) => {
-      putCalls.push({ content, isHelix });
-      return { ok: true, status: 200, statusText: 'OK' };
-    };
-    await pss.persistence.update(mockYDoc, 'old', 'foo.html', true);
-
-    assert.equal(1, putCalls.length);
-    assert.equal(true, putCalls[0].isHelix);
-  });
-
-  it('persistence.update defaults isHelix to false when not passed', async () => {
-    const longContent = 'changed content padding padding padding padding padding padding padding';
-    const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
-        doc2aem: () => longContent,
-      },
-    });
-    const mockYDoc = {
-      conns: { keys() { return [{}]; } },
-      name: 'http://foo.bar/0/123.html',
-      hasClientChanged: true,
-    };
-    const putCalls = [];
-    pss.persistence.put = async (ydoc, content, isHelix) => {
-      putCalls.push(isHelix);
-      return { ok: true, status: 200, statusText: 'OK' };
-    };
-    await pss.persistence.update(mockYDoc, 'old', 'foo.html');
-
-    assert.equal(false, putCalls[0]);
-  });
-
-  it('persistence.bindState forwards isHelix to persistence.get', async () => {
-    const savedGet = persistence.get;
-    const getCalls = [];
-    try {
-      persistence.get = async (nm, auth, daadmin, isHelix) => {
-        getCalls.push({
-          nm, auth, daadmin, isHelix,
-        });
-        return 'content';
+  it('persistence.bindState reads a Helix doc through the global fetch', async () => {
+    const savedFetch = globalThis.fetch;
+    const savedUpdate = persistence.update;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return {
+        ok: true, text: async () => 'helix content', status: 200, statusText: 'OK',
       };
+    };
+    persistence.update = async () => {};
+    try {
       const docName = 'https://api.aem.live/o/r/bindstate.html';
       const ydoc = new Y.Doc();
-      ydoc.daadmin = { mark: 'da' };
+      ydoc.daadmin = {
+        fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
+      };
       const mockConn = { auth: 'Bearer x' };
       setYDoc(docName, ydoc);
       const storage = { list: async () => new Map() };
 
-      await persistence.bindState(docName, ydoc, mockConn, storage, true);
+      await persistence.bindState(docName, ydoc, mockConn, storage);
 
-      assert.equal(1, getCalls.length);
-      assert.equal(true, getCalls[0].isHelix);
-      assert.equal('Bearer x', getCalls[0].auth);
+      assert.equal(1, calls.length, 'bindState must read the doc via the Helix backend');
+      assert.equal(docName, calls[0].url);
+      assert.equal('Bearer x', calls[0].opts.headers.get('Authorization'));
     } finally {
-      persistence.get = savedGet;
-    }
-  });
-
-  it('getYDoc forwards isHelix to persistence.bindState', async () => {
-    const savedBS = persistence.bindState;
-    try {
-      const calls = [];
-      persistence.bindState = async (nm, d, c, s, isHelix) => {
-        calls.push({ nm, isHelix });
-        return new Map();
-      };
-      const docName = 'http://test.com/ydoc-helix.html';
-      await getYDoc(docName, {}, {}, {}, undefined, true, true);
-
-      assert.equal(1, calls.length);
-      assert.equal(true, calls[0].isHelix);
-    } finally {
-      persistence.bindState = savedBS;
-    }
-  });
-
-  it('getYDoc defaults isHelix to false', async () => {
-    const savedBS = persistence.bindState;
-    try {
-      const calls = [];
-      persistence.bindState = async (nm, d, c, s, isHelix) => {
-        calls.push({ nm, isHelix });
-        return new Map();
-      };
-      const docName = 'http://test.com/ydoc-default.html';
-      await getYDoc(docName, {}, {}, {});
-
-      assert.equal(1, calls.length);
-      assert.equal(false, calls[0].isHelix);
-    } finally {
-      persistence.bindState = savedBS;
-    }
-  });
-
-  it('setupWSConnection forwards isHelix through to bindState', async () => {
-    const savedBS = persistence.bindState;
-    try {
-      const calls = [];
-      persistence.bindState = async (nm, d, c, s, isHelix) => {
-        calls.push({ nm, isHelix });
-        return new Map();
-      };
-      const docName = 'http://test.com/setup-helix.html';
-      const mockConn = {
-        addEventListener() {},
-        close() {},
-        readyState: 1,
-        send() {},
-      };
-      await setupWSConnection(mockConn, docName, {}, {}, false, true);
-
-      assert.equal(1, calls.length);
-      assert.equal(true, calls[0].isHelix);
-    } finally {
-      persistence.bindState = savedBS;
-    }
-  });
-
-  it('handleWebSocketMessage forwards isHelix on cold-start re-hydration', async () => {
-    const savedBS = persistence.bindState;
-    try {
-      const calls = [];
-      persistence.bindState = async (nm, d, c, s, isHelix) => {
-        calls.push({ nm, isHelix });
-        return new Map();
-      };
-      // Doc is NOT in memory — handleWebSocketMessage must re-establish via setupWSConnection
-      const docName = 'http://test.com/handlemsg-helix.html';
-      const mockConn = {
-        addEventListener() {},
-        close() {},
-        readyState: 1,
-        send() {},
-        binaryType: undefined,
-      };
-      const msg = new Uint8Array([0, 0]).buffer;
-      await handleWebSocketMessage(mockConn, docName, {}, {}, msg, true);
-
-      assert.equal(1, calls.length);
-      assert.equal(true, calls[0].isHelix);
-    } finally {
-      persistence.bindState = savedBS;
+      globalThis.fetch = savedFetch;
+      persistence.update = savedUpdate;
     }
   });
 });
