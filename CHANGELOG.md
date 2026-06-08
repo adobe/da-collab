@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/adobe/da-collab/compare/v1.6.0...v1.7.0) (2026-06-08)
+
+
+### Features
+
+* support Helix backend ([#160](https://github.com/adobe/da-collab/issues/160)) ([b62a603](https://github.com/adobe/da-collab/commit/b62a603786cd84d8e0cec2b1c40213857f7d8c27))
+
 # [1.6.0](https://github.com/adobe/da-collab/compare/v1.5.3...v1.6.0) (2026-05-21)
 
 
