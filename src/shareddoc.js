@@ -23,6 +23,48 @@ const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
 
 /**
+ * True for documents that live in Helix (api.aem.live) rather than da-admin.
+ * @param {string} docName - the document URL
+ */
+export const isHelixDoc = (docName) => docName.startsWith('https://api.aem.live/');
+
+/**
+ * Resolve the content backend for a document.
+ *
+ * Documents under https://api.aem.live live in Helix and are reached over the
+ * public internet (the global fetch); everything else is read and written
+ * through the da-admin service binding.
+ *
+ * @param {string} docName - the document URL
+ * @param {Fetcher} daadmin - the da-admin service binding
+ * @returns {{
+ *   fetch: (url: string, opts?: object) => Promise<Response>,
+ *   putReqData: (content: string, mimeType: string) => { body: *, size: number, headers: object },
+ * }}
+ */
+export function getBackend(docName, daadmin) {
+  const isHelix = isHelixDoc(docName);
+
+  return {
+    // A fetch that already knows where to go.
+    fetch: (url, opts) => (isHelix ? globalThis : daadmin).fetch(url, opts),
+
+    // Build the body (and any body-specific headers) for a content PUT.
+    // Helix takes the raw content with an explicit Content-Type; da-admin takes
+    // multipart form-data with a `data` part (its boundary header is implicit).
+    putReqData: (content, mimeType) => {
+      if (isHelix) {
+        return { body: content, size: content.length, headers: { 'Content-Type': mimeType } };
+      }
+      const blob = new Blob([content], { type: mimeType });
+      const formData = new FormData();
+      formData.append('data', blob);
+      return { body: formData, size: blob.size, headers: {} };
+    },
+  };
+}
+
+/**
  * Returns true for Cloudflare platform events that are expected during normal operation
  * (deployments, DO live migrations) and should not be treated as errors.
  * @param {Error} err
@@ -258,7 +300,8 @@ export const persistence = {
     if (auth) {
       initalOpts.headers = new Headers({ Authorization: auth });
     }
-    const initialReq = await daadmin.fetch(docName, initalOpts);
+
+    const initialReq = await getBackend(docName, daadmin).fetch(docName, initalOpts);
     if (initialReq.ok) {
       return docType === 'json' ? initialReq.json() : initialReq.text();
     } else {
@@ -278,13 +321,12 @@ export const persistence = {
    * @returns {Promise<object>} The response from da-admin.
    */
   put: async (ydoc, content) => {
+    const backend = getBackend(ydoc.name, ydoc.daadmin);
     const mimeType = getDocType(ydoc.name) === 'json' ? 'application/json' : 'text/html';
-    const blob = new Blob([content], { type: mimeType });
+    const { body: putBody, size: bodySize, headers: bodyHeaders } = backend
+      .putReqData(content, mimeType);
 
-    const formData = new FormData();
-    formData.append('data', blob);
-
-    const opts = { method: 'PUT', body: formData };
+    const opts = { method: 'PUT', body: putBody };
     const keys = Array.from(ydoc.conns.keys());
     const allReadOnly = keys.length > 0 && keys.every((con) => con.readOnly === true);
     if (allReadOnly) {
@@ -296,6 +338,7 @@ export const persistence = {
     const headers = {
       'If-Match': '*',
       'X-DA-Initiator': 'collab',
+      ...bodyHeaders,
     };
 
     const auth = keys
@@ -308,14 +351,14 @@ export const persistence = {
 
     opts.headers = new Headers(headers);
 
-    if (blob.size <= EMPTY_DOC_SIZE) {
+    if (bodySize <= EMPTY_DOC_SIZE) {
       // eslint-disable-next-line no-console
-      console.warn('[docroom] Writing back an empty document', ydoc.name, blob.size);
+      console.warn('[docroom] Writing back an empty document', ydoc.name, bodySize);
     }
 
     const {
       ok, status, statusText, body,
-    } = await ydoc.daadmin.fetch(ydoc.name, opts);
+    } = await backend.fetch(ydoc.name, opts);
 
     if (body) {
       // tell CloudFlare to consider the request as completed
@@ -334,6 +377,7 @@ export const persistence = {
    * @param {WSSharedDoc} ydoc - the ydoc that has been updated.
    * @param {string} current - the current content of the document previously
    * obtained from da-admin
+   * @param {string} docName - the name of the document
    * @returns {Promise<string>} - the new content of the document in da-admin.
    */
   update: async (ydoc, current, docName) => {
@@ -672,6 +716,7 @@ export class WSSharedDoc extends Y.Doc {
  * @param {WebSocket} conn - the WebSocket connection being initiated
  * @param {object} env - the durable object environment object
  * @param {TransactionalStorage} storage - the durable object storage object
+ * @param {Map} [timingData] - optional map to receive bindState timing measurements
  * @param {boolean} gc - whether garbage collection is enabled
  * @returns The Yjs document object, which may be shared across multiple sockets.
  */

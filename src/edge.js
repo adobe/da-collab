@@ -10,8 +10,8 @@
  * governing permissions and limitations under the License.
  */
 import {
-  handleWebSocketClose, handleWebSocketMessage,
-  invalidateFromAdmin, logError, setupWSConnection,
+  getBackend, handleWebSocketClose, handleWebSocketMessage,
+  invalidateFromAdmin, isHelixDoc, logError, setupWSConnection,
 } from './shareddoc.js';
 
 /**
@@ -211,6 +211,7 @@ export async function handleApiRequest(request, env) {
   if (!docName.startsWith('https://admin.da.live/')
       && !docName.startsWith('https://admin.da.page/')
       && !docName.startsWith('https://stage-admin.da.live/')
+      && !docName.startsWith('https://api.aem.live/')
       && !docName.startsWith('http://localhost:')) {
     return new Response('unable to get resource', { status: 404 });
   }
@@ -225,7 +226,7 @@ export async function handleApiRequest(request, env) {
     }
 
     const timingBeforeDaAdminHead = Date.now();
-    const initialReq = await env.daadmin.fetch(docName, opts);
+    const initialReq = await getBackend(docName, env.daadmin).fetch(docName, opts);
 
     timingDaAdminHeadDuration = Date.now() - timingBeforeDaAdminHead;
 
@@ -395,12 +396,18 @@ export class DocRoom {
         return new Response('expected websocket', { status: 400 });
       }
       const auth = request.headers.get('Authorization');
-      const authActions = request.headers.get('X-auth-actions') ?? '';
       const docName = request.headers.get('X-collab-room');
 
       if (!docName) {
         return new Response('expected docName', { status: 400 });
       }
+
+      // Helix does not yet report auth actions, so grant collaborators
+      // read,write; otherwise honour what da-admin reported.
+      // TODO: remove the isHelixDoc branch once Helix reports auth actions.
+      const authActions = isHelixDoc(docName)
+        ? 'read,write'
+        : request.headers.get('X-auth-actions') ?? '';
 
       // To accept the WebSocket request, we create a WebSocketPair (which is like a socketpair,
       // i.e. two WebSockets that talk to each other), we return one end of the pair in the

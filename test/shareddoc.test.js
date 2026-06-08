@@ -20,7 +20,8 @@ import {
   aem2doc, doc2aem, doc2json, EMPTY_DOC,
 } from '@da-tools/da-parser';
 import {
-  closeConn, getYDoc, invalidateFromAdmin, isExpectedPlatformEvent, messageFlushRequest,
+  closeConn, getBackend, getYDoc, isHelixDoc,
+  invalidateFromAdmin, isExpectedPlatformEvent, messageFlushRequest,
   messageFlushResponse, messageListener, persistence,
   readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
@@ -2625,6 +2626,222 @@ describe('Collab Test Suite', () => {
       assert.equal(putCallCount, 1, 'Only one PUT should have been made');
     } finally {
       globalThis.setTimeout = savedSetTimeout;
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Backend resolution (api-live-switch branch)
+  //
+  // The storage backend is determined entirely by the doc URL: docs under
+  // https://api.aem.live live in Helix (global fetch); everything else goes
+  // through the da-admin service binding. There is no isHelix flag to thread.
+  // ---------------------------------------------------------------------------
+
+  it('getBackend routes da-admin docs through the daadmin binding', async () => {
+    const calls = [];
+    const daadmin = {
+      fetch: async (url, opts) => {
+        calls.push({ url, opts });
+        return 'da-resp';
+      },
+    };
+    const backend = getBackend('https://admin.da.live/x.html', daadmin);
+    const resp = await backend.fetch('https://admin.da.live/x.html', { method: 'HEAD' });
+
+    assert.equal('da-resp', resp);
+    assert.equal(1, calls.length);
+    assert.equal('https://admin.da.live/x.html', calls[0].url);
+  });
+
+  it('getBackend routes api.aem.live docs through the global fetch', async () => {
+    const savedFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return 'helix-resp';
+    };
+    try {
+      const daadmin = {
+        fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
+      };
+      const backend = getBackend('https://api.aem.live/o/r/p.html', daadmin);
+      const resp = await backend.fetch('https://api.aem.live/o/r/p.html', { method: 'HEAD' });
+
+      assert.equal('helix-resp', resp);
+      assert.equal(1, calls.length);
+      assert.equal('https://api.aem.live/o/r/p.html', calls[0].url);
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
+  it('getBackend.putReqData builds multipart form-data for da-admin docs', () => {
+    const backend = getBackend('https://admin.da.live/x.html', {});
+    const { body, size, headers } = backend.putReqData('hello world', 'text/html');
+
+    assert(body instanceof FormData, 'da-admin PUT body must be FormData');
+    assert.equal(size, new Blob(['hello world']).size);
+    assert.deepStrictEqual(headers, {}, 'da-admin path must not set Content-Type (FormData boundary handles it)');
+  });
+
+  it('getBackend.putReqData sends raw body + Content-Type for Helix docs', () => {
+    const backend = getBackend('https://api.aem.live/o/r/p.html', {});
+    const { body, size, headers } = backend.putReqData('hello world', 'text/html');
+
+    assert.strictEqual(body, 'hello world', 'Helix PUT body must be the raw content string');
+    assert.equal(size, 'hello world'.length);
+    assert.deepStrictEqual(headers, { 'Content-Type': 'text/html' });
+  });
+
+  it('isHelixDoc is true only for api.aem.live doc URLs', () => {
+    assert.equal(isHelixDoc('https://api.aem.live/o/r/p.html'), true);
+    assert.equal(isHelixDoc('https://admin.da.live/x.html'), false);
+    assert.equal(isHelixDoc('http://localhost:8080/x.html'), false);
+  });
+
+  it('persistence.get routes to the global fetch for an api.aem.live doc', async () => {
+    const savedFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return {
+        ok: true, text: async () => 'helix content', status: 200, statusText: 'OK',
+      };
+    };
+    try {
+      const daadmin = {
+        fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
+      };
+      const result = await persistence.get(
+        'https://api.aem.live/owner/repo/page.html',
+        'Bearer t',
+        daadmin,
+      );
+      assert.equal(result, 'helix content');
+      assert.equal(1, calls.length);
+      assert.equal(calls[0].url, 'https://api.aem.live/owner/repo/page.html');
+      assert.equal(calls[0].opts.headers.get('Authorization'), 'Bearer t');
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
+  it('persistence.put for a Helix doc sends raw body and Content-Type header', async () => {
+    const savedFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return { ok: true, status: 200, statusText: 'OK' };
+    };
+    try {
+      const conns = new Map();
+      conns.set({ auth: 'Bearer abc' }, new Set());
+      const ydoc = {
+        name: 'https://api.aem.live/owner/repo/page.html',
+        conns,
+        daadmin: {
+          fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
+        },
+      };
+      const body = '<main><div><p>some helix content that is long enough to avoid the empty-stub warning padding</p></div></main>';
+      const result = await persistence.put(ydoc, body);
+
+      assert(result.ok);
+      assert.equal(1, calls.length);
+      const { url, opts } = calls[0];
+      assert.equal(url, 'https://api.aem.live/owner/repo/page.html');
+      assert.equal(opts.method, 'PUT');
+      assert.strictEqual(opts.body, body, 'Helix PUT body must be the raw content string, not FormData');
+      assert.equal(opts.headers.get('Content-Type'), 'text/html');
+      assert.equal(opts.headers.get('If-Match'), '*');
+      assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
+      assert.equal(opts.headers.get('Authorization'), 'Bearer abc');
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
+  it('persistence.put for a Helix .json doc sets application/json Content-Type', async () => {
+    const savedFetch = globalThis.fetch;
+    let captured;
+    globalThis.fetch = async (url, opts) => {
+      captured = opts;
+      return { ok: true, status: 200, statusText: 'OK' };
+    };
+    try {
+      const conns = new Map();
+      conns.set({ auth: 'a' }, new Set());
+      const ydoc = {
+        name: 'https://api.aem.live/o/r/d.json',
+        conns,
+        daadmin: {},
+      };
+      const longBody = '{"data":"long enough to not trigger empty stub warning padding padding padding"}';
+      await persistence.put(ydoc, longBody);
+      assert.equal(captured.headers.get('Content-Type'), 'application/json');
+      assert.strictEqual(captured.body, longBody);
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
+  it('persistence.put for a da-admin doc uses FormData and omits Content-Type', async () => {
+    const calls = [];
+    const daadmin = {
+      fetch: async (url, opts) => {
+        calls.push({ url, opts });
+        return { ok: true, status: 200, statusText: 'OK' };
+      },
+    };
+    const conns = new Map();
+    conns.set({ auth: 'a' }, new Set());
+    const ydoc = { name: 'https://admin.da.live/source/x.html', conns, daadmin };
+    const body = 'plain html content larger than empty stub padding padding padding padding padding padding';
+    await persistence.put(ydoc, body);
+
+    assert.equal(1, calls.length);
+    assert(calls[0].opts.body instanceof FormData, 'da-admin PUT must use FormData');
+    assert.equal(
+      await calls[0].opts.body.get('data').text(),
+      body,
+      'FormData data part must contain the content',
+    );
+    assert.equal(
+      calls[0].opts.headers.get('Content-Type'),
+      null,
+      'da-admin path must not set Content-Type explicitly (FormData boundary handles it)',
+    );
+  });
+
+  it('persistence.bindState reads a Helix doc through the global fetch', async () => {
+    const savedFetch = globalThis.fetch;
+    const savedUpdate = persistence.update;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return {
+        ok: true, text: async () => 'helix content', status: 200, statusText: 'OK',
+      };
+    };
+    persistence.update = async () => {};
+    try {
+      const docName = 'https://api.aem.live/o/r/bindstate.html';
+      const ydoc = new Y.Doc();
+      ydoc.daadmin = {
+        fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
+      };
+      const mockConn = { auth: 'Bearer x' };
+      setYDoc(docName, ydoc);
+      const storage = { list: async () => new Map() };
+
+      await persistence.bindState(docName, ydoc, mockConn, storage);
+
+      assert.equal(1, calls.length, 'bindState must read the doc via the Helix backend');
+      assert.equal(docName, calls[0].url);
+      assert.equal('Bearer x', calls[0].opts.headers.get('Authorization'));
+    } finally {
+      globalThis.fetch = savedFetch;
+      persistence.update = savedUpdate;
     }
   });
 });
