@@ -720,14 +720,7 @@ export class WSSharedDoc extends Y.Doc {
  * @param {boolean} gc - whether garbage collection is enabled
  * @returns The Yjs document object, which may be shared across multiple sockets.
  */
-export const getYDoc = async (
-  docname,
-  conn,
-  env,
-  storage,
-  timingData,
-  gc = true,
-) => {
+export const getYDoc = async (docname, conn, env, storage, timingData, gc = true) => {
   let doc = docs.get(docname);
   if (doc === undefined) {
     // The doc is not yet in the cache, create a new one.
@@ -888,13 +881,7 @@ export const invalidateFromAdmin = async (docName) => {
  *   handles message/close routing via class methods instead of addEventListener).
  * @returns {Promise<void>} - The return value of this
  */
-export const setupWSConnection = async (
-  conn,
-  docName,
-  env,
-  storage,
-  hibernation = false,
-) => {
+export const setupWSConnection = async (conn, docName, env, storage, hibernation = false) => {
   const timingData = new Map();
 
   // eslint-disable-next-line no-param-reassign

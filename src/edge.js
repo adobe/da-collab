@@ -178,12 +178,11 @@ export function wsAuthFailureResponse(reqHeaders, code, reason) {
  * @returns {Promise<*|Response>}
  */
 export async function handleApiRequest(request, env) {
-  const url = new URL(request.url);
-
   let timingDaAdminHeadDuration;
   const timingStartTime = Date.now();
 
   // We've received a pure API request - handle it and return.
+  const url = new URL(request.url);
   if (url.pathname.startsWith('/api/')) {
     return handleApiCall(url, request, env);
   }
