@@ -495,7 +495,7 @@ describe('Collab Test Suite', () => {
     });
 
     const docName = 'https://admin.da.live/source/reentrant.html';
-    const storage = { list: async () => new Map() };
+    const storage = { list: async () => new Map(), get: async () => undefined };
     const ydoc = new pss.WSSharedDoc(docName);
     pss.setYDoc(docName, ydoc);
 
@@ -758,6 +758,7 @@ describe('Collab Test Suite', () => {
     // Set up bindState which registers update handlers
     const storage = {
       list: async () => new Map(),
+      get: async () => undefined,
       deleteAll: async () => {},
       put: async () => {},
     };
@@ -976,7 +977,7 @@ describe('Collab Test Suite', () => {
     });
 
     const docName = 'https://admin.da.live/source/flush-noop.html';
-    const storage = { list: async () => new Map() };
+    const storage = { list: async () => new Map(), get: async () => undefined };
     const ydoc = new pss.WSSharedDoc(docName);
     pss.setYDoc(docName, ydoc);
 
@@ -1017,7 +1018,7 @@ describe('Collab Test Suite', () => {
     });
 
     const docName = 'https://admin.da.live/source/flush-saves.html';
-    const storage = { list: async () => new Map() };
+    const storage = { list: async () => new Map(), get: async () => undefined };
     const ydoc = new pss.WSSharedDoc(docName);
     pss.setYDoc(docName, ydoc);
 
@@ -1054,7 +1055,7 @@ describe('Collab Test Suite', () => {
     });
 
     const docName = 'https://admin.da.live/source/flush-cancel.html';
-    const storage = { list: async () => new Map() };
+    const storage = { list: async () => new Map(), get: async () => undefined };
     const ydoc = new pss.WSSharedDoc(docName);
     pss.setYDoc(docName, ydoc);
 
@@ -1091,7 +1092,7 @@ describe('Collab Test Suite', () => {
     });
 
     const docName = 'https://admin.da.live/source/flush-inflight.html';
-    const storage = { list: async () => new Map() };
+    const storage = { list: async () => new Map(), get: async () => undefined };
     const ydoc = new pss.WSSharedDoc(docName);
     pss.setYDoc(docName, ydoc);
 
@@ -1189,7 +1190,7 @@ describe('Collab Test Suite', () => {
     };
     pss.setYDoc(docName, testYDoc);
 
-    const mockStorage = { list: () => new Map() };
+    const mockStorage = { list: () => new Map(), get: async () => undefined };
 
     pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
     const updated = new Map();
@@ -1226,7 +1227,7 @@ describe('Collab Test Suite', () => {
     };
     pss.setYDoc(docName, testYDoc);
 
-    const mockStorage = { list: () => new Map() };
+    const mockStorage = { list: () => new Map(), get: async () => undefined };
 
     pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
     const updated = new Map();
@@ -1263,7 +1264,7 @@ describe('Collab Test Suite', () => {
     };
     pss.setYDoc(docName, testYDoc);
 
-    const mockStorage = { list: () => new Map() };
+    const mockStorage = { list: () => new Map(), get: async () => undefined };
     pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
     pss.persistence.update = async () => {};
 
@@ -1301,7 +1302,7 @@ describe('Collab Test Suite', () => {
     };
     pss.setYDoc(docName, testYDoc);
 
-    const mockStorage = { list: () => new Map() };
+    const mockStorage = { list: () => new Map(), get: async () => undefined };
     pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
     pss.persistence.update = async () => {};
 
@@ -1336,7 +1337,7 @@ describe('Collab Test Suite', () => {
     };
     pss.setYDoc(docName, testYDoc);
 
-    const mockStorage = { list: () => new Map() };
+    const mockStorage = { list: () => new Map(), get: async () => undefined };
     pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
     pss.persistence.update = async () => {};
 
@@ -1371,7 +1372,21 @@ describe('Collab Test Suite', () => {
     // Create a new YDoc which will be initialised from storage
     const ydoc = new Y.Doc();
     const conn = {};
-    const storage = { list: async () => stored };
+    const storage = {
+      list: async () => stored,
+      get: async (keyOrKeys) => {
+        if (Array.isArray(keyOrKeys)) {
+          const result = new Map();
+          keyOrKeys.forEach((k) => {
+            if (stored.has(k)) {
+              result.set(k, stored.get(k));
+            }
+          });
+          return result;
+        }
+        return stored.get(keyOrKeys);
+      },
+    };
 
     const savedGet = persistence.get;
     try {
@@ -1408,7 +1423,21 @@ describe('Collab Test Suite', () => {
 
     const ydoc = new Y.Doc();
     const conn = {};
-    const storage = { list: async () => stored };
+    const storage = {
+      list: async () => stored,
+      get: async (keyOrKeys) => {
+        if (Array.isArray(keyOrKeys)) {
+          const result = new Map();
+          keyOrKeys.forEach((k) => {
+            if (stored.has(k)) {
+              result.set(k, stored.get(k));
+            }
+          });
+          return result;
+        }
+        return stored.get(keyOrKeys);
+      },
+    };
 
     const savedGet = persistence.get;
     try {
@@ -1434,6 +1463,9 @@ describe('Collab Test Suite', () => {
 
     const storage = {
       list: async () => {
+        throw new Error('yikes');
+      },
+      get: async () => {
         throw new Error('yikes');
       },
     };
@@ -1471,7 +1503,7 @@ describe('Collab Test Suite', () => {
     });
 
     const docName = 'https://admin.da.live/source/foo/bar.html';
-    const storage = { list: async () => new Map() };
+    const storage = { list: async () => new Map(), get: async () => undefined };
     const updObservers = [];
     const ydoc = new Y.Doc();
     ydoc.on = (ev, fun) => {
@@ -1532,7 +1564,7 @@ describe('Collab Test Suite', () => {
     });
 
     const docName = 'https://admin.da.live/source/foo/bar.html';
-    const storage = { list: async () => new Map() };
+    const storage = { list: async () => new Map(), get: async () => undefined };
     const updObservers = [];
     const ydoc = new Y.Doc();
     ydoc.on = (ev, fun) => {
@@ -2085,30 +2117,61 @@ describe('Collab Test Suite', () => {
     assert.equal(1, decoding.readVarUint(decoder), 'ok must be 1 when no flushSave (nothing to flush)');
   });
 
+  function makeStorage(data = {}) {
+    const map = new Map(Object.entries(data));
+    return {
+      async list() { return map; },
+      async get(keyOrKeys) {
+        if (Array.isArray(keyOrKeys)) {
+          const result = new Map();
+          keyOrKeys.forEach((k) => {
+            if (map.has(k)) {
+              result.set(k, map.get(k));
+            }
+          });
+          return result;
+        }
+        return map.get(keyOrKeys);
+      },
+      async put(d) { Object.entries(d).forEach(([k, v]) => map.set(k, v)); },
+      async delete(keys) {
+        (Array.isArray(keys) ? keys : [keys]).forEach((k) => map.delete(k));
+      },
+      async deleteAll() { map.clear(); },
+    };
+  }
+
   it('readState not chunked', async () => {
     const docName = 'http://foo.bar/doc123.html';
-    const stored = new Map();
-    stored.set('docstore', new Uint8Array([254, 255]));
-    stored.set('chunks', 17); // should be ignored
-    stored.set('doc', docName);
-
-    const storage = { list: async () => stored };
+    const storage = makeStorage({
+      docstore: new Uint8Array([254, 255]),
+      chunks: 17, // should be ignored
+      doc: docName,
+    });
 
     const data = await readState(docName, storage);
     assert.deepStrictEqual(new Uint8Array([254, 255]), data);
   });
 
+  it('readState no stored doc returns undefined', async () => {
+    const storage = makeStorage({});
+
+    const data = await readState('http://foo.bar/doc123.html', storage);
+    assert.equal(data, undefined);
+  });
+
   it('readState doc mismatch', async () => {
     const docName = 'http://foo.bar/doc123.html';
-    const stored = new Map();
-    stored.set('docstore', new Uint8Array([254, 255]));
-    stored.set('chunks', 17); // should be ignored
-    stored.set('doc', 'http://foo.bar/doc456.html');
-
     const storageCalled = [];
-    const storage = {
-      list: async () => stored,
-      deleteAll: async () => storageCalled.push('deleteAll'),
+    const storage = makeStorage({
+      docstore: new Uint8Array([254, 255]),
+      chunks: 17, // should be ignored
+      doc: 'http://foo.bar/doc456.html',
+    });
+    const origDeleteAll = storage.deleteAll.bind(storage);
+    storage.deleteAll = async () => {
+      storageCalled.push('deleteAll');
+      return origDeleteAll();
     };
 
     const data = await readState(docName, storage);
@@ -2117,13 +2180,12 @@ describe('Collab Test Suite', () => {
   });
 
   it('readState chunked', async () => {
-    const stored = new Map();
-    stored.set('chunk_0', new Uint8Array([1, 2, 3]));
-    stored.set('chunk_1', new Uint8Array([4, 5]));
-    stored.set('chunks', 2);
-    stored.set('doc', 'mydoc');
-
-    const storage = { list: async () => stored };
+    const storage = makeStorage({
+      chunk_0: new Uint8Array([1, 2, 3]),
+      chunk_1: new Uint8Array([4, 5]),
+      chunks: 2,
+      doc: 'mydoc',
+    });
 
     const data = await readState('mydoc', storage);
     assert.deepStrictEqual(new Uint8Array([1, 2, 3, 4, 5]), data);
@@ -2370,7 +2432,21 @@ describe('Collab Test Suite', () => {
     const conn = {};
     const storage = {
       list: async () => stored,
-      get: async (key) => (key === 'lastsync' ? daAdminContent : undefined),
+      get: async (keyOrKeys) => {
+        if (Array.isArray(keyOrKeys)) {
+          const result = new Map();
+          keyOrKeys.forEach((k) => {
+            if (stored.has(k)) {
+              result.set(k, stored.get(k));
+            }
+          });
+          return result;
+        }
+        if (keyOrKeys === 'lastsync') {
+          return daAdminContent;
+        }
+        return stored.get(keyOrKeys);
+      },
     };
 
     const savedSetTimeout = globalThis.setTimeout;
@@ -2586,7 +2662,7 @@ describe('Collab Test Suite', () => {
     });
 
     const docName = 'https://admin.da.live/source/skip-save.html';
-    const storage = { list: async () => new Map() };
+    const storage = { list: async () => new Map(), get: async () => undefined };
     const updObservers = [];
     const ydoc = new pss.WSSharedDoc(docName);
     const originalOn = ydoc.on.bind(ydoc);

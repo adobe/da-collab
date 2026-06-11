@@ -174,29 +174,38 @@ const send = (doc, conn, m) => {
  * @returns {Promise<Uint8Array | undefined>} - The stored state or undefined if not found
  */
 export const readState = async (docName, storage) => {
-  const stored = await storage.list();
-  if (stored.size === 0) {
+  const storedDoc = await storage.get('doc');
+  if (storedDoc === undefined) {
     // eslint-disable-next-line no-console
     console.log('[docroom] No stored doc in persistence');
     return undefined;
   }
 
-  if (stored.get('doc') !== docName) {
+  if (storedDoc !== docName) {
     // eslint-disable-next-line no-console
-    console.log('[docroom] Docname mismatch in persistence. Expected:', docName, 'found:', stored.get('doc'), 'Deleting storage');
+    console.log('[docroom] Docname mismatch in persistence. Expected:', docName, 'found:', storedDoc, 'Deleting storage');
     await storage.deleteAll();
     return undefined;
   }
 
-  if (stored.has('docstore')) {
+  const docstore = await storage.get('docstore');
+  if (docstore !== undefined) {
     // eslint-disable-next-line no-console
     console.log('[docroom] Document found in persistence');
-    return stored.get('docstore');
+    return docstore;
   }
 
+  const chunkCount = await storage.get('chunks');
+  if (chunkCount === undefined) {
+    return undefined;
+  }
+
+  const chunkKeys = Array.from({ length: chunkCount }, (_, i) => `chunk_${i}`);
+  const chunksMap = await storage.get(chunkKeys);
+
   const data = [];
-  for (let i = 0; i < stored.get('chunks'); i += 1) {
-    const chunk = stored.get(`chunk_${i}`);
+  for (let i = 0; i < chunkCount; i += 1) {
+    const chunk = chunksMap.get(`chunk_${i}`);
 
     // Note cannot use the spread operator here, as that goes via the stack and may lead to
     // stack overflow.
