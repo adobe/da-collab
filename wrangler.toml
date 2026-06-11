@@ -9,6 +9,10 @@ port = 4711
 
 [[migrations]]
 tag = "v1" # Should be unique for each entry
+# DocRoom uses the legacy KV-backed storage. Cloudflare now recommends
+# new_sqlite_classes for new Durable Object namespaces (SQLite-backed DOs
+# support SQL queries and 30-day point-in-time recovery). Migrating existing
+# instances requires a v2 migration tag, a new class, and a data migration.
 new_classes = ["DocRoom"]
 
 # ----------------------------------------------------------------------
