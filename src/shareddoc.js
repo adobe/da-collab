@@ -284,7 +284,7 @@ export const showError = (ydoc, err) => {
 };
 
 export const persistence = {
-  closeConn: closeConn.bind(this),
+  closeConn,
 
   /**
    * Get the document from da-admin.
