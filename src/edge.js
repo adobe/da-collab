@@ -432,7 +432,7 @@ export class DocRoom {
         auth ? auth.substring(0, auth.indexOf(' ')) : 'none'})`);
 
       // Kick off async document initialization; response is returned immediately.
-      this.initSession(server, docName);
+      this.ctx.waitUntil(this.initSession(server, docName));
 
       const reqHeaders = request.headers;
       const respheaders = new Headers({
