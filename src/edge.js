@@ -492,9 +492,9 @@ export class DocRoom {
    * @param {WebSocket} webSocket
    */
   // eslint-disable-next-line class-methods-use-this
-  webSocketClose(webSocket) {
+  async webSocketClose(webSocket) {
     const { docName } = webSocket.deserializeAttachment();
-    handleWebSocketClose(webSocket, docName);
+    await handleWebSocketClose(webSocket, docName);
   }
 
   /**
@@ -503,9 +503,9 @@ export class DocRoom {
    * @param {Error} error
    */
   // eslint-disable-next-line class-methods-use-this
-  webSocketError(webSocket, error) {
+  async webSocketError(webSocket, error) {
     logError(error, '[docroom] WebSocket error', error);
     const { docName } = webSocket.deserializeAttachment();
-    handleWebSocketClose(webSocket, docName);
+    await handleWebSocketClose(webSocket, docName);
   }
 }
