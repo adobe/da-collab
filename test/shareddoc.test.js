@@ -241,6 +241,44 @@ describe('Collab Test Suite', () => {
     }
   });
 
+  async function testGetLogLevel(status, statusText, expectedLevel) {
+    const daadmin = {
+      fetch: async () => ({ ok: false, status, statusText }),
+    };
+    const logged = [];
+    const origWarn = console.warn;
+    const origLog = console.log;
+    const origError = console.error;
+    console.warn = (...a) => logged.push(['warn', ...a]);
+    console.log = (...a) => logged.push(['log', ...a]);
+    console.error = (...a) => logged.push(['error', ...a]);
+    try {
+      await persistence.get('foo', 'auth', daadmin);
+      assert.fail('Should have thrown');
+    } catch (_) {
+      // expected
+    } finally {
+      console.warn = origWarn;
+      console.log = origLog;
+      console.error = origError;
+    }
+    const entry = logged.find(([, msg]) => typeof msg === 'string' && msg.includes('Unable to get resource from da-admin'));
+    assert(entry, `Expected a log entry for status ${status}`);
+    assert.equal(entry[0], expectedLevel, `Expected '${expectedLevel}' for status ${status}, got '${entry[0]}'`);
+  }
+
+  it('Test persistence get logs console.warn on 401', async () => {
+    await testGetLogLevel(401, 'Unauthorized', 'warn');
+  });
+
+  it('Test persistence get logs console.log on 403 (ACL denial is operational noise)', async () => {
+    await testGetLogLevel(403, 'Forbidden', 'log');
+  });
+
+  it('Test persistence get logs console.error on other failures', async () => {
+    await testGetLogLevel(500, 'Internal Server Error', 'error');
+  });
+
   it('Test persistence put ok', async () => {
     const daadmin = {};
     daadmin.fetch = async (url, opts) => {

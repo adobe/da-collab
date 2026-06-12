@@ -1439,6 +1439,63 @@ describe('Worker test suite', () => {
     }
   });
 
+  async function testInitSessionLogLevel(status, expectedLevel) {
+    const savedNWSP = DocRoom.newWebSocketPair;
+    const savedBS = persistence.bindState;
+    try {
+      persistence.bindState = async () => {
+        const err = new Error(`unable to get resource - status: ${status}`);
+        err.status = status;
+        throw err;
+      };
+      const wsp1 = { serializeAttachment() {}, close() {}, auth: undefined };
+      DocRoom.newWebSocketPair = () => [{}, wsp1];
+
+      const dr = new DocRoom(makeCtx(null), { daadmin: { mark: 'da' } });
+      const headers = new Headers({
+        Upgrade: 'websocket',
+        Authorization: 'au123',
+        'X-collab-room': 'http://foo.bar/sendto/doc.html',
+      });
+      const req = { headers, url: 'http://localhost:4711/' };
+
+      const logged = [];
+      const origWarn = console.warn;
+      const origLog = console.log;
+      const origError = console.error;
+      console.warn = (...a) => logged.push(['warn', ...a]);
+      console.log = (...a) => logged.push(['log', ...a]);
+      console.error = (...a) => logged.push(['error', ...a]);
+      try {
+        await dr.fetch(req, {}, 306);
+        await sleep(20);
+      } finally {
+        console.warn = origWarn;
+        console.log = origLog;
+        console.error = origError;
+      }
+
+      const entry = logged.find(([, msg]) => typeof msg === 'string' && msg.includes('Error during session setup'));
+      assert(entry, `Expected '[docroom] Error during session setup' log entry for status ${status}`);
+      assert.equal(entry[0], expectedLevel, `Expected '${expectedLevel}' for status ${status}, got '${entry[0]}'`);
+    } finally {
+      DocRoom.newWebSocketPair = savedNWSP;
+      persistence.bindState = savedBS;
+    }
+  }
+
+  it('Test DocRoom initSession logs console.warn on 401 (auth outcome is operational noise)', async () => {
+    await testInitSessionLogLevel(401, 'warn');
+  });
+
+  it('Test DocRoom initSession logs console.log on 403 (ACL denial is operational noise)', async () => {
+    await testInitSessionLogLevel(403, 'log');
+  });
+
+  it('Test DocRoom initSession logs console.error on other failures', async () => {
+    await testInitSessionLogLevel(500, 'error');
+  });
+
   it('Test DocRoom webSocketMessage works with an attachment that has no isHelix field', async () => {
     const savedBS = persistence.bindState;
     try {
