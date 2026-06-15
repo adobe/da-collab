@@ -1,3 +1,10 @@
+## [1.7.1](https://github.com/adobe/da-collab/compare/v1.7.0...v1.7.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* Durable Object best practices — all 9 fixes ([#172](https://github.com/adobe/da-collab/issues/172)) ([0ac4fac](https://github.com/adobe/da-collab/commit/0ac4fac3a453c5d9e37150e3ed67b60ac6c223f1))
+
 # [1.7.0](https://github.com/adobe/da-collab/compare/v1.6.0...v1.7.0) (2026-06-08)
 
 
