@@ -1,3 +1,10 @@
+## [1.7.2](https://github.com/adobe/da-collab/compare/v1.7.1...v1.7.2) (2026-06-16)
+
+
+### Bug Fixes
+
+* prevent bindState hang and auto-repair stale CF storage ([#173](https://github.com/adobe/da-collab/issues/173)) ([b29f7dd](https://github.com/adobe/da-collab/commit/b29f7ddfb7d83f287b425d0777bd8aee8ccc444c))
+
 ## [1.7.1](https://github.com/adobe/da-collab/compare/v1.7.0...v1.7.1) (2026-06-15)
 
 
