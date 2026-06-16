@@ -302,6 +302,53 @@ describe('Worker test suite', () => {
     assert.equal(400, resp.status);
   });
 
+  it('Docroom clearStorage deletes all CF storage and closes connections', async () => {
+    const ydocName = 'http://foobar.com/clearstorage-test.html';
+    const testYdoc = new WSSharedDoc(ydocName);
+    const m = setYDoc(ydocName, testYdoc);
+
+    const connClosed = [];
+    const mockConn = { close() { connClosed.push('close'); } }; // eslint-disable-line max-statements-per-line
+    testYdoc.conns.set(mockConn, 1234);
+
+    const deleteCalled = [];
+    const mockStorage = {
+      async deleteAll() { deleteCalled.push(true); },
+    };
+
+    const req = { url: `${ydocName}?api=clearStorage` };
+    const dr = new DocRoom({ storage: mockStorage });
+
+    assert(m.has(ydocName), 'Precondition: doc must be registered');
+    const resp = await dr.fetch(req);
+    assert.equal(200, resp.status);
+    assert.deepStrictEqual(deleteCalled, [true], 'storage.deleteAll() must be called');
+    assert(!m.has(ydocName), 'Doc should have been removed from docs map');
+    assert.deepStrictEqual(connClosed, ['close'], 'Active connections should be closed');
+    testYdoc.destroy();
+  });
+
+  it('Docroom clearStorage without active doc still clears storage', async () => {
+    const deleteCalled = [];
+    const mockStorage = {
+      async deleteAll() { deleteCalled.push(true); },
+    };
+    const dr = new DocRoom({ storage: mockStorage });
+
+    const req = { url: 'http://foobar.com/no-doc.html?api=clearStorage' };
+    const resp = await dr.fetch(req);
+
+    assert.equal(200, resp.status, 'clearStorage returns 200 even when doc is not in memory');
+    assert.deepStrictEqual(deleteCalled, [true], 'storage.deleteAll() must still be called');
+  });
+
+  it('Docroom clearStorage with no storage context still returns 200', async () => {
+    const dr = new DocRoom({});
+    const req = { url: 'http://foobar.com/no-storage.html?api=clearStorage' };
+    const resp = await dr.fetch(req);
+    assert.equal(200, resp.status);
+  });
+
   it('Test DocRoom fetch', async () => {
     const savedNWSP = DocRoom.newWebSocketPair;
     const savedBS = persistence.bindState;
