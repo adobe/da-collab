@@ -2468,6 +2468,57 @@ describe('Collab Test Suite', () => {
     }
   });
 
+  it('bindState clears stale CF storage when lastsync does not match da-admin', async () => {
+    const docName = 'https://admin.da.live/source/foo/stale.html';
+    const daAdminContent = '<body>\n  <header></header>\n  <main><div><p>current</p></div></main>\n  <footer></footer>\n</body>\n';
+
+    // CF storage has state from an older da-admin version
+    const staleDoc = new Y.Doc();
+    aem2doc('<body>\n  <header></header>\n  <main><div><p>stale</p></div></main>\n  <footer></footer>\n</body>\n', staleDoc);
+    const staleState = Y.encodeStateAsUpdate(staleDoc);
+
+    const deleteAllCalled = [];
+    const stored = new Map([
+      ['doc', docName],
+      ['docstore', staleState],
+      // lastsync is intentionally absent → lastsync !== current → !restored
+    ]);
+    const storage = {
+      list: async () => stored,
+      get: async (keyOrKeys) => {
+        if (Array.isArray(keyOrKeys)) {
+          const result = new Map();
+          keyOrKeys.forEach((k) => {
+            if (stored.has(k)) {
+              result.set(k, stored.get(k));
+            }
+          });
+          return result;
+        }
+        return stored.get(keyOrKeys);
+      },
+      deleteAll: async () => { deleteAllCalled.push(true); },
+    };
+
+    const ydoc = new Y.Doc();
+    setYDoc(docName, ydoc);
+    const conn = {};
+
+    const savedSetTimeout = globalThis.setTimeout;
+    const savedGet = persistence.get;
+    try {
+      globalThis.setTimeout = () => {}; // suppress async da-admin restore
+      persistence.get = async () => daAdminContent;
+
+      await persistence.bindState(docName, ydoc, conn, storage);
+
+      assert.deepStrictEqual(deleteAllCalled, [true], 'storage.deleteAll() must be called to clear stale CF storage');
+    } finally {
+      globalThis.setTimeout = savedSetTimeout;
+      persistence.get = savedGet;
+    }
+  });
+
   it('bindState writes lastsync after initial da-admin restore so a later DO reset can recover pending changes', async () => {
     const docName = 'https://admin.da.live/source/foo/bar.html';
     const daAdminContent = '<body>\n  <header></header>\n  <main><div><p>synced</p></div></main>\n  <footer></footer>\n</body>\n';

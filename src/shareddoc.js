@@ -500,22 +500,23 @@ export const persistence = {
       if (stored && stored.length > 0) {
         Y.applyUpdate(ydoc, stored);
 
-        // CF storage is valid to use if:
-        // 1. Its rendered content matches da-admin exactly (nothing pending), OR
-        // 2. da-admin still has the same content as the last successful sync —
-        //    meaning CF storage is ahead of da-admin (unsaved pending changes) but
-        //    was built on top of it. Using CF storage preserves those pending changes.
-        //    This correctly handles DO migration while a debounced save is in flight.
-        //    If da-admin was externally modified since the last sync, lastSynced !==
-        //    current, so we fall back to da-admin (external edit wins).
-        const fromStorage = docType === 'json' ? doc2json(ydoc) : doc2aem(ydoc);
+        // CF storage is valid to use if da-admin still has the same content as the
+        // last successful sync — meaning CF storage is either in sync with or ahead
+        // of da-admin (unsaved pending changes built on top of it).
+        // Using CF storage preserves those pending changes.
+        // If da-admin was externally modified since the last sync, lastSynced !==
+        // current, so we fall back to da-admin (external edit wins).
+        //
+        // NOTE: we intentionally do NOT call doc2aem/doc2json here. Those are
+        // synchronous serialisers that can block the CF event loop for an extended
+        // time when the stored ydoc state is large or structurally unexpected,
+        // causing the DO to be terminated before bindState completes.
+        // The lastsync anchor alone is sufficient to determine validity.
         const lastSynced = storage.get ? await storage.get('lastsync') : undefined;
-        if (fromStorage === current || lastSynced === current) {
+        if (lastSynced === current) {
           restored = true;
-
-          const syncState = fromStorage === current ? '(in sync with da-admin)' : '(has pending unsaved changes)';
           // eslint-disable-next-line no-console
-          console.log('[docroom] Restored from worker persistence', docName, syncState);
+          console.log('[docroom] Restored from worker persistence', docName, '(lastsync matches da-admin)');
         }
       }
     } catch (error) {
@@ -526,9 +527,12 @@ export const persistence = {
     }
 
     if (!restored && current) {
-      // The doc was not restored from worker persistence, so read it from da-admin,
-      // but do this async to give the ydoc some time to get synced up first. Without
-      // this timeout, the ydoc can get confused which may result in duplicated content.
+      // The doc was not restored from worker persistence, so read it from da-admin.
+      // Clear stale CF storage so the next save writes clean state instead of
+      // accumulating diverged CRDT updates that can cause future bindState hangs.
+      if (storage.deleteAll) {
+        await storage.deleteAll();
+      }
       // eslint-disable-next-line no-console
       console.log('[docroom] Could not be restored, trying to restore from da-admin', docName);
 

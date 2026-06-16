@@ -331,7 +331,7 @@ export class DocRoom extends DurableObject {
    * @param {Request} request
    * @returns {Promise<*>}
    */
-  // eslint-disable-next-line class-methods-use-this,no-unused-vars
+  // eslint-disable-next-line no-unused-vars
   async handleApiCall(api, docName, request) {
     switch (api) {
       case 'deleteAdmin':
@@ -346,6 +346,16 @@ export class DocRoom extends DurableObject {
         } else {
           return new Response('Not Found', { status: 404 });
         }
+      case 'clearStorage':
+        // Wipe all CF DO storage for this document (ydoc state + lastsync anchor).
+        // Required when the stored ydoc state is corrupted and causes doc2aem to hang,
+        // making bindState never complete. After clearing, the next connection will
+        // fall back to da-admin content via the !restored path in bindState.
+        if (this.ctx?.storage) {
+          await this.ctx.storage.deleteAll();
+        }
+        await invalidateFromAdmin(docName);
+        return new Response('OK', { status: 200 });
       default:
         return new Response('Invalid API', { status: 400 });
     }
