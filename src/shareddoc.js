@@ -339,8 +339,20 @@ export const persistence = {
     if (initialReq.ok) {
       return docType === 'json' ? initialReq.json() : initialReq.text();
     } else {
-      // eslint-disable-next-line no-console
-      console.error(`[docroom] Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`);
+      const msg = `[docroom] Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`;
+      // 401/403 are auth/ACL outcomes the worker cannot bypass — operational
+      // noise, not service errors. Mirror persistence.update's PUT demotion so
+      // the error stream stays a real-signal channel (see #135).
+      if (initialReq.status === 401) {
+        // eslint-disable-next-line no-console
+        console.warn(msg);
+      } else if (initialReq.status === 403) {
+        // eslint-disable-next-line no-console
+        console.log(msg);
+      } else {
+        // eslint-disable-next-line no-console
+        console.error(msg);
+      }
       const err = new Error(`unable to get resource - status: ${initialReq.status}`);
       err.status = initialReq.status;
       throw err;

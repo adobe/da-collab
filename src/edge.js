@@ -462,7 +462,17 @@ export class DocRoom extends DurableObject {
     try {
       await setupWSConnection(webSocket, docName, this.env, this.ctx?.storage, this.ctx, true);
     } catch (err) {
-      logError(err, '[docroom] Error during session setup', docName, err);
+      // 401/403 from da-admin are auth/ACL outcomes the worker cannot bypass —
+      // operational noise, not service errors. Mirrors persistence.get/update.
+      if (err?.status === 401) {
+        // eslint-disable-next-line no-console
+        console.warn('[docroom] Error during session setup', docName, err.message);
+      } else if (err?.status === 403) {
+        // eslint-disable-next-line no-console
+        console.log('[docroom] Error during session setup', docName, err.message);
+      } else {
+        logError(err, '[docroom] Error during session setup', docName, err);
+      }
       try {
         webSocket.close(1011, err.message);
       } catch (_) { /* already closed */ }
