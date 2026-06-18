@@ -23,7 +23,8 @@ import {
   closeConn, getBackend, getYDoc, isHelixDoc,
   invalidateFromAdmin, isExpectedPlatformEvent, messageFlushRequest,
   messageFlushResponse, messageListener, persistence,
-  readState, setupWSConnection, setYDoc, showError, storeState, updateHandler, WSSharedDoc,
+  readState, safePutLastsync, setupWSConnection, setYDoc,
+  showError, storeState, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
 
 function isSubArray(full, sub) {
@@ -2553,6 +2554,217 @@ describe('Collab Test Suite', () => {
       assert.equal(1, lastsyncPuts.length, 'lastsync should be written exactly once');
       assert.equal(daAdminContent, lastsyncPuts[0][1], 'lastsync value must equal the da-admin content');
     } finally {
+      globalThis.setTimeout = savedSetTimeout;
+      persistence.get = savedGet;
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // safePutLastsync helper + size-cap guard at both call sites
+  //
+  // Durable Object storage rejects values > 131072 bytes with a RangeError.
+  // This used to surface as `[docroom] Failed to write lastsync …` console.error
+  // at both call sites (`persistence.update` after da-admin PUT, and
+  // `persistence.bindState` after the da-admin restore fetch). The helper
+  // skips the put for oversize content and logs the skip at log-level. The
+  // absence of the `lastsync` key is already the documented trigger for the
+  // da-admin restore fallback, so skipping is safe.
+  // ---------------------------------------------------------------------------
+
+  it('safePutLastsync skips put + logs at log-level when value exceeds DO value cap', async () => {
+    const oversize = `<body>${'x'.repeat(140 * 1024)}</body>`;
+    assert(oversize.length > 131072, 'Precondition: oversize > 131072 bytes');
+
+    const putCalls = [];
+    const storage = {
+      put: async (...args) => {
+        putCalls.push(args);
+        throw new RangeError(
+          `Values cannot be larger than 131072 bytes. A value of size ${args[1].length} was provided.`,
+        );
+      },
+    };
+
+    const errors = [];
+    const logs = [];
+    const savedError = console.error;
+    const savedLog = console.log;
+    console.error = (...args) => errors.push(args);
+    console.log = (...args) => logs.push(args);
+
+    try {
+      await safePutLastsync(storage, oversize, 'oversize-doc.html', 'unit-test');
+
+      assert.equal(0, putCalls.length, 'storage.put must not be called for oversize value');
+      assert.equal(0, errors.filter(
+        (args) => typeof args[0] === 'string' && args[0].includes('Failed to write lastsync'),
+      ).length, 'No console.error must fire for the platform-deterministic size cap');
+      const skipLog = logs.find(
+        (args) => typeof args[0] === 'string' && args[0].includes('Skipping lastsync marker'),
+      );
+      assert(skipLog, 'A console.log explaining the skip should fire');
+      assert(skipLog[0].includes('unit-test'), 'Skip log should include the call-site context');
+    } finally {
+      console.error = savedError;
+      console.log = savedLog;
+    }
+  });
+
+  it('safePutLastsync writes once when value fits the DO value cap', async () => {
+    const small = 'small content';
+    const putCalls = [];
+    const storage = { put: async (...args) => putCalls.push(args) };
+
+    await safePutLastsync(storage, small, 'small-doc.html', 'unit-test');
+
+    assert.equal(1, putCalls.length, 'storage.put must be called for in-cap value');
+    assert.equal('lastsync', putCalls[0][0], 'key must be lastsync');
+    assert.equal(small, putCalls[0][1], 'value must equal the input');
+  });
+
+  it('safePutLastsync is a no-op when storage has no .put method', async () => {
+    // Should not throw, regardless of value size.
+    await safePutLastsync(undefined, 'whatever', 'no-storage.html', 'unit-test');
+    await safePutLastsync({}, 'whatever', 'no-storage.html', 'unit-test');
+  });
+
+  it('persistence.update skips lastsync put when saved content exceeds DO value cap', async () => {
+    const oversize = `<body>${'y'.repeat(140 * 1024)}</body>`;
+    assert(oversize.length > 131072, 'Precondition: oversize > 131072 bytes');
+
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': {
+        doc2aem: () => oversize,
+      },
+    });
+
+    const putCalls = [];
+    const mockYDoc = {
+      conns: { keys() { return [{}]; } },
+      name: 'http://foo.bar/0/oversize-save.html',
+      hasClientChanged: true,
+      storage: {
+        put: async (...args) => {
+          putCalls.push(args);
+          throw new RangeError(
+            `Values cannot be larger than 131072 bytes. A value of size ${args[1].length} was provided.`,
+          );
+        },
+      },
+    };
+
+    pss.persistence.put = async () => ({ ok: true, status: 200, statusText: 'OK' });
+
+    const errors = [];
+    const logs = [];
+    const savedError = console.error;
+    const savedLog = console.log;
+    console.error = (...args) => errors.push(args);
+    console.log = (...args) => logs.push(args);
+
+    try {
+      const result = await pss.persistence.update(mockYDoc, 'old content', 'oversize-save.html');
+      assert.equal(oversize, result);
+
+      const lastsyncPuts = putCalls.filter(([key]) => key === 'lastsync');
+      assert.equal(0, lastsyncPuts.length, 'lastsync put must be skipped for oversize content');
+      assert.equal(0, errors.filter(
+        (args) => typeof args[0] === 'string' && args[0].includes('Failed to write lastsync'),
+      ).length, 'No console.error for the platform-deterministic size cap');
+      assert(logs.find(
+        (args) => typeof args[0] === 'string' && args[0].includes('Skipping lastsync marker'),
+      ), 'console.log skip message must fire');
+    } finally {
+      console.error = savedError;
+      console.log = savedLog;
+    }
+  });
+
+  it('persistence.update still writes lastsync when saved content fits the DO value cap', async () => {
+    const small = 'new content';
+    const pss = await esmock('../src/shareddoc.js', {
+      '@da-tools/da-parser': {
+        doc2aem: () => small,
+      },
+    });
+
+    const putCalls = [];
+    const mockYDoc = {
+      conns: { keys() { return [{}]; } },
+      name: 'http://foo.bar/0/small-save.html',
+      hasClientChanged: true,
+      storage: {
+        put: async (...args) => putCalls.push(args),
+      },
+    };
+
+    pss.persistence.put = async () => ({ ok: true, status: 200, statusText: 'OK' });
+
+    const result = await pss.persistence.update(mockYDoc, 'old content', 'small-save.html');
+    assert.equal(small, result);
+
+    const lastsyncPuts = putCalls.filter(([key]) => key === 'lastsync');
+    assert.equal(1, lastsyncPuts.length, 'lastsync must be written for in-cap content');
+    assert.equal(small, lastsyncPuts[0][1]);
+  });
+
+  it('bindState after da-admin fetch skips lastsync put when content exceeds DO value cap', async () => {
+    const docName = 'https://admin.da.live/source/foo/oversize.html';
+    const oversize = `<body>${'z'.repeat(140 * 1024)}</body>`;
+    assert(oversize.length > 131072, 'Precondition: oversize > 131072 bytes');
+
+    const ydoc = new Y.Doc();
+    setYDoc(docName, ydoc);
+    const conn = {};
+
+    const putCalls = [];
+    const storage = {
+      list: async () => new Map(),
+      get: async () => undefined,
+      put: async (...args) => {
+        putCalls.push(args);
+        throw new RangeError(
+          `Values cannot be larger than 131072 bytes. A value of size ${args[1].length} was provided.`,
+        );
+      },
+    };
+
+    const errors = [];
+    const logs = [];
+    const savedError = console.error;
+    const savedLog = console.log;
+    console.error = (...args) => errors.push(args);
+    console.log = (...args) => logs.push(args);
+
+    const savedSetTimeout = globalThis.setTimeout;
+    const savedGet = persistence.get;
+    try {
+      let timeoutFn;
+      globalThis.setTimeout = (f) => {
+        timeoutFn = f;
+      };
+      persistence.get = async () => oversize;
+
+      await persistence.bindState(docName, ydoc, conn, storage);
+      assert(timeoutFn, 'setTimeout callback should have been registered');
+
+      await timeoutFn();
+      // The .then chain after the timeout resolves contains an awaited
+      // safePutLastsync; wait two microtasks to give it time to settle.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const lastsyncPuts = putCalls.filter(([key]) => key === 'lastsync');
+      assert.equal(0, lastsyncPuts.length, 'lastsync put must be skipped for oversize content');
+      assert.equal(0, errors.filter(
+        (args) => typeof args[0] === 'string' && args[0].includes('Failed to write lastsync'),
+      ).length, 'No console.error for the platform-deterministic size cap');
+      assert(logs.find(
+        (args) => typeof args[0] === 'string' && args[0].includes('Skipping lastsync marker'),
+      ), 'console.log skip message must fire');
+    } finally {
+      console.error = savedError;
+      console.log = savedLog;
       globalThis.setTimeout = savedSetTimeout;
       persistence.get = savedGet;
     }
