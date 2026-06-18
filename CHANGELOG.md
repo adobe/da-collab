@@ -1,3 +1,11 @@
+## [1.7.3](https://github.com/adobe/da-collab/compare/v1.7.2...v1.7.3) (2026-06-18)
+
+
+### Bug Fixes
+
+* **docroom:** demote 401/403 from da-admin to non-error logs ([#175](https://github.com/adobe/da-collab/issues/175)) ([780f36d](https://github.com/adobe/da-collab/commit/780f36d65a37d24bbf7eaae70427a4a672ac7a40))
+* **docroom:** guard lastsync writes against DO 128 KiB value cap ([#174](https://github.com/adobe/da-collab/issues/174)) ([0cf15e3](https://github.com/adobe/da-collab/commit/0cf15e3583d85e65de7d5440d6b8ddee15a49598))
+
 ## [1.7.2](https://github.com/adobe/da-collab/compare/v1.7.1...v1.7.2) (2026-06-16)
 
 
