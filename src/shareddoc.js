@@ -92,6 +92,31 @@ export const messageFlushRequest = 2;
 export const messageFlushResponse = 3;
 const MAX_STORAGE_KEYS = 128;
 const MAX_STORAGE_VALUE_SIZE = 131072;
+
+/**
+ * Write the `lastsync` marker to Durable Object storage, guarded against the
+ * 128 KiB per-value cap. Cloudflare DO storage throws `RangeError` for any
+ * value larger than `MAX_STORAGE_VALUE_SIZE` — that is platform-deterministic,
+ * so we skip the write at `console.log` level rather than surfacing it as
+ * `console.error` noise. The absence of `lastsync` already triggers the
+ * documented da-admin restore fallback on DO restart, so skipping is safe.
+ */
+export const safePutLastsync = async (storage, value, docName, context) => {
+  if (!storage?.put) {
+    return;
+  }
+  if (value.length > MAX_STORAGE_VALUE_SIZE) {
+    // eslint-disable-next-line no-console
+    console.log(`[docroom] Skipping lastsync marker (${context}) - content exceeds DO value cap`, docName, `${value.length}b`);
+    return;
+  }
+  try {
+    await storage.put('lastsync', value);
+  } catch (storageErr) {
+    // non-fatal: worst case the restore falls back to da-admin
+    logError(storageErr, `[docroom] Failed to write lastsync (${context})`, storageErr);
+  }
+};
 // Matches da-admin EMPTY_DOC_SIZE — the byte-length of doc2aem(empty ydoc).
 // PUTs at or below this size are the deterministic empty stub; allowing one
 // through when no client edit happened silently overwrites real customer content
@@ -432,15 +457,7 @@ export const persistence = {
         // Record what we just PUT so that on DO restart we can tell whether
         // CF storage is ahead of da-admin (safe to use) vs. da-admin was
         // externally modified (must use da-admin).
-        if (ydoc.storage?.put) {
-          try {
-            await ydoc.storage.put('lastsync', content);
-          } catch (storageErr) {
-            // non-fatal: worst case the restore falls back to da-admin
-            // eslint-disable-next-line no-console
-            console.error('[docroom] Failed to write lastsync marker', storageErr);
-          }
-        }
+        await safePutLastsync(ydoc.storage, content, docName, 'after da-admin PUT');
         return content;
       }
     } catch (err) {
@@ -593,15 +610,7 @@ export const persistence = {
             // had already sent updates. CF storage is now anchored to `current`, so
             // on DO restart we can detect it as a valid continuation even if no PUT
             // to da-admin has happened yet.
-            if (storage?.put) {
-              try {
-                await storage.put('lastsync', current);
-              } catch (storageErr) {
-                // non-fatal
-                // eslint-disable-next-line no-console
-                console.error('[docroom] Failed to write lastsync after da-admin fetch', storageErr);
-              }
-            }
+            await safePutLastsync(storage, current, docName, 'after da-admin fetch');
           }
         });
 
