@@ -903,9 +903,11 @@ export const invalidateFromAdmin = async (docName) => {
   console.log('[worker] Invalidate from Admin received', docName);
   const ydoc = docs.get(docName);
   if (ydoc) {
-    // As we are closing all connections, the ydoc will be removed from the docs map
-    ydoc.conns.forEach((_, c) => closeConn(ydoc, c));
-
+    // Await all closeConn calls so that flushSave + docs.delete complete before
+    // this function returns. Without this, an editor that reconnects during the
+    // flushSave window finds the stale ydoc still in `docs` and reuses it
+    // instead of creating a fresh one that loads the new da-admin content.
+    await Promise.all(Array.from(ydoc.conns.keys()).map((c) => closeConn(ydoc, c)));
     return true;
   } else {
     // eslint-disable-next-line no-console
