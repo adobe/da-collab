@@ -11,7 +11,7 @@
     "deploy:ci": "node prepare-deploy.js && wrangler deploy -e ci  -c wrangler-versioned.toml",
     "deploy:prod": "node prepare-deploy.js && wrangler deploy -e production -c wrangler-versioned.toml",
     "deploy:stage": "node prepare-deploy.js && wrangler deploy -e stage -c wrangler-versioned.toml",
-    "test": "c8 mocha --import ./test/stubs/register.mjs --inline-diffs --exit # --exit is needed because some test code triggers async listeners",
+    "test": "c8 mocha --node-option import=./test/stubs/register.mjs --inline-diffs --exit # --exit is needed because some test code triggers async listeners",
     "test:it": "echo 'todo'",
     "test:postdeploy": "echo 'todo'",
     "prepare": "husky",
