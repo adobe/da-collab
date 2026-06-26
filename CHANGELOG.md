@@ -1,3 +1,10 @@
+## [1.7.4](https://github.com/adobe/da-collab/compare/v1.7.3...v1.7.4) (2026-06-26)
+
+
+### Bug Fixes
+
+* **docroom:** await all closeConns in invalidateFromAdmin to close race window ([#178](https://github.com/adobe/da-collab/issues/178)) ([7405cb1](https://github.com/adobe/da-collab/commit/7405cb179a50f2a6d5a20462f50410f72a174154))
+
 ## [1.7.3](https://github.com/adobe/da-collab/compare/v1.7.2...v1.7.3) (2026-06-18)
 
 
