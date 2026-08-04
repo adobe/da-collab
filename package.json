@@ -29,7 +29,7 @@
     "@semantic-release/changelog": "6.0.3",
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/git": "10.0.1",
-    "c8": "11.0.0",
+    "c8": "12.0.0",
     "eslint": "9.4.0",
     "esmock": "2.7.5",
     "graceful-fs": "4.2.11",
@@ -43,7 +43,7 @@
     "wrangler": "4.95.0"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "4.20260529.1",
+    "@cloudflare/workers-types": "5.20260721.1",
     "@da-tools/da-parser": "^1.2.1",
     "lib0": "0.2.114",
     "y-protocols": "1.0.6",
