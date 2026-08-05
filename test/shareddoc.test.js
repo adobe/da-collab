@@ -18,7 +18,7 @@ import esmock from 'esmock';
 
 import {
   aem2doc, doc2aem, doc2json, EMPTY_DOC,
-} from '@da-tools/da-parser';
+} from '@adobe/da-parser';
 import {
   closeConn, getBackend, getYDoc, isHelixDoc,
   invalidateFromAdmin, isExpectedPlatformEvent, messageFlushRequest,
@@ -368,7 +368,7 @@ describe('Collab Test Suite', () => {
   it('Test persistence update does not put if no change', async () => {
     const mockDoc2Aem = () => 'Svr content';
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -393,7 +393,7 @@ describe('Collab Test Suite', () => {
   it('Test persistence update does put if change', async () => {
     const mockDoc2Aem = () => 'Svr content update';
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -426,7 +426,7 @@ describe('Collab Test Suite', () => {
   async function testCloseAllOnAuthFailure(httpError) {
     const mockDoc2Aem = () => 'Svr content update';
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -467,7 +467,7 @@ describe('Collab Test Suite', () => {
 
   async function testUpdateLogLevel(status, statusText, expectedLevel) {
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': { doc2aem: () => 'updated content' },
+      '@adobe/da-parser': { doc2aem: () => 'updated content' },
     });
     const mockYDoc = {
       conns: new Map(),
@@ -525,7 +525,7 @@ describe('Collab Test Suite', () => {
     };
     const pss = await esmock('../src/shareddoc.js', {
       '../src/debounce.js': { default: mockdebounce },
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => '<main><div><p>content</p></div></main>',
         doc2json: () => '{}',
         aem2doc,
@@ -564,7 +564,7 @@ describe('Collab Test Suite', () => {
     const EMPTY_STUB = '\n<body>\n  <header></header>\n  <main><div></div></main>\n  <footer></footer>\n</body>\n';
     const mockDoc2Aem = () => EMPTY_STUB;
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -593,7 +593,7 @@ describe('Collab Test Suite', () => {
     const EMPTY_STUB = '\n<body>\n  <header></header>\n  <main><div></div></main>\n  <footer></footer>\n</body>\n';
     const mockDoc2Aem = () => EMPTY_STUB;
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -1007,7 +1007,7 @@ describe('Collab Test Suite', () => {
     };
     const pss = await esmock('../src/shareddoc.js', {
       '../src/debounce.js': { default: mockdebounce },
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => unchangedContent,
         doc2json: () => '{}',
         aem2doc,
@@ -1048,7 +1048,7 @@ describe('Collab Test Suite', () => {
     };
     const pss = await esmock('../src/shareddoc.js', {
       '../src/debounce.js': { default: mockdebounce },
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => '<main><div><p>updated content</p></div></main>',
         doc2json: () => '{}',
         aem2doc,
@@ -1122,7 +1122,7 @@ describe('Collab Test Suite', () => {
     };
     const pss = await esmock('../src/shareddoc.js', {
       '../src/debounce.js': { default: mockdebounce },
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => '<main><div><p>content</p></div></main>',
         doc2json: () => '{}',
         aem2doc,
@@ -1215,7 +1215,7 @@ describe('Collab Test Suite', () => {
     const aem2DocCalled = [];
     const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc: mockAem2Doc,
       },
     });
@@ -1252,7 +1252,7 @@ describe('Collab Test Suite', () => {
     const json2DocCalled = [];
     const mockJson2Doc = (sc, yd) => json2DocCalled.push(sc, yd);
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         json2doc: mockJson2Doc,
       },
     });
@@ -1289,7 +1289,7 @@ describe('Collab Test Suite', () => {
     const aem2DocCalled = [];
     const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc: mockAem2Doc,
       },
     });
@@ -1327,7 +1327,7 @@ describe('Collab Test Suite', () => {
     const aem2DocCalled = [];
     const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc: mockAem2Doc,
       },
     });
@@ -1362,7 +1362,7 @@ describe('Collab Test Suite', () => {
       throw new TypeError("Cannot read properties of undefined (reading 'toLowerCase')");
     };
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc: throwing,
       },
     });
@@ -1938,7 +1938,7 @@ describe('Collab Test Suite', () => {
     };
 
     const shd = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc,
         doc2aem,
       },
@@ -1988,7 +1988,7 @@ describe('Collab Test Suite', () => {
     };
 
     const shd = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc,
         doc2aem,
       },
@@ -2671,7 +2671,7 @@ describe('Collab Test Suite', () => {
     assert(oversize.length > 131072, 'Precondition: oversize > 131072 bytes');
 
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => oversize,
       },
     });
@@ -2721,7 +2721,7 @@ describe('Collab Test Suite', () => {
   it('persistence.update still writes lastsync when saved content fits the DO value cap', async () => {
     const small = 'new content';
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => small,
       },
     });
@@ -2920,7 +2920,7 @@ describe('Collab Test Suite', () => {
   it('persistence.update logs save success when content changed', async () => {
     const mockDoc2Aem = () => 'new content';
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
