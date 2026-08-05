@@ -1,3 +1,10 @@
+## [1.7.5](https://github.com/adobe/da-collab/compare/v1.7.4...v1.7.5) (2026-08-05)
+
+
+### Bug Fixes
+
+* **deps:** update external fixes ([#115](https://github.com/adobe/da-collab/issues/115)) ([5515352](https://github.com/adobe/da-collab/commit/55153528cac3f94c085dc7244c3d1bea127ffd97))
+
 ## [1.7.4](https://github.com/adobe/da-collab/compare/v1.7.3...v1.7.4) (2026-06-26)
 
 
