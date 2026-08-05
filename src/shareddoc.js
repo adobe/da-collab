@@ -16,7 +16,7 @@ import * as encoding from 'lib0/encoding.js';
 import * as decoding from 'lib0/decoding.js';
 import {
   aem2doc, doc2aem, json2doc, doc2json,
-} from '@da-tools/da-parser';
+} from '@adobe/da-parser';
 import debounce from './debounce.js';
 
 const wsReadyStateConnecting = 0;
