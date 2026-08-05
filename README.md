@@ -24,7 +24,7 @@ Then open a browser and access: http://localhost:3000/?da-admin=local&da-collab=
 
 ### Run on stage
 You can deploy da-collab on Cloudflare stage by merging into the `stage` branch.
-forget to deploy da-admin on stage as well, as otherwise you might be connecting to an old version.
+Don't forget to deploy da-admin on stage as well, as otherwise you might be connecting to an old version.
 
 To access da-collab and da-admin running on stage, open this URL in a browser: http://localhost:3000/?da-admin=stage&da-collab=stage
 
