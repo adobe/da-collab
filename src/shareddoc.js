@@ -991,6 +991,13 @@ export const handleWebSocketMessage = async (conn, docName, env, storage, messag
     // DO was hibernated; re-establish Yjs state without re-registering event listeners
     await setupWSConnection(conn, docName, env, storage, ctx, true);
     doc = docs.get(docName);
+  } else if (!doc.conns.has(conn)) {
+    // The doc was already cached (another connection got there first), so the setup
+    // path above was skipped. Register conn defensively — without this, a client that
+    // wins the race against ctx.waitUntil(initSession(...)) can have its awareness
+    // update processed before initSession's own doc.conns registration runs, leaving
+    // its clientID attributed to no conn and leaking it forever on close.
+    doc.conns.set(conn, new Set());
   }
   if (doc) {
     await messageListener(conn, doc, new Uint8Array(message));
