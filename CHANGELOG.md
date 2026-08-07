@@ -1,3 +1,10 @@
+## [1.7.6](https://github.com/adobe/da-collab/compare/v1.7.5...v1.7.6) (2026-08-07)
+
+
+### Bug Fixes
+
+* register conn defensively in handleWebSocketMessage to close awareness race ([#185](https://github.com/adobe/da-collab/issues/185)) ([2c16f77](https://github.com/adobe/da-collab/commit/2c16f77e6758a0848dfc08c898881dd88156dca4))
+
 ## [1.7.5](https://github.com/adobe/da-collab/compare/v1.7.4...v1.7.5) (2026-08-05)
 
 
