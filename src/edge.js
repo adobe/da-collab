@@ -55,7 +55,7 @@ export async function handleErrors(request, env, handler) {
       pair[1].close(1011, 'Uncaught exception during session setup');
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
-    return new Response(msg, { status: 500 });
+    return new Response(msg, { status: 500, headers: { 'x-error': err.message } });
   }
 }
 
@@ -246,7 +246,10 @@ export async function handleApiRequest(request, env) {
           return wsAuthFailureResponse(request.headers, 4403, 'forbidden');
         }
       }
-      return new Response('unable to get resource', { status: initialReq.status });
+      const headers = initialReq.status >= 500
+        ? { 'x-error': initialReq.headers.get('x-error') ?? initialReq.statusText }
+        : undefined;
+      return new Response('unable to get resource', { status: initialReq.status, headers });
     }
 
     // this seems to be required by CloudFlare to consider the request as completed
@@ -256,7 +259,7 @@ export async function handleApiRequest(request, env) {
     [, authActions] = daActions.split('=');
   } catch (err) {
     logError(err, `[worker] Unable to handle API request ${docName}`, err);
-    return new Response('unable to get resource', { status: 500 });
+    return new Response('unable to get resource', { status: 500, headers: { 'x-error': err.message } });
   }
 
   try {
@@ -294,7 +297,7 @@ export async function handleApiRequest(request, env) {
     return await roomObject.fetch(req);
   } catch (err) {
     logError(err, `[worker] Error fetching the doc from the room ${docName}`, err);
-    return new Response('unable to get resource', { status: 500 });
+    return new Response('unable to get resource', { status: 500, headers: { 'x-error': err.message } });
   }
 }
 
@@ -448,7 +451,8 @@ export class DocRoom extends DurableObject {
       logError(err, '[docroom] Error while fetching', err);
       const status = err.status ?? 500;
       const body = status === 500 ? 'Internal Server Error' : err.message;
-      return new Response(body, { status });
+      const headers = status >= 500 ? { 'x-error': err.message } : undefined;
+      return new Response(body, { status, headers });
     }
   }
 
