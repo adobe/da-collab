@@ -1,3 +1,10 @@
+## [1.7.7](https://github.com/adobe/da-collab/compare/v1.7.6...v1.7.7) (2026-08-19)
+
+
+### Bug Fixes
+
+* set x-error response header on 500 paths ([#190](https://github.com/adobe/da-collab/issues/190)) ([503e882](https://github.com/adobe/da-collab/commit/503e88239af4ac95cbaa50ea11af5971ed04a040))
+
 ## [1.7.6](https://github.com/adobe/da-collab/compare/v1.7.5...v1.7.6) (2026-08-07)
 
 
