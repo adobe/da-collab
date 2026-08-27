@@ -372,7 +372,7 @@ export const persistence = {
     const { body: putBody, size: bodySize, headers: bodyHeaders } = backend
       .putReqData(content, mimeType);
 
-    const opts = { method: 'PUT', body: putBody };
+    const opts = { method: isHelixDoc(ydoc.name) ? 'POST' : 'PUT', body: putBody };
     const keys = Array.from(ydoc.conns.keys());
     const allReadOnly = keys.length > 0 && keys.every((con) => con.readOnly === true);
     if (allReadOnly) {

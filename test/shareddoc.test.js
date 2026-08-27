@@ -3174,8 +3174,8 @@ describe('Collab Test Suite', () => {
       assert.equal(1, calls.length);
       const { url, opts } = calls[0];
       assert.equal(url, 'https://api.aem.live/owner/repo/page.html');
-      assert.equal(opts.method, 'PUT');
-      assert.strictEqual(opts.body, body, 'Helix PUT body must be the raw content string, not FormData');
+      assert.equal(opts.method, 'POST');
+      assert.strictEqual(opts.body, body, 'Helix POST body must be the raw content string, not FormData');
       assert.equal(opts.headers.get('Content-Type'), 'text/html');
       assert.equal(opts.headers.get('If-Match'), '*');
       assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
