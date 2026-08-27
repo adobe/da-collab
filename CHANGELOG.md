@@ -1,3 +1,10 @@
+## [1.7.8](https://github.com/adobe/da-collab/compare/v1.7.7...v1.7.8) (2026-08-27)
+
+
+### Bug Fixes
+
+* always use POST to write to Helix ([#193](https://github.com/adobe/da-collab/issues/193)) ([7b2f60b](https://github.com/adobe/da-collab/commit/7b2f60b2c04f5d9bcde0df650064a9e7f620a605))
+
 ## [1.7.7](https://github.com/adobe/da-collab/compare/v1.7.6...v1.7.7) (2026-08-19)
 
 
