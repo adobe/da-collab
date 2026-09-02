@@ -3185,6 +3185,40 @@ describe('Collab Test Suite', () => {
     }
   });
 
+  it('persistence.put for a Helix doc with multiple connections uses only the first auth (no comma-join)', async () => {
+    const savedFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return { ok: true, status: 200, statusText: 'OK' };
+    };
+    try {
+      const conns = new Map();
+      conns.set({ auth: 'Bearer abc' }, new Set());
+      conns.set({ auth: 'Bearer xyz' }, new Set());
+      const ydoc = {
+        name: 'https://api.aem.live/owner/repo/page.html',
+        conns,
+        daadmin: {
+          fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
+        },
+      };
+      const body = '<main><div><p>some helix content that is long enough to avoid the empty-stub warning padding</p></div></main>';
+      const result = await persistence.put(ydoc, body);
+
+      assert(result.ok);
+      assert.equal(1, calls.length);
+      const { opts } = calls[0];
+      assert.equal(opts.headers.get('Authorization'), 'Bearer abc');
+      assert(
+        !opts.headers.get('Authorization').includes(','),
+        'Helix Authorization header must not be a comma-joined multi-auth value',
+      );
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
   it('persistence.put for a Helix .json doc sets application/json Content-Type', async () => {
     const savedFetch = globalThis.fetch;
     let captured;
