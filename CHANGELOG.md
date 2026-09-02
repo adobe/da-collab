@@ -1,3 +1,10 @@
+## [1.7.9](https://github.com/adobe/da-collab/compare/v1.7.8...v1.7.9) (2026-09-02)
+
+
+### Bug Fixes
+
+* use single auth token for Helix Authorization header ([#197](https://github.com/adobe/da-collab/issues/197)) ([1a4f2e1](https://github.com/adobe/da-collab/commit/1a4f2e1aa18a570b3a9b03e32e1c15d345e3122e))
+
 ## [1.7.8](https://github.com/adobe/da-collab/compare/v1.7.7...v1.7.8) (2026-08-27)
 
 
