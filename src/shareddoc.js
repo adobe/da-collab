@@ -392,7 +392,12 @@ export const persistence = {
       .map((con) => con.auth);
 
     if (auth.length > 0) {
-      headers.Authorization = [...new Set(auth)].join(',');
+      if (isHelixDoc(ydoc.name)) {
+        // eslint-disable-next-line prefer-destructuring
+        headers.Authorization = auth[0];
+      } else {
+        headers.Authorization = [...new Set(auth)].join(',');
+      }
     }
 
     opts.headers = new Headers(headers);
