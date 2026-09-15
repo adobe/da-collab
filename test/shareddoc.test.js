@@ -3302,4 +3302,22 @@ describe('Collab Test Suite', () => {
       persistence.update = savedUpdate;
     }
   });
+
+  it('Test link-img image round-trips through doc2aem/aem2doc', async () => {
+    const html = `
+<body>
+  <header></header>
+  <main><div><a href="http://www.foo.com/myimg.jpg" title="Img Alt" data-edit-as="image">http://www.foo.com/myimg.jpg</a></div></main>
+  <footer></footer>
+</body>
+`;
+
+    const ydoc = new Y.Doc();
+    aem2doc(html, ydoc);
+
+    const result = doc2aem(ydoc);
+    assert.equal(result, html);
+    assert(!result.includes('<picture>'), 'link-img must serialize as a plain <a>, not <picture>');
+    assert(result.includes('data-edit-as="image"'));
+  });
 });
