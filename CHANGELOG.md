@@ -1,3 +1,10 @@
+## [1.7.10](https://github.com/adobe/da-collab/compare/v1.7.9...v1.7.10) (2026-09-15)
+
+
+### Bug Fixes
+
+* force redeploy after da-parser bump ([#201](https://github.com/adobe/da-collab/issues/201)) ([c123fac](https://github.com/adobe/da-collab/commit/c123fac1dd817e0fc56dc836cb7ffcd43087b504))
+
 ## [1.7.9](https://github.com/adobe/da-collab/compare/v1.7.8...v1.7.9) (2026-09-02)
 
 
