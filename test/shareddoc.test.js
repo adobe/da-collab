@@ -3307,7 +3307,7 @@ describe('Collab Test Suite', () => {
     const html = `
 <body>
   <header></header>
-  <main><div><a href="http://www.foo.com/myimg.jpg" title="Img Alt" data-asset-delivery-type="link-img">http://www.foo.com/myimg.jpg</a></div></main>
+  <main><div><a href="http://www.foo.com/myimg.jpg" title="Img Alt" data-edit-as="image">http://www.foo.com/myimg.jpg</a></div></main>
   <footer></footer>
 </body>
 `;
@@ -3318,6 +3318,6 @@ describe('Collab Test Suite', () => {
     const result = doc2aem(ydoc);
     assert.equal(result, html);
     assert(!result.includes('<picture>'), 'link-img must serialize as a plain <a>, not <picture>');
-    assert(result.includes('data-asset-delivery-type="link-img"'));
+    assert(result.includes('data-edit-as="image"'));
   });
 });
