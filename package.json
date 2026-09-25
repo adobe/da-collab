@@ -34,13 +34,13 @@
     "esmock": "2.7.6",
     "graceful-fs": "4.2.11",
     "husky": "9.1.7",
-    "lint-staged": "17.3.0",
+    "lint-staged": "17.5.1",
     "mocha": "^11.0.0",
     "mocha-junit-reporter": "2.2.1",
-    "mocha-multi-reporters": "1.5.1",
+    "mocha-multi-reporters": "1.5.2",
     "semantic-release": "25.0.9",
     "semantic-release-slack-bot": "4.0.2",
-    "wrangler": "4.119.0"
+    "wrangler": "4.131.1"
   },
   "dependencies": {
     "@adobe/da-parser": "^2.1.0",
