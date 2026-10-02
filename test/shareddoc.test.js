@@ -11,6 +11,7 @@
  */
 import * as Y from 'yjs';
 import * as syncProtocol from 'y-protocols/sync.js';
+import * as awarenessProtocol from 'y-protocols/awareness.js';
 import * as encoding from 'lib0/encoding.js';
 import * as decoding from 'lib0/decoding.js';
 import assert from 'node:assert';
@@ -18,13 +19,13 @@ import esmock from 'esmock';
 
 import {
   aem2doc, doc2aem, doc2json, EMPTY_DOC,
-} from '@da-tools/da-parser';
+} from '@adobe/da-parser';
 import {
-  closeConn, getBackend, getYDoc, isHelixDoc, toHelixPath,
+  closeConn, getBackend, getYDoc, handleWebSocketMessage, isHelixDoc,
   invalidateFromAdmin, isExpectedPlatformEvent, messageFlushRequest,
   messageFlushResponse, messageListener, persistence,
   readState, safePutLastsync, setupWSConnection, setYDoc,
-  showError, storeState, updateHandler, WSSharedDoc,
+  showError, storeState, toHelixPath, updateHandler, WSSharedDoc,
 } from '../src/shareddoc.js';
 
 function isSubArray(full, sub) {
@@ -378,7 +379,7 @@ describe('Collab Test Suite', () => {
   it('Test persistence update does not put if no change', async () => {
     const mockDoc2Aem = () => 'Svr content';
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -403,7 +404,7 @@ describe('Collab Test Suite', () => {
   it('Test persistence update does put if change', async () => {
     const mockDoc2Aem = () => 'Svr content update';
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -438,7 +439,7 @@ describe('Collab Test Suite', () => {
   async function testCloseAllOnAuthFailure(httpError) {
     const mockDoc2Aem = () => 'Svr content update';
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -479,7 +480,7 @@ describe('Collab Test Suite', () => {
 
   async function testUpdateLogLevel(status, statusText, expectedLevel) {
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': { doc2aem: () => 'updated content' },
+      '@adobe/da-parser': { doc2aem: () => 'updated content' },
     });
     const mockYDoc = {
       conns: new Map(),
@@ -537,7 +538,7 @@ describe('Collab Test Suite', () => {
     };
     const pss = await esmock('../src/shareddoc.js', {
       '../src/debounce.js': { default: mockdebounce },
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => '<main><div><p>content</p></div></main>',
         doc2json: () => '{}',
         aem2doc,
@@ -576,7 +577,7 @@ describe('Collab Test Suite', () => {
     const EMPTY_STUB = '\n<body>\n  <header></header>\n  <main><div></div></main>\n  <footer></footer>\n</body>\n';
     const mockDoc2Aem = () => EMPTY_STUB;
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -605,7 +606,7 @@ describe('Collab Test Suite', () => {
     const EMPTY_STUB = '\n<body>\n  <header></header>\n  <main><div></div></main>\n  <footer></footer>\n</body>\n';
     const mockDoc2Aem = () => EMPTY_STUB;
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -1019,7 +1020,7 @@ describe('Collab Test Suite', () => {
     };
     const pss = await esmock('../src/shareddoc.js', {
       '../src/debounce.js': { default: mockdebounce },
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => unchangedContent,
         doc2json: () => '{}',
         aem2doc,
@@ -1060,7 +1061,7 @@ describe('Collab Test Suite', () => {
     };
     const pss = await esmock('../src/shareddoc.js', {
       '../src/debounce.js': { default: mockdebounce },
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => '<main><div><p>updated content</p></div></main>',
         doc2json: () => '{}',
         aem2doc,
@@ -1134,7 +1135,7 @@ describe('Collab Test Suite', () => {
     };
     const pss = await esmock('../src/shareddoc.js', {
       '../src/debounce.js': { default: mockdebounce },
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => '<main><div><p>content</p></div></main>',
         doc2json: () => '{}',
         aem2doc,
@@ -1227,7 +1228,7 @@ describe('Collab Test Suite', () => {
     const aem2DocCalled = [];
     const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc: mockAem2Doc,
       },
     });
@@ -1264,7 +1265,7 @@ describe('Collab Test Suite', () => {
     const json2DocCalled = [];
     const mockJson2Doc = (sc, yd) => json2DocCalled.push(sc, yd);
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         json2doc: mockJson2Doc,
       },
     });
@@ -1301,7 +1302,7 @@ describe('Collab Test Suite', () => {
     const aem2DocCalled = [];
     const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc: mockAem2Doc,
       },
     });
@@ -1339,7 +1340,7 @@ describe('Collab Test Suite', () => {
     const aem2DocCalled = [];
     const mockAem2Doc = (sc, yd) => aem2DocCalled.push(sc, yd);
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc: mockAem2Doc,
       },
     });
@@ -1374,7 +1375,7 @@ describe('Collab Test Suite', () => {
       throw new TypeError("Cannot read properties of undefined (reading 'toLowerCase')");
     };
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc: throwing,
       },
     });
@@ -1754,6 +1755,52 @@ describe('Collab Test Suite', () => {
     }
   });
 
+  it('handleWebSocketMessage registers conn in doc.conns even when doc already exists', async () => {
+    // Reproduces the reload-duplicate-awareness bug: initSession's ctx.waitUntil(...)
+    // registers the conn into doc.conns asynchronously and isn't awaited before the
+    // 101 response returns. If the doc is already cached (another tab connected) and
+    // the client's first awareness message wins that race, handleWebSocketMessage used
+    // to skip registration entirely (it only ran setupWSConnection when `doc` was
+    // missing), so the new clientID got broadcast/stored but never attributed to any
+    // conn — leaving closeConn with an empty controlledIds set and leaking the
+    // awareness entry forever.
+    const docName = 'http://www.acme.org/racedoc.html';
+    const ydoc = new WSSharedDoc(docName);
+    setYDoc(docName, ydoc);
+
+    // Simulate an already-connected peer (the other open tab).
+    const existingConn = { readyState: 1, send: () => {}, close: () => {} }; // wsReadyStateOpen
+    ydoc.conns.set(existingConn, new Set());
+
+    // Build a real awareness update, as a newly-connecting tab would send it.
+    const clientDoc = new Y.Doc();
+    const clientAwareness = new awarenessProtocol.Awareness(clientDoc);
+    clientAwareness.setLocalState({ user: { id: 'u1', name: 'User One' } });
+    const update = awarenessProtocol.encodeAwarenessUpdate(clientAwareness, [clientDoc.clientID]);
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, 1); // messageAwareness
+    encoding.writeVarUint8Array(encoder, update);
+    const message = encoding.toUint8Array(encoder);
+
+    // newConn's own doc.conns registration has NOT happened yet — the race being tested.
+    const newConn = { readyState: 1, send: () => {}, close: () => {} }; // wsReadyStateOpen
+    await handleWebSocketMessage(newConn, docName, {}, {}, message, {});
+
+    assert(ydoc.conns.has(newConn), 'conn should be registered even though doc already existed');
+    assert.deepStrictEqual(Array.from(ydoc.conns.get(newConn)), [clientDoc.clientID]);
+    assert(ydoc.awareness.getStates().has(clientDoc.clientID));
+
+    // The new conn closes (e.g. tab reloads again) — its awareness state must go with it.
+    await closeConn(ydoc, newConn);
+    assert(
+      !ydoc.awareness.getStates().has(clientDoc.clientID),
+      'awareness state must be cleaned up on close, not leaked',
+    );
+
+    clientAwareness.destroy();
+    clientDoc.destroy();
+  });
+
   it('Test WSSharedDoc', () => {
     const doc = new WSSharedDoc('hello');
     assert.equal(doc.name, 'hello');
@@ -1950,7 +1997,7 @@ describe('Collab Test Suite', () => {
     };
 
     const shd = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc,
         doc2aem,
       },
@@ -2000,7 +2047,7 @@ describe('Collab Test Suite', () => {
     };
 
     const shd = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         aem2doc,
         doc2aem,
       },
@@ -2683,7 +2730,7 @@ describe('Collab Test Suite', () => {
     assert(oversize.length > 131072, 'Precondition: oversize > 131072 bytes');
 
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => oversize,
       },
     });
@@ -2733,7 +2780,7 @@ describe('Collab Test Suite', () => {
   it('persistence.update still writes lastsync when saved content fits the DO value cap', async () => {
     const small = 'new content';
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: () => small,
       },
     });
@@ -2932,7 +2979,7 @@ describe('Collab Test Suite', () => {
   it('persistence.update logs save success when content changed', async () => {
     const mockDoc2Aem = () => 'new content';
     const pss = await esmock('../src/shareddoc.js', {
-      '@da-tools/da-parser': {
+      '@adobe/da-parser': {
         doc2aem: mockDoc2Aem,
       },
     });
@@ -3227,12 +3274,48 @@ describe('Collab Test Suite', () => {
       assert.equal(1, calls.length);
       const { url, opts } = calls[0];
       assert.equal(url, 'https://api.aem.live/owner/repo/page.html');
-      assert.equal(opts.method, 'PUT');
-      assert.strictEqual(opts.body, body, 'Helix PUT body must be the raw content string, not FormData');
+      assert.equal(opts.method, 'POST');
+      assert.strictEqual(opts.body, body, 'Helix POST body must be the raw content string, not FormData');
       assert.equal(opts.headers.get('Content-Type'), 'text/html');
       assert.equal(opts.headers.get('If-Match'), '*');
       assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
       assert.equal(opts.headers.get('Authorization'), 'Bearer abc');
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
+  it('persistence.put for a Helix doc with multiple connections uses only the first auth (no comma-join)', async () => {
+    const savedFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return {
+        ok: true, status: 200, statusText: 'OK', headers: new Headers(),
+      };
+    };
+    try {
+      const conns = new Map();
+      conns.set({ auth: 'Bearer abc' }, new Set());
+      conns.set({ auth: 'Bearer xyz' }, new Set());
+      const ydoc = {
+        name: 'https://api.aem.live/owner/repo/page.html',
+        conns,
+        daadmin: {
+          fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
+        },
+      };
+      const body = '<main><div><p>some helix content that is long enough to avoid the empty-stub warning padding</p></div></main>';
+      const result = await persistence.put(ydoc, body);
+
+      assert(result.ok);
+      assert.equal(1, calls.length);
+      const { opts } = calls[0];
+      assert.equal(opts.headers.get('Authorization'), 'Bearer abc');
+      assert(
+        !opts.headers.get('Authorization').includes(','),
+        'Helix Authorization header must not be a comma-joined multi-auth value',
+      );
     } finally {
       globalThis.fetch = savedFetch;
     }
@@ -3292,6 +3375,112 @@ describe('Collab Test Suite', () => {
       null,
       'da-admin path must not set Content-Type explicitly (FormData boundary handles it)',
     );
+  });
+
+  for (const mode of ['true', 'local', 'false']) {
+    it(`persistence.put honours IS_HELIX=${mode} for method, body and auth`, async () => {
+      const savedFetch = globalThis.fetch;
+      const calls = [];
+      const fetch = async (url, opts) => {
+        calls.push({ url, opts });
+        return new Response(null, { headers: { etag: '"saved"' } });
+      };
+      globalThis.fetch = fetch;
+      const isHelix = mode !== 'false';
+      const name = isHelix
+        ? 'https://admin.da.live/source/o/r/p.html'
+        : 'https://api.aem.live/o/sites/r/source/p.html';
+      const conns = new Map([
+        [{ auth: 'auth-a' }, new Set()],
+        [{ auth: 'auth-b' }, new Set()],
+      ]);
+      const ydoc = {
+        name, conns, IS_HELIX: mode, daadmin: { fetch },
+      };
+      const body = '<main><div><p>content long enough to avoid the empty-stub warning padding padding</p></div></main>';
+      try {
+        const result = await persistence.put(ydoc, body);
+
+        assert(result.ok);
+        assert.equal(calls.length, 1);
+        const { url, opts } = calls[0];
+        const origin = mode === 'local' ? 'http://localhost:3000' : 'https://api.aem.live';
+        assert.equal(url, isHelix ? `${origin}/o/sites/r/source/p.html` : name);
+        assert.equal(opts.method, isHelix ? 'POST' : 'PUT');
+        assert.equal(opts.headers.get('Authorization'), isHelix ? 'auth-a' : 'auth-a,auth-b');
+        if (isHelix) {
+          assert.strictEqual(opts.body, body);
+          assert.equal(opts.headers.get('Content-Type'), 'text/html');
+        } else {
+          assert(opts.body instanceof FormData);
+          assert.equal(await opts.body.get('data').text(), body);
+          assert.equal(opts.headers.get('Content-Type'), null);
+        }
+        assert.equal(ydoc.etag, '"saved"');
+      } finally {
+        globalThis.fetch = savedFetch;
+      }
+    });
+  }
+
+  for (const mode of [undefined, 'true', 'local', 'false']) {
+    it(`persistence.checkEtag uses backend-appropriate auth with IS_HELIX=${mode}`, async () => {
+      const savedFetch = globalThis.fetch;
+      const calls = [];
+      const fetch = async (url, opts) => {
+        calls.push({ url, opts });
+        return new Response(null, { headers: { etag: '"current"' } });
+      };
+      globalThis.fetch = fetch;
+      const name = mode === 'true' || mode === 'local'
+        ? 'https://admin.da.live/source/o/r/p.html'
+        : 'https://api.aem.live/o/sites/r/source/p.html';
+      const conns = new Map([
+        [{ auth: 'auth-a' }, new Set()],
+        [{ auth: 'auth-b' }, new Set()],
+      ]);
+      try {
+        await persistence.checkEtag({
+          name, conns, IS_HELIX: mode, daadmin: { fetch }, etag: '"current"',
+        });
+
+        assert.equal(calls.length, 1);
+        const { url, opts } = calls[0];
+        const origin = mode === 'local' ? 'http://localhost:3000' : 'https://api.aem.live';
+        assert.equal(url, mode === 'false' ? name : `${origin}/o/sites/r/source/p.html`);
+        assert.equal(opts.method, 'HEAD');
+        assert.equal(opts.headers.get('Authorization'), mode === 'false' ? 'auth-a,auth-b' : 'auth-a');
+      } finally {
+        globalThis.fetch = savedFetch;
+      }
+    });
+  }
+
+  it('persistence.checkEtag waits for cache invalidation to finish', async () => {
+    const savedFetch = globalThis.fetch;
+    const name = 'https://api.aem.live/o/sites/r/source/etag-change.html';
+    const ydoc = new WSSharedDoc(name);
+    const docs = setYDoc(name, ydoc);
+    ydoc.etag = '"old"';
+    ydoc.conns.set({ auth: 'auth-a', close() {} }, new Set());
+    let flushDone = false;
+    ydoc.flushSave = async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
+      flushDone = true;
+    };
+    globalThis.fetch = async () => new Response(null, { headers: { etag: '"new"' } });
+    try {
+      await persistence.checkEtag(ydoc);
+
+      assert.equal(flushDone, true);
+      assert.equal(docs.get(name), undefined);
+    } finally {
+      globalThis.fetch = savedFetch;
+      docs.delete(name);
+      ydoc.destroy();
+    }
   });
 
   it('persistence.bindState reads a Helix doc through the global fetch', async () => {

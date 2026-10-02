@@ -534,6 +534,7 @@ describe('Worker test suite', () => {
       const req = { headers, url: 'http://localhost:4711/' };
       const resp = await dr.fetch(req);
       assert.equal(500, resp.status);
+      assert.equal('pair creation failed', resp.headers.get('x-error'));
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
     }
@@ -600,6 +601,7 @@ describe('Worker test suite', () => {
     const res = await handleErrors(req, env, f);
     assert.strictEqual(res.status, 500);
     assert.strictEqual(await res.text(), 'Internal Server Error');
+    assert.strictEqual(res.headers.get('x-error'), 'testing');
   });
 
   it('Test HandleError error (enable stack trace)', async () => {
@@ -617,6 +619,7 @@ describe('Worker test suite', () => {
     const res = await handleErrors(req, env, f);
     assert.strictEqual(res.status, 500);
     assert.match(await res.text(), /at handleErrors/m);
+    assert.strictEqual(res.headers.get('x-error'), 'testing');
   });
 
   it('Test handleErrors WebSocket error (disable stack trace)', async () => {
@@ -990,6 +993,25 @@ describe('Worker test suite', () => {
     const res = await handleApiRequest(req, env);
     assert.equal(500, res.status);
     assert.equal('unable to get resource', await res.text());
+    assert.equal('Network error', res.headers.get('x-error'));
+  });
+
+  it('Test handleApiRequest da-admin 500 passthrough sets x-error', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/test.html',
+      headers: new Headers(),
+    };
+
+    const mockFetch = async (url, opts) => new Response(null, {
+      status: 500,
+      headers: { 'x-error': 'da-admin internal error' },
+    });
+    const daadmin = { fetch: mockFetch };
+    const env = { daadmin };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(500, res.status);
+    assert.equal('da-admin internal error', res.headers.get('x-error'));
   });
 
   it('Test handleApiRequest room object fetch exception', async () => {
@@ -1028,6 +1050,7 @@ describe('Worker test suite', () => {
     const res = await handleApiRequest(req, env);
     assert.equal(500, res.status);
     assert.equal('unable to get resource', await res.text());
+    assert.equal('Room fetch error', res.headers.get('x-error'));
   });
 
   it('Test DocRoom newWebSocketPair', () => {

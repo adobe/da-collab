@@ -16,7 +16,7 @@ import * as encoding from 'lib0/encoding.js';
 import * as decoding from 'lib0/decoding.js';
 import {
   aem2doc, doc2aem, json2doc, doc2json,
-} from '@da-tools/da-parser';
+} from '@adobe/da-parser';
 import debounce from './debounce.js';
 
 const wsReadyStateConnecting = 0;
@@ -388,9 +388,11 @@ export const invalidateFromAdmin = async (docName) => {
   console.log('[worker] Invalidate document cache', docName);
   const ydoc = docs.get(docName);
   if (ydoc) {
-    // As we are closing all connections, the ydoc will be removed from the docs map
-    ydoc.conns.forEach((_, c) => closeConn(ydoc, c));
-
+    // Await all closeConn calls so that flushSave + docs.delete complete before
+    // this function returns. Without this, an editor that reconnects during the
+    // flushSave window finds the stale ydoc still in `docs` and reuses it
+    // instead of creating a fresh one that loads the new da-admin content.
+    await Promise.all(Array.from(ydoc.conns.keys()).map((c) => closeConn(ydoc, c)));
     return true;
   } else {
     // eslint-disable-next-line no-console
@@ -454,11 +456,12 @@ export const persistence = {
    */
   put: async (ydoc, content) => {
     const backend = getBackend(ydoc.name, ydoc);
+    const isHelix = isHelixDoc(ydoc.name, ydoc);
     const mimeType = getDocType(ydoc.name) === 'json' ? 'application/json' : 'text/html';
     const { body: putBody, size: bodySize, headers: bodyHeaders } = backend
       .putReqData(content, mimeType);
 
-    const opts = { method: 'PUT', body: putBody };
+    const opts = { method: isHelix ? 'POST' : 'PUT', body: putBody };
     const keys = Array.from(ydoc.conns.keys());
     const allReadOnly = keys.length > 0 && keys.every((con) => con.readOnly === true);
     if (allReadOnly) {
@@ -478,7 +481,12 @@ export const persistence = {
       .map((con) => con.auth);
 
     if (auth.length > 0) {
-      headers.Authorization = [...new Set(auth)].join(',');
+      if (isHelix) {
+        // eslint-disable-next-line prefer-destructuring
+        headers.Authorization = auth[0];
+      } else {
+        headers.Authorization = [...new Set(auth)].join(',');
+      }
     }
 
     opts.headers = new Headers(headers);
@@ -525,7 +533,8 @@ export const persistence = {
       .map((con) => con.auth)
       .filter(Boolean);
     if (auth.length > 0) {
-      opts.headers = new Headers({ Authorization: [...new Set(auth)].join(',') });
+      const authorization = isHelixDoc(ydoc.name, ydoc) ? auth[0] : [...new Set(auth)].join(',');
+      opts.headers = new Headers({ Authorization: authorization });
     }
 
     try {
@@ -538,7 +547,7 @@ export const persistence = {
 
       if (!same) {
         console.log('[docroom] Etag check', ydoc.name, `stored=${ydoc.etag}`, `current=${currentEtag}`, `same=${same}`);
-        invalidateFromAdmin(ydoc.name);
+        await invalidateFromAdmin(ydoc.name);
       }
     } catch (err) {
       logError(err, '[docroom] Etag check failed', ydoc.name, err);
@@ -1109,6 +1118,13 @@ export const handleWebSocketMessage = async (conn, docName, env, storage, messag
     // DO was hibernated; re-establish Yjs state without re-registering event listeners
     await setupWSConnection(conn, docName, env, storage, ctx, true);
     doc = docs.get(docName);
+  } else if (!doc.conns.has(conn)) {
+    // The doc was already cached (another connection got there first), so the setup
+    // path above was skipped. Register conn defensively — without this, a client that
+    // wins the race against ctx.waitUntil(initSession(...)) can have its awareness
+    // update processed before initSession's own doc.conns registration runs, leaving
+    // its clientID attributed to no conn and leaking it forever on close.
+    doc.conns.set(conn, new Set());
   }
   if (doc) {
     await messageListener(conn, doc, new Uint8Array(message));

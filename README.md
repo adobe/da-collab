@@ -23,8 +23,8 @@ in addition to da-collab and da-admin. See here for instructions: https://github
 Then open a browser and access: http://localhost:3000/?da-admin=local&da-collab=local
 
 ### Run on stage
-You can deploy da-collab on Cloudflare stage via `npm deploy:stage` to test it in a real worker environment. Don't
-forget to deploy da-admin on stage as well, as otherwise you might be connecting to an old version.
+You can deploy da-collab on Cloudflare stage by merging into the `stage` branch.
+Don't forget to deploy da-admin on stage as well, as otherwise you might be connecting to an old version.
 
 To access da-collab and da-admin running on stage, open this URL in a browser: http://localhost:3000/?da-admin=stage&da-collab=stage
 
