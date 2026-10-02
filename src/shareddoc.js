@@ -196,8 +196,9 @@ function getDocType(docName) {
  * the ydoc from the local cache map.
  * @param {ydoc} doc - the ydoc to close the connection for.
  * @param {WebSocket} conn - the websocket connection to close.
+ * @param {boolean} skipSave - skip flushing stale or re-entrant saves.
  */
-export const closeConn = async (doc, conn, isReentrant = false) => {
+export const closeConn = async (doc, conn, skipSave = false) => {
   try {
     if (doc.conns.has(conn)) {
       const controlledIds = doc.conns.get(conn);
@@ -212,10 +213,9 @@ export const closeConn = async (doc, conn, isReentrant = false) => {
       }
 
       if (doc.conns.size === 0) {
-        // Skip flushSave when called re-entrantly from persistence.update's closeAll
-        // loop — the in-flight save owns persistence; awaiting savingPromise here
-        // would deadlock because persistence.update hasn't returned yet.
-        if (doc.flushSave && !isReentrant) {
+        // External changes must discard pending edits. Re-entrant closes from
+        // persistence.update must also skip flushing to avoid awaiting their own save.
+        if (doc.flushSave && !skipSave && !doc.discardPendingChanges) {
           // eslint-disable-next-line no-console
           console.log('[docroom] Flushing pending save on last connection close', doc.name);
           await doc.flushSave();
@@ -381,18 +381,31 @@ export const showError = (ydoc, err) => {
  * Invalidation is implemented by closing all client connections to the doc, which will
  * cause it to be reinitialised when accessed.
  * @param {string} docName - The name of the document
+ * @param {boolean} discardPendingChanges - cancel pending saves instead of flushing them.
  * @returns true if the document was found and invalidated, false otherwise.
  */
-export const invalidateFromAdmin = async (docName) => {
+export const invalidateFromAdmin = async (docName, discardPendingChanges = false) => {
   // eslint-disable-next-line no-console
   console.log('[worker] Invalidate document cache', docName);
   const ydoc = docs.get(docName);
   if (ydoc) {
+    if (discardPendingChanges) {
+      ydoc.discardPendingChanges = true;
+      ydoc.cancelSave?.();
+    }
+    // Remove the restore anchor before reconnecting, including when an external
+    // replacement has identical content but must discard stored pending edits.
+    const discardAnchor = discardPendingChanges && ydoc.storage?.delete
+      ? ydoc.storage.delete('lastsync')
+      : undefined;
     // Await all closeConn calls so that flushSave + docs.delete complete before
     // this function returns. Without this, an editor that reconnects during the
     // flushSave window finds the stale ydoc still in `docs` and reuses it
     // instead of creating a fresh one that loads the new da-admin content.
-    await Promise.all(Array.from(ydoc.conns.keys()).map((c) => closeConn(ydoc, c)));
+    await Promise.all([
+      discardAnchor,
+      ...Array.from(ydoc.conns.keys()).map((c) => closeConn(ydoc, c, discardPendingChanges)),
+    ]);
     return true;
   } else {
     // eslint-disable-next-line no-console
@@ -496,9 +509,22 @@ export const persistence = {
       console.warn('[docroom] Writing back an empty document', ydoc.name, bodySize);
     }
 
+    // Track writes even when the backend omits an ETag or returns the same one.
+    // Any HEAD overlapping a write is too old to invalidate this session.
+    // eslint-disable-next-line no-param-reassign
+    ydoc.saveGeneration = (ydoc.saveGeneration ?? 0) + 1;
+    // eslint-disable-next-line no-param-reassign
+    ydoc.pendingPuts = (ydoc.pendingPuts ?? 0) + 1;
+    let response;
+    try {
+      response = await backend.fetch(ydoc.name, opts);
+    } finally {
+      // eslint-disable-next-line no-param-reassign
+      ydoc.pendingPuts -= 1;
+    }
     const {
       ok, status, statusText, body, headers: respHeaders,
-    } = await backend.fetch(ydoc.name, opts);
+    } = response;
 
     if (ok) {
       const etag = respHeaders.get('etag');
@@ -524,33 +550,69 @@ export const persistence = {
 
   /**
    * Issue a HEAD request to the backend and compare the document's current ETag
-   * against the one stored on the ydoc (`ydoc.etag`), logging the result.
+   * against the one stored on the ydoc (`ydoc.etag`). Ignore obsolete responses
+   * and retry failed requests on the next polling interval.
    * @param {WSSharedDoc} ydoc - the ydoc holding the last known ETag.
    */
   checkEtag: async (ydoc) => {
-    const opts = { method: 'HEAD' };
-    const auth = Array.from(ydoc.conns.keys())
-      .map((con) => con.auth)
-      .filter(Boolean);
-    if (auth.length > 0) {
-      const authorization = isHelixDoc(ydoc.name, ydoc) ? auth[0] : [...new Set(auth)].join(',');
-      opts.headers = new Headers({ Authorization: authorization });
+    if (ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0
+      || ydoc.etagCheckInProgress || ydoc.pendingPuts > 0) {
+      return;
     }
-
+    const { etag, saveGeneration } = ydoc;
+    // eslint-disable-next-line no-param-reassign
+    ydoc.etagCheckInProgress = true;
     try {
+      const opts = { method: 'HEAD' };
+      const auth = Array.from(ydoc.conns.keys())
+        .map((con) => con.auth)
+        .filter(Boolean);
+      if (auth.length > 0) {
+        const authorization = isHelixDoc(ydoc.name, ydoc) ? auth[0] : [...new Set(auth)].join(',');
+        opts.headers = new Headers({ Authorization: authorization });
+      }
       const res = await getBackend(ydoc.name, ydoc).fetch(ydoc.name, opts);
-      const currentEtag = res.headers?.get ? res.headers.get('etag') : undefined;
       if (res.body) {
         res.body.cancel();
       }
-      const same = currentEtag === ydoc.etag;
-
-      if (!same) {
-        console.log('[docroom] Etag check', ydoc.name, `stored=${ydoc.etag}`, `current=${currentEtag}`, `same=${same}`);
-        await invalidateFromAdmin(ydoc.name);
+      if (ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0
+        || ydoc.etag !== etag || ydoc.saveGeneration !== saveGeneration) {
+        return;
+      }
+      if (res.status === 404 || res.status === 410) {
+        await invalidateFromAdmin(ydoc.name, true);
+        return;
+      }
+      if (!res.ok) {
+        const msg = `[docroom] Etag HEAD failed: ${res.status} - ${res.statusText}`;
+        if (res.status === 401) {
+          // eslint-disable-next-line no-console
+          console.warn(msg, ydoc.name);
+        } else if (res.status === 403) {
+          // eslint-disable-next-line no-console
+          console.log(msg, ydoc.name);
+        } else {
+          // eslint-disable-next-line no-console
+          console.error(msg, ydoc.name);
+        }
+        return;
+      }
+      const currentEtag = res.headers.get('etag');
+      if (!currentEtag) {
+        // eslint-disable-next-line no-console
+        console.warn('[docroom] Etag HEAD response missing ETag', ydoc.name);
+        return;
+      }
+      if (currentEtag !== etag) {
+        // eslint-disable-next-line no-console
+        console.log('[docroom] Etag check', ydoc.name, `stored=${etag}`, `current=${currentEtag}`, 'same=false');
+        await invalidateFromAdmin(ydoc.name, true);
       }
     } catch (err) {
       logError(err, '[docroom] Etag check failed', ydoc.name, err);
+    } finally {
+      // eslint-disable-next-line no-param-reassign
+      ydoc.etagCheckInProgress = false;
     }
   },
 
@@ -623,7 +685,7 @@ export const persistence = {
     }
     if (closeAll) {
       // We had an unauthorized from da-admin - lets reset the connections.
-      // Pass isReentrant=true so closeConn skips flushSave here; the outer
+      // Pass skipSave=true so closeConn skips flushSave here; the outer
       // save already handled (or failed to handle) persistence.
       for (const con of Array.from(ydoc.conns.keys())) {
         // eslint-disable-next-line no-await-in-loop
@@ -787,7 +849,7 @@ export const persistence = {
       if (saving) {
         return;
       }
-      if (!current || ydoc !== docs.get(docName)) {
+      if (!current || ydoc.discardPendingChanges || ydoc !== docs.get(docName)) {
         return;
       }
       saving = true;
@@ -896,6 +958,7 @@ export class WSSharedDoc extends Y.Doc {
   }
 
   destroy() {
+    this.cancelSave?.();
     clearInterval(this.etagCheckInterval);
     super.destroy();
     this.awareness.destroy();

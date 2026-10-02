@@ -2231,7 +2231,13 @@ describe('Collab Test Suite', () => {
         }
         return map.get(keyOrKeys);
       },
-      async put(d) { Object.entries(d).forEach(([k, v]) => map.set(k, v)); },
+      async put(d, value) {
+        if (typeof d === 'string') {
+          map.set(d, value);
+        } else {
+          Object.entries(d).forEach(([k, v]) => map.set(k, v));
+        }
+      },
       async delete(keys) {
         (Array.isArray(keys) ? keys : [keys]).forEach((k) => map.delete(k));
       },
@@ -3439,10 +3445,12 @@ describe('Collab Test Suite', () => {
         [{ auth: 'auth-a' }, new Set()],
         [{ auth: 'auth-b' }, new Set()],
       ]);
+      const ydoc = {
+        name, conns, IS_HELIX: mode, daadmin: { fetch }, etag: '"current"',
+      };
+      const docs = setYDoc(name, ydoc);
       try {
-        await persistence.checkEtag({
-          name, conns, IS_HELIX: mode, daadmin: { fetch }, etag: '"current"',
-        });
+        await persistence.checkEtag(ydoc);
 
         assert.equal(calls.length, 1);
         const { url, opts } = calls[0];
@@ -3452,35 +3460,384 @@ describe('Collab Test Suite', () => {
         assert.equal(opts.headers.get('Authorization'), mode === 'false' ? 'auth-a,auth-b' : 'auth-a');
       } finally {
         globalThis.fetch = savedFetch;
+        docs.delete(name);
       }
     });
   }
 
-  it('persistence.checkEtag waits for cache invalidation to finish', async () => {
-    const savedFetch = globalThis.fetch;
-    const name = 'https://api.aem.live/o/sites/r/source/etag-change.html';
-    const ydoc = new WSSharedDoc(name);
-    const docs = setYDoc(name, ydoc);
-    ydoc.etag = '"old"';
-    ydoc.conns.set({ auth: 'auth-a', close() {} }, new Set());
-    let flushDone = false;
-    ydoc.flushSave = async () => {
-      await new Promise((resolve) => {
-        setTimeout(resolve, 10);
+  describe('Helix ETag polling', () => {
+    let savedFetch;
+    const opened = [];
+
+    function makeDoc(slug, etag = '"old"') {
+      const name = `https://api.aem.live/o/sites/r/source/${slug}.html`;
+      const ydoc = new WSSharedDoc(name);
+      ydoc.etag = etag;
+      const conn = {
+        auth: 'auth-a',
+        readyState: 1,
+        closed: false,
+        send() {},
+        close() { this.closed = true; },
+      };
+      ydoc.conns.set(conn, new Set());
+      const docs = setYDoc(name, ydoc);
+      opened.push({ ydoc, docs });
+      return { ydoc, conn, docs };
+    }
+
+    function deferred() {
+      let resolve;
+      const promise = new Promise((r) => {
+        resolve = r;
       });
-      flushDone = true;
-    };
-    globalThis.fetch = async () => new Response(null, { headers: { etag: '"new"' } });
-    try {
+      return { promise, resolve };
+    }
+
+    beforeEach(() => {
+      savedFetch = globalThis.fetch;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = savedFetch;
+      opened.splice(0).forEach(({ ydoc, docs }) => {
+        ydoc.conns.clear();
+        ydoc.destroy();
+        if (docs.get(ydoc.name) === ydoc) {
+          docs.delete(ydoc.name);
+        }
+      });
+    });
+
+    it('changed ETags cancel saves and finish closing all connections without flushing', async () => {
+      const { ydoc, conn, docs } = makeDoc('changed');
+      const secondConn = {
+        closed: false,
+        close() { this.closed = true; },
+      };
+      ydoc.conns.set(secondConn, new Set());
+      let cancelled = false;
+      ydoc.cancelSave = () => {
+        cancelled = true;
+      };
+      ydoc.flushSave = async () => assert.fail('External invalidation must not flush stale edits');
+      globalThis.fetch = async () => new Response(null, { headers: { etag: '"new"' } });
+
       await persistence.checkEtag(ydoc);
 
-      assert.equal(flushDone, true);
-      assert.equal(docs.get(name), undefined);
-    } finally {
-      globalThis.fetch = savedFetch;
-      docs.delete(name);
-      ydoc.destroy();
+      assert(cancelled);
+      assert(conn.closed);
+      assert(secondConn.closed);
+      assert.equal(docs.get(ydoc.name), undefined);
+    });
+
+    it('re-entrant awareness cleanup cannot flush edits during external invalidation', async () => {
+      const { ydoc, conn, docs } = makeDoc('reentrant-invalidation');
+      const secondConn = {
+        readyState: 1,
+        closed: false,
+        send() {},
+        close() { this.closed = true; },
+      };
+      ydoc.conns.set(secondConn, new Set());
+      ydoc.awareness.setLocalState({ user: 'test' });
+      ydoc.conns.get(conn).add(ydoc.clientID);
+      secondConn.readyState = 3;
+      let flushed = false;
+      ydoc.flushSave = async () => {
+        flushed = true;
+      };
+      globalThis.fetch = async () => new Response(null, { headers: { etag: '"new"' } });
+
+      await persistence.checkEtag(ydoc);
+
+      assert.equal(flushed, false);
+      assert(conn.closed);
+      assert(secondConn.closed);
+      assert.equal(docs.get(ydoc.name), undefined);
+    });
+
+    for (const [status, sameContent] of [[200, false], [200, true], [404, false], [410, false]]) {
+      it(`HEAD ${status} external invalidation${sameContent ? ' with identical content' : ''} cannot POST pending client edits`, async () => {
+        const { ydoc, conn, docs } = makeDoc(`pending-${status}`);
+        const snapshot = new Y.Doc();
+        aem2doc('<main><div><p>Original document before client edits</p></div></main>', snapshot);
+        const original = doc2aem(snapshot);
+        const storage = makeStorage({
+          doc: ydoc.name,
+          docstore: Y.encodeStateAsUpdate(snapshot),
+          lastsync: original,
+        });
+        snapshot.destroy();
+        let externalContent = null;
+        if (status === 200) {
+          externalContent = sameContent
+            ? original
+            : '<main><div><p>Externally replaced document</p></div></main>';
+        }
+        let backendContent = original;
+        let backendEtag = '"old"';
+        const writes = [];
+        globalThis.fetch = async (_url, opts) => {
+          if (opts.method === 'HEAD') {
+            return new Response(null, {
+              status,
+              headers: status === 200 ? { etag: '"external"' } : {},
+            });
+          }
+          if (opts.method === 'POST') {
+            writes.push(opts.body);
+            backendContent = opts.body;
+            return new Response(null, { headers: { etag: '"saved"' } });
+          }
+          return new Response(backendContent, { headers: { etag: backendEtag } });
+        };
+
+        await persistence.bindState(ydoc.name, ydoc, conn, storage);
+        ydoc.hasClientChanged = true;
+        const fragment = ydoc.getXmlFragment('prosemirror');
+        fragment.delete(0, fragment.length);
+        aem2doc('<main><div><p>Unsaved client edit from the old document</p></div></main>', ydoc);
+        backendContent = externalContent;
+        backendEtag = '"external"';
+
+        await persistence.checkEtag(ydoc);
+        await ydoc.flushSave();
+
+        assert.deepStrictEqual(writes, []);
+        assert.strictEqual(backendContent, externalContent);
+        assert(conn.closed);
+        assert.equal(docs.get(ydoc.name), undefined);
+        assert.equal(await storage.get('lastsync'), undefined);
+
+        if (sameContent) {
+          const { ydoc: reconnected, conn: newConn } = makeDoc(`pending-${status}`, backendEtag);
+          const restoring = [];
+          await persistence.bindState(reconnected.name, reconnected, newConn, storage, {
+            waitUntil: (promise) => restoring.push(promise),
+          });
+          await Promise.all(restoring);
+
+          assert.equal(doc2aem(reconnected), original, 'Stored pending edits must not survive invalidation');
+          assert.equal(await storage.get('lastsync'), original);
+          assert.deepStrictEqual(writes, []);
+        }
+      });
     }
+
+    for (const status of [404, 410]) {
+      it(`HEAD ${status} invalidates even without a stored ETag`, async () => {
+        const { ydoc, conn, docs } = makeDoc(`deleted-${status}`, null);
+        globalThis.fetch = async () => new Response(null, { status });
+
+        await persistence.checkEtag(ydoc);
+
+        assert(conn.closed);
+        assert.equal(docs.get(ydoc.name), undefined);
+      });
+    }
+
+    for (const [status, level] of [[401, 'warn'], [403, 'log'], [429, 'error'], [500, 'error'], [503, 'error']]) {
+      it(`HEAD ${status} is logged without invalidating and permits the next poll`, async () => {
+        const { ydoc, conn, docs } = makeDoc(`failed-${status}`);
+        const logged = [];
+        const savedLog = console[level];
+        console[level] = (...args) => logged.push(args);
+        let calls = 0;
+        globalThis.fetch = async () => {
+          calls += 1;
+          return calls === 1
+            ? new Response(null, { status })
+            : new Response(null, { headers: { etag: ydoc.etag } });
+        };
+        try {
+          await persistence.checkEtag(ydoc);
+          await persistence.checkEtag(ydoc);
+
+          assert.equal(conn.closed, false);
+          assert.strictEqual(docs.get(ydoc.name), ydoc);
+          assert.equal(calls, 2);
+          assert.equal(logged.length, 1);
+          assert(logged[0][0].includes(String(status)));
+        } finally {
+          console[level] = savedLog;
+        }
+      });
+    }
+
+    it('a successful HEAD without an ETag warns without invalidating', async () => {
+      const { ydoc, conn, docs } = makeDoc('missing-etag');
+      const logged = [];
+      const savedWarn = console.warn;
+      console.warn = (...args) => logged.push(args);
+      globalThis.fetch = async () => new Response(null);
+      try {
+        await persistence.checkEtag(ydoc);
+
+        assert.equal(conn.closed, false);
+        assert.strictEqual(docs.get(ydoc.name), ydoc);
+        assert.equal(logged.length, 1);
+        assert(logged[0][0].includes('missing ETag'));
+      } finally {
+        console.warn = savedWarn;
+      }
+    });
+
+    it('a failed fetch is logged and does not block later polls', async () => {
+      const { ydoc, conn } = makeDoc('fetch-error');
+      const logged = [];
+      const savedError = console.error;
+      console.error = (...args) => logged.push(args);
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        if (calls === 1) {
+          throw new Error('Network failure');
+        }
+        return new Response(null, { headers: { etag: ydoc.etag } });
+      };
+      try {
+        await persistence.checkEtag(ydoc);
+        await persistence.checkEtag(ydoc);
+
+        assert.equal(conn.closed, false);
+        assert.equal(calls, 2);
+        assert.equal(logged.length, 1);
+        assert(logged[0][0].includes('Etag check failed'));
+      } finally {
+        console.error = savedError;
+      }
+    });
+
+    it('only one HEAD request can be in flight for a document', async () => {
+      const { ydoc, conn } = makeDoc('single-flight');
+      const head = deferred();
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        return head.promise;
+      };
+
+      const checking = persistence.checkEtag(ydoc);
+      await persistence.checkEtag(ydoc);
+      assert.equal(calls, 1);
+      head.resolve(new Response(null, { headers: { etag: ydoc.etag } }));
+      await checking;
+      await persistence.checkEtag(ydoc);
+
+      assert.equal(calls, 2);
+      assert.equal(conn.closed, false);
+    });
+
+    it('does not poll a closed session', async () => {
+      const { ydoc, conn } = makeDoc('closed');
+      globalThis.fetch = async () => assert.fail('A closed session must not be polled');
+
+      await closeConn(ydoc, conn);
+      await persistence.checkEtag(ydoc);
+    });
+
+    it('ignores an old HEAD after the session was replaced', async () => {
+      const { ydoc: oldDoc, conn: oldConn } = makeDoc('replacement');
+      const head = deferred();
+      globalThis.fetch = async () => head.promise;
+
+      const checking = persistence.checkEtag(oldDoc);
+      await closeConn(oldDoc, oldConn);
+      const { ydoc: newDoc, conn: newConn, docs } = makeDoc('replacement', '"replacement"');
+      head.resolve(new Response(null, { headers: { etag: '"new"' } }));
+      await checking;
+
+      assert.equal(newConn.closed, false);
+      assert.strictEqual(docs.get(newDoc.name), newDoc);
+    });
+
+    it('ignores a HEAD whose ETag baseline changed while it was in flight', async () => {
+      const { ydoc, conn } = makeDoc('changed-baseline');
+      const head = deferred();
+      globalThis.fetch = async () => head.promise;
+
+      const checking = persistence.checkEtag(ydoc);
+      ydoc.etag = '"new-baseline"';
+      head.resolve(new Response(null, { headers: { etag: '"old"' } }));
+      await checking;
+
+      assert.equal(conn.closed, false);
+    });
+
+    for (const [label, responseEtag] of [['changed', '"saved"'], ['same', '"old"'], ['missing', null]]) {
+      it(`ignores a HEAD overlapping a local save with response ETag ${responseEtag}`, async () => {
+        const { ydoc, conn } = makeDoc(`own-save-${label}`);
+        const head = deferred();
+        globalThis.fetch = async (_url, opts) => {
+          if (opts.method === 'HEAD') {
+            return head.promise;
+          }
+          return new Response(null, {
+            headers: responseEtag ? { etag: responseEtag } : {},
+          });
+        };
+
+        const checking = persistence.checkEtag(ydoc);
+        await persistence.put(ydoc, '<main><div><p>New local content with enough padding to avoid empty warnings</p></div></main>');
+        head.resolve(new Response(null, { headers: { etag: '"different"' } }));
+        await checking;
+
+        assert.equal(conn.closed, false);
+        assert.equal(ydoc.pendingPuts, 0);
+      });
+    }
+
+    it('does not poll during an in-flight save and ignores a HEAD preceding that save', async () => {
+      const { ydoc, conn } = makeDoc('in-flight-save');
+      const head = deferred();
+      const post = deferred();
+      let headCalls = 0;
+      globalThis.fetch = async (_url, opts) => {
+        if (opts.method === 'HEAD') {
+          headCalls += 1;
+          return head.promise;
+        }
+        return post.promise;
+      };
+
+      const checking = persistence.checkEtag(ydoc);
+      const saving = persistence.put(ydoc, '<main><div><p>New local content with enough padding to avoid empty warnings</p></div></main>');
+      await persistence.checkEtag(ydoc);
+      assert.equal(headCalls, 1);
+      head.resolve(new Response(null, { headers: { etag: '"different"' } }));
+      await checking;
+      assert.equal(conn.closed, false);
+      post.resolve(new Response(null, { headers: { etag: '"saved"' } }));
+      await saving;
+      await persistence.checkEtag(ydoc);
+
+      assert.equal(headCalls, 2);
+      assert.equal(ydoc.pendingPuts, 0);
+      assert(conn.closed, 'The next poll must still detect an external change');
+    });
+
+    it('a failed local save releases the polling guard', async () => {
+      const { ydoc, conn } = makeDoc('failed-save');
+      let headCalls = 0;
+      globalThis.fetch = async (_url, opts) => {
+        if (opts.method === 'HEAD') {
+          headCalls += 1;
+          return new Response(null, { headers: { etag: ydoc.etag } });
+        }
+        throw new Error('Write failed');
+      };
+
+      await assert.rejects(
+        persistence.put(ydoc, '<main><div><p>New local content with enough padding to avoid empty warnings</p></div></main>'),
+        /Write failed/,
+      );
+      await persistence.checkEtag(ydoc);
+
+      assert.equal(ydoc.pendingPuts, 0);
+      assert.equal(headCalls, 1);
+      assert.equal(conn.closed, false);
+    });
   });
 
   it('persistence.bindState reads a Helix doc through the global fetch', async () => {

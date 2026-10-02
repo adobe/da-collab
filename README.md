@@ -32,6 +32,18 @@ To access da-collab and da-admin running on stage, open this URL in a browser: h
 1. When passing in `?da-collab=local&da-admin=local` each service will set a localStorage value and will not clear until you use `?name-of-service=reset`. It is recommended to use an incognito browser window to ensure you don't forget about this setting.
 
 ## Additional details
+### Helix backend polling
+For Helix-backed documents, collab checks the backend ETag with a HEAD request every five seconds
+while the session is connected. A changed ETag or a 404/410 response closes the session, cancels
+pending local saves, and removes the stored restore anchor. Invalidation therefore does not
+flush stale edits back to the backend, and reconnecting sessions reload the source document.
+Ordinary connection closure and da-admin invalidation retain their existing save-flushing behavior.
+
+Failed HEAD requests and successful responses without an ETag are logged and retried on the next
+interval without disconnecting editors. Only one HEAD request is in flight per document, and
+responses overlapping a local save or belonging to an old session are ignored. The polling timer
+is cleared when the document is destroyed; the idle-but-connected session policy is unchanged.
+
 ### Recommendations
 1. We recommend running `npm run lint` for linting.
 
