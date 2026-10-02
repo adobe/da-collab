@@ -20,7 +20,7 @@ import {
   aem2doc, doc2aem, doc2json, EMPTY_DOC,
 } from '@da-tools/da-parser';
 import {
-  closeConn, getBackend, getYDoc, isHelixDoc,
+  closeConn, getBackend, getYDoc, isHelixDoc, toHelixPath,
   invalidateFromAdmin, isExpectedPlatformEvent, messageFlushRequest,
   messageFlushResponse, messageListener, persistence,
   readState, safePutLastsync, setupWSConnection, setYDoc,
@@ -156,11 +156,13 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, undefined);
       assert(opts.headers === undefined);
       return {
-        ok: true, text: async () => 'content', status: 200, statusText: 'OK',
+        ok: true, text: async () => 'content', status: 200, statusText: 'OK', headers: new Headers({ etag: 'W/"abc"' }),
       };
     };
-    const result = await persistence.get('foo', undefined, daadmin);
+    const ydoc = { daadmin };
+    const result = await persistence.get('foo', undefined, ydoc);
     assert.equal(result, 'content');
+    assert.equal(ydoc.etag, 'W/"abc"', 'ETag from the GET response must be stored on the ydoc');
   });
 
   it('Test persistence get auth', async () => {
@@ -170,10 +172,10 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, undefined);
       assert.equal(opts.headers.get('authorization'), 'auth');
       return {
-        ok: true, text: async () => 'content', status: 200, statusText: 'OK',
+        ok: true, text: async () => 'content', status: 200, statusText: 'OK', headers: new Headers(),
       };
     };
-    const result = await persistence.get('foo', 'auth', daadmin);
+    const result = await persistence.get('foo', 'auth', { daadmin });
     assert.equal(result, 'content');
   });
 
@@ -188,7 +190,7 @@ describe('Collab Test Suite', () => {
       };
     };
     try {
-      await persistence.get('foo', 'auth', daadmin);
+      await persistence.get('foo', 'auth', { daadmin });
       assert.fail('Should have thrown an error');
     } catch (error) {
       assert(error.toString().includes('unable to get resource - status: 404'));
@@ -207,7 +209,7 @@ describe('Collab Test Suite', () => {
       };
     };
     try {
-      await persistence.get('foo', 'auth', daadmin);
+      await persistence.get('foo', 'auth', { daadmin });
       assert.fail('Expected get to throw');
     } catch (error) {
       // expected
@@ -221,7 +223,7 @@ describe('Collab Test Suite', () => {
       fetch: async () => ({ ok: false, status: 401, statusText: 'Unauthorized' }),
     };
     try {
-      await persistence.get('foo', 'auth', daadmin);
+      await persistence.get('foo', 'auth', { daadmin });
       assert.fail('Should have thrown an error');
     } catch (error) {
       assert.equal(401, error.status, 'Error must carry 401 status');
@@ -234,7 +236,7 @@ describe('Collab Test Suite', () => {
       fetch: async () => ({ ok: false, status: 403, statusText: 'Forbidden' }),
     };
     try {
-      await persistence.get('foo', 'auth', daadmin);
+      await persistence.get('foo', 'auth', { daadmin });
       assert.fail('Should have thrown an error');
     } catch (error) {
       assert.equal(403, error.status, 'Error must carry 403 status');
@@ -254,7 +256,7 @@ describe('Collab Test Suite', () => {
     console.log = (...a) => logged.push(['log', ...a]);
     console.error = (...a) => logged.push(['error', ...a]);
     try {
-      await persistence.get('foo', 'auth', daadmin);
+      await persistence.get('foo', 'auth', { daadmin });
       assert.fail('Should have thrown');
     } catch (_) {
       // expected
@@ -287,7 +289,9 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, 'PUT');
       assert.equal(opts.headers.get('If-Match'), '*', 'Should include If-Match: * header');
       assert.equal(await opts.body.get('data').text(), 'test');
-      return { ok: true, status: 200, statusText: 'OK - Stored' };
+      return {
+        ok: true, status: 200, statusText: 'OK - Stored', headers: new Headers(),
+      };
     };
     const conns = new Map();
     // conns.set({}, new Set());
@@ -306,7 +310,9 @@ describe('Collab Test Suite', () => {
       assert.equal('collab', opts.headers.get('X-DA-Initiator'));
       assert.equal('*', opts.headers.get('If-Match'));
       assert.equal(await opts.body.get('data').text(), 'test');
-      return { ok: true, status: 200, statusText: 'OK - Stored too' };
+      return {
+        ok: true, status: 200, statusText: 'OK - Stored too', headers: new Headers(),
+      };
     };
     const conns = new Map();
     conns.set({ auth: 'myauth' }, new Set());
@@ -323,7 +329,9 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, 'PUT');
       assert.equal(opts.headers.get('If-Match'), '*');
       assert.equal(await opts.body.get('data').text(), 'test');
-      return { ok: true, status: 200, statusText: 'OK' };
+      return {
+        ok: true, status: 200, statusText: 'OK', headers: new Headers(),
+      };
     };
     const result = await persistence.put({ name: 'foo', conns: new Map(), daadmin }, 'test');
     assert(result.ok);
@@ -338,7 +346,9 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
       assert.equal(opts.headers.get('If-Match'), '*');
       assert.equal(await opts.body.get('data').text(), 'test');
-      return { ok: true, status: 200, statusText: 'okidoki' };
+      return {
+        ok: true, status: 200, statusText: 'okidoki', headers: new Headers(),
+      };
     };
     const result = await persistence.put({
       name: 'foo',
@@ -409,7 +419,9 @@ describe('Collab Test Suite', () => {
       assert.equal(ydoc, mockYDoc);
       assert.equal(content, 'Svr content update');
       called = true;
-      return { ok: true, status: 201, statusText: 'Created' };
+      return {
+        ok: true, status: 201, statusText: 'Created', headers: new Headers(),
+      };
     };
 
     let calledCloseCon = false;
@@ -578,7 +590,7 @@ describe('Collab Test Suite', () => {
     let putCalled = false;
     pss.persistence.put = async () => {
       putCalled = true;
-      return { ok: true, status: 200 };
+      return { ok: true, status: 200, headers: new Headers() };
     };
 
     const real = '<body><main><div><p>real customer content</p></div></main></body>';
@@ -607,7 +619,7 @@ describe('Collab Test Suite', () => {
     const putCalls = [];
     pss.persistence.put = async (yd, c) => {
       putCalls.push(c);
-      return { ok: true, status: 200 };
+      return { ok: true, status: 200, headers: new Headers() };
     };
 
     const result = await pss.persistence.update(mockYDoc, '<main><div><p>old</p></div></main>', 'test.html');
@@ -826,7 +838,7 @@ describe('Collab Test Suite', () => {
     const putCalls = [];
     pss.persistence.put = async () => {
       putCalls.push('put');
-      return { ok: true };
+      return { ok: true, headers: new Headers() };
     };
 
     // Simulate another update after 412
@@ -1024,7 +1036,7 @@ describe('Collab Test Suite', () => {
     pss.persistence.get = async () => unchangedContent;
     pss.persistence.put = async () => {
       putCalls.push('put');
-      return { ok: true, status: 200 };
+      return { ok: true, status: 200, headers: new Headers() };
     };
 
     const conn = { auth: undefined, close() {} };
@@ -1065,7 +1077,7 @@ describe('Collab Test Suite', () => {
     pss.persistence.get = async () => '<main><div><p>initial content</p></div></main>';
     pss.persistence.put = async (doc, content) => {
       putCalls.push(content);
-      return { ok: true, status: 200 };
+      return { ok: true, status: 200, headers: new Headers() };
     };
 
     const conn = { auth: undefined, close() {} };
@@ -1142,7 +1154,7 @@ describe('Collab Test Suite', () => {
       await new Promise((res) => {
         resolvePut = res;
       });
-      return { ok: true, status: 200 };
+      return { ok: true, status: 200, headers: new Headers() };
     };
 
     const conn = { auth: undefined, close() {} };
@@ -1231,7 +1243,7 @@ describe('Collab Test Suite', () => {
 
     const mockStorage = { list: () => new Map(), get: async () => undefined };
 
-    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    pss.persistence.get = async (nm, au, yd) => `Get: ${nm}-${au}-${yd.daadmin}`;
     const updated = new Map();
     pss.persistence.update = async (d, v) => updated.set(d, v);
 
@@ -1268,7 +1280,7 @@ describe('Collab Test Suite', () => {
 
     const mockStorage = { list: () => new Map(), get: async () => undefined };
 
-    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    pss.persistence.get = async (nm, au, yd) => `Get: ${nm}-${au}-${yd.daadmin}`;
     const updated = new Map();
     pss.persistence.update = async (d, v) => updated.set(d, v);
 
@@ -1304,7 +1316,7 @@ describe('Collab Test Suite', () => {
     pss.setYDoc(docName, testYDoc);
 
     const mockStorage = { list: () => new Map(), get: async () => undefined };
-    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    pss.persistence.get = async (nm, au, yd) => `Get: ${nm}-${au}-${yd.daadmin}`;
     pss.persistence.update = async () => {};
 
     await pss.persistence.bindState(docName, testYDoc, mockConn, mockStorage);
@@ -1342,7 +1354,7 @@ describe('Collab Test Suite', () => {
     pss.setYDoc(docName, testYDoc);
 
     const mockStorage = { list: () => new Map(), get: async () => undefined };
-    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    pss.persistence.get = async (nm, au, yd) => `Get: ${nm}-${au}-${yd.daadmin}`;
     pss.persistence.update = async () => {};
 
     await pss.persistence.bindState(docName, testYDoc, mockConn, mockStorage);
@@ -1377,7 +1389,7 @@ describe('Collab Test Suite', () => {
     pss.setYDoc(docName, testYDoc);
 
     const mockStorage = { list: () => new Map(), get: async () => undefined };
-    pss.persistence.get = async (nm, au, ad) => `Get: ${nm}-${au}-${ad}`;
+    pss.persistence.get = async (nm, au, yd) => `Get: ${nm}-${au}-${yd.daadmin}`;
     pss.persistence.update = async () => {};
 
     const logged = [];
@@ -1568,7 +1580,7 @@ describe('Collab Test Suite', () => {
       pss.persistence.put = async (yd, c) => {
         if (yd === ydoc && c.includes('newcontent')) {
           putCalls.push(c);
-          return { ok: true, status: 200 };
+          return { ok: true, status: 200, headers: new Headers() };
         }
       };
 
@@ -1633,7 +1645,7 @@ describe('Collab Test Suite', () => {
           savedSetTimeout(resolve, 30);
         });
         concurrentPuts -= 1;
-        return { ok: true, status: 200 };
+        return { ok: true, status: 200, headers: new Headers() };
       };
 
       await pss.persistence.bindState(docName, ydoc, {}, storage);
@@ -2990,7 +3002,9 @@ describe('Collab Test Suite', () => {
         await new Promise((resolve) => {
           savedSetTimeout(resolve, 50);
         });
-        return { ok: true, status: 200, statusText: 'OK' };
+        return {
+          ok: true, status: 200, statusText: 'OK', headers: new Headers(),
+        };
       };
 
       await pss.persistence.bindState(docName, ydoc, {}, storage);
@@ -3022,7 +3036,7 @@ describe('Collab Test Suite', () => {
         return 'da-resp';
       },
     };
-    const backend = getBackend('https://admin.da.live/x.html', daadmin);
+    const backend = getBackend('https://admin.da.live/x.html', { daadmin });
     const resp = await backend.fetch('https://admin.da.live/x.html', { method: 'HEAD' });
 
     assert.equal('da-resp', resp);
@@ -3041,12 +3055,84 @@ describe('Collab Test Suite', () => {
       const daadmin = {
         fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
       };
-      const backend = getBackend('https://api.aem.live/o/r/p.html', daadmin);
+      const backend = getBackend('https://api.aem.live/o/r/p.html', { daadmin });
       const resp = await backend.fetch('https://api.aem.live/o/r/p.html', { method: 'HEAD' });
 
       assert.equal('helix-resp', resp);
       assert.equal(1, calls.length);
       assert.equal('https://api.aem.live/o/r/p.html', calls[0].url);
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
+  it('toHelixPath converts da-admin source paths and leaves Helix paths untouched', () => {
+    // da-admin /source/{org}/{site}/{rest} -> /{org}/sites/{site}/source/{rest}
+    assert.equal(toHelixPath('/source/o/r/p.html'), '/o/sites/r/source/p.html');
+    assert.equal(toHelixPath('/source/o/r/a/b/c.html'), '/o/sites/r/source/a/b/c.html');
+    // Already in Helix format -> unchanged.
+    assert.equal(toHelixPath('/o/sites/r/source/p.html'), '/o/sites/r/source/p.html');
+    // Not a da-admin source path -> unchanged.
+    assert.equal(toHelixPath('/something/else.html'), '/something/else.html');
+  });
+
+  it('getBackend rewrites the URL to api.aem.live when IS_HELIX=true', async () => {
+    const savedFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return 'helix-resp';
+    };
+    try {
+      const backend = getBackend('https://admin.da.live/source/o/r/p.html', { IS_HELIX: 'true' });
+      const resp = await backend.fetch('https://admin.da.live/source/o/r/p.html?x=1', { method: 'HEAD' });
+
+      assert.equal('helix-resp', resp);
+      assert.equal(1, calls.length);
+      assert.equal('https://api.aem.live/o/sites/r/source/p.html?x=1', calls[0].url, 'host swapped to api.aem.live and path converted to Helix format, query preserved');
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
+  it('getBackend rewrites the URL to localhost:3000 when IS_HELIX=local', async () => {
+    const savedFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return 'local-resp';
+    };
+    try {
+      const backend = getBackend('https://admin.da.live/source/o/r/p.html', { IS_HELIX: 'local' });
+      const resp = await backend.fetch('https://admin.da.live/source/o/r/p.html?x=1', { method: 'HEAD' });
+
+      assert.equal('local-resp', resp);
+      assert.equal(1, calls.length);
+      assert.equal('http://localhost:3000/o/sites/r/source/p.html?x=1', calls[0].url, 'host swapped to localhost:3000 and path converted to Helix format, query preserved');
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
+  it('getBackend with IS_HELIX=false routes to da-admin without rewriting the URL', async () => {
+    const calls = [];
+    const daadmin = {
+      fetch: async (url, opts) => {
+        calls.push({ url, opts });
+        return 'da-resp';
+      },
+    };
+    const savedFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      assert.fail('global fetch must not be used when IS_HELIX=false');
+    };
+    try {
+      const backend = getBackend('https://api.aem.live/o/r/p.html', { IS_HELIX: 'false', daadmin });
+      const resp = await backend.fetch('https://api.aem.live/o/r/p.html?x=1', { method: 'HEAD' });
+
+      assert.equal('da-resp', resp);
+      assert.equal(1, calls.length);
+      assert.equal('https://api.aem.live/o/r/p.html?x=1', calls[0].url, 'URL left untouched for da-admin');
     } finally {
       globalThis.fetch = savedFetch;
     }
@@ -3076,13 +3162,25 @@ describe('Collab Test Suite', () => {
     assert.equal(isHelixDoc('http://localhost:8080/x.html'), false);
   });
 
+  it('isHelixDoc IS_HELIX env overrides the URL heuristic', () => {
+    // IS_HELIX=true forces every doc onto Helix, even a da-admin URL.
+    assert.equal(isHelixDoc('https://admin.da.live/x.html', { IS_HELIX: 'true' }), true);
+    // IS_HELIX=local also routes through Helix (rewritten to localhost downstream).
+    assert.equal(isHelixDoc('https://admin.da.live/x.html', { IS_HELIX: 'local' }), true);
+    // IS_HELIX=false forces every doc onto da-admin, even an api.aem.live URL.
+    assert.equal(isHelixDoc('https://api.aem.live/o/r/p.html', { IS_HELIX: 'false' }), false);
+    // An env without IS_HELIX falls back to the URL heuristic.
+    assert.equal(isHelixDoc('https://api.aem.live/o/r/p.html', {}), true);
+    assert.equal(isHelixDoc('https://admin.da.live/x.html', {}), false);
+  });
+
   it('persistence.get routes to the global fetch for an api.aem.live doc', async () => {
     const savedFetch = globalThis.fetch;
     const calls = [];
     globalThis.fetch = async (url, opts) => {
       calls.push({ url, opts });
       return {
-        ok: true, text: async () => 'helix content', status: 200, statusText: 'OK',
+        ok: true, text: async () => 'helix content', status: 200, statusText: 'OK', headers: new Headers(),
       };
     };
     try {
@@ -3092,7 +3190,7 @@ describe('Collab Test Suite', () => {
       const result = await persistence.get(
         'https://api.aem.live/owner/repo/page.html',
         'Bearer t',
-        daadmin,
+        { daadmin },
       );
       assert.equal(result, 'helix content');
       assert.equal(1, calls.length);
@@ -3108,7 +3206,9 @@ describe('Collab Test Suite', () => {
     const calls = [];
     globalThis.fetch = async (url, opts) => {
       calls.push({ url, opts });
-      return { ok: true, status: 200, statusText: 'OK' };
+      return {
+        ok: true, status: 200, statusText: 'OK', headers: new Headers(),
+      };
     };
     try {
       const conns = new Map();
@@ -3143,7 +3243,9 @@ describe('Collab Test Suite', () => {
     let captured;
     globalThis.fetch = async (url, opts) => {
       captured = opts;
-      return { ok: true, status: 200, statusText: 'OK' };
+      return {
+        ok: true, status: 200, statusText: 'OK', headers: new Headers(),
+      };
     };
     try {
       const conns = new Map();
@@ -3167,7 +3269,9 @@ describe('Collab Test Suite', () => {
     const daadmin = {
       fetch: async (url, opts) => {
         calls.push({ url, opts });
-        return { ok: true, status: 200, statusText: 'OK' };
+        return {
+          ok: true, status: 200, statusText: 'OK', headers: new Headers(),
+        };
       },
     };
     const conns = new Map();
@@ -3197,7 +3301,7 @@ describe('Collab Test Suite', () => {
     globalThis.fetch = async (url, opts) => {
       calls.push({ url, opts });
       return {
-        ok: true, text: async () => 'helix content', status: 200, statusText: 'OK',
+        ok: true, text: async () => 'helix content', status: 200, statusText: 'OK', headers: new Headers(),
       };
     };
     persistence.update = async () => {};

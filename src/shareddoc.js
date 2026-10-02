@@ -23,10 +23,47 @@ const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
 
 /**
- * True for documents that live in Helix (api.aem.live) rather than da-admin.
+ * True for documents that live in Helix (reached over the public internet)
+ * rather than da-admin.
+ *
+ * The `IS_HELIX` environment variable, when set, overrides the URL heuristic:
+ *   'false' - always da-admin, regardless of the document hostname
+ *   'true'  - always Helix, rewritten to https://api.aem.live
+ *   'local' - always Helix, rewritten to http://localhost:3000
+ * When unset, the api.aem.live URL prefix decides.
  * @param {string} docName - the document URL
+ * @param {object} [env] - the worker environment (may carry `IS_HELIX`)
  */
-export const isHelixDoc = (docName) => docName.startsWith('https://api.aem.live/');
+export const isHelixDoc = (docName, env) => {
+  if (env?.IS_HELIX !== undefined) {
+    const mode = String(env.IS_HELIX);
+    return mode === 'true' || mode === 'local';
+  }
+  return docName.startsWith('https://api.aem.live/');
+};
+
+/**
+ * Convert a da-admin source path to the Helix path format.
+ *
+ * da-admin paths look like `/source/{org}/{site}/{rest}`; the equivalent Helix
+ * path is `/{org}/sites/{site}/source/{rest}`. Paths already in Helix format
+ * (`/{org}/sites/{site}/source/...`) and paths that don't match the da-admin
+ * source shape are returned unchanged.
+ * @param {string} pathname - the URL pathname (leading slash included)
+ */
+export const toHelixPath = (pathname) => {
+  const segs = pathname.split('/').filter(Boolean);
+  // Already Helix format: {org}/sites/{site}/source/...
+  if (segs[1] === 'sites' && segs[3] === 'source') {
+    return pathname;
+  }
+  // da-admin format: source/{org}/{site}/{rest}
+  if (segs[0] === 'source' && segs.length >= 3) {
+    const [, org, site, ...rest] = segs;
+    return `/${org}/sites/${site}/source/${rest.join('/')}`;
+  }
+  return pathname;
+};
 
 /**
  * Resolve the content backend for a document.
@@ -36,18 +73,39 @@ export const isHelixDoc = (docName) => docName.startsWith('https://api.aem.live/
  * through the da-admin service binding.
  *
  * @param {string} docName - the document URL
- * @param {Fetcher} daadmin - the da-admin service binding
+ * @param {object} env - the worker environment; provides the da-admin service
+ *   binding (`env.daadmin`) and the optional `IS_HELIX` backend override.
  * @returns {{
  *   fetch: (url: string, opts?: object) => Promise<Response>,
  *   putReqData: (content: string, mimeType: string) => { body: *, size: number, headers: object },
  * }}
  */
-export function getBackend(docName, daadmin) {
-  const isHelix = isHelixDoc(docName);
+export function getBackend(docName, env) {
+  const isHelix = isHelixDoc(docName, env);
+  // A forced IS_HELIX mode rewrites every request to a fixed origin (preserving
+  // the path): 'true' -> api.aem.live, 'local' -> localhost:3000. 'false' and the
+  // unset heuristic leave the URL untouched.
+  const mode = env?.IS_HELIX !== undefined ? String(env.IS_HELIX) : undefined;
+  let substituteOrigin;
+  if (mode === 'true') {
+    substituteOrigin = 'https://api.aem.live';
+  } else if (mode === 'local') {
+    substituteOrigin = 'http://localhost:3000';
+  }
+  const target = (url) => {
+    if (!substituteOrigin) {
+      return url;
+    }
+    // Forced Helix modes also normalise the path to the Helix source format.
+    const u = new URL(url);
+    const t = `${substituteOrigin}${toHelixPath(u.pathname)}${u.search}`;
+    console.log('*** Calling', t);
+    return t;
+  };
 
   return {
     // A fetch that already knows where to go.
-    fetch: (url, opts) => (isHelix ? globalThis : daadmin).fetch(url, opts),
+    fetch: (url, opts) => (isHelix ? globalThis : env.daadmin).fetch(target(url), opts),
 
     // Build the body (and any body-specific headers) for a content PUT.
     // Helix takes the raw content with an explicit Content-Type; da-admin takes
@@ -317,6 +375,30 @@ export const showError = (ydoc, err) => {
   }
 };
 
+/**
+ * Invalidate the worker storage for the document, which will ensure that when accessed
+ * the worker will fetch the latest version of the document from the da-admin.
+ * Invalidation is implemented by closing all client connections to the doc, which will
+ * cause it to be reinitialised when accessed.
+ * @param {string} docName - The name of the document
+ * @returns true if the document was found and invalidated, false otherwise.
+ */
+export const invalidateFromAdmin = async (docName) => {
+  // eslint-disable-next-line no-console
+  console.log('[worker] Invalidate document cache', docName);
+  const ydoc = docs.get(docName);
+  if (ydoc) {
+    // As we are closing all connections, the ydoc will be removed from the docs map
+    ydoc.conns.forEach((_, c) => closeConn(ydoc, c));
+
+    return true;
+  } else {
+    // eslint-disable-next-line no-console
+    console.log('[worker] Document not found', docName);
+  }
+  return false;
+};
+
 export const persistence = {
   closeConn,
 
@@ -324,19 +406,23 @@ export const persistence = {
    * Get the document from da-admin.
    * @param {string} docName - The document name
    * @param {string} auth - The authorization header
-   * @param {object} daadmin - The da-admin worker service binding
+   * @param {WSSharedDoc} ydoc - the ydoc; provides the da-admin service binding
+   *   (`ydoc.daadmin`) and receives the document's ETag (`ydoc.etag`) read from
+   *   the response for later HEAD-based change detection.
    * @returns {Promise<string>} - The content of the document
    * @throws {Error} - If the document cannot be retrieved (including 404)
    */
-  get: async (docName, auth, daadmin) => {
+  get: async (docName, auth, ydoc) => {
     const docType = getDocType(docName);
     const initalOpts = {};
     if (auth) {
       initalOpts.headers = new Headers({ Authorization: auth });
     }
 
-    const initialReq = await getBackend(docName, daadmin).fetch(docName, initalOpts);
+    const initialReq = await getBackend(docName, ydoc).fetch(docName, initalOpts);
     if (initialReq.ok) {
+      // eslint-disable-next-line no-param-reassign
+      ydoc.etag = initialReq.headers.get('etag');
       return docType === 'json' ? initialReq.json() : initialReq.text();
     } else {
       const msg = `[docroom] Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`;
@@ -367,7 +453,7 @@ export const persistence = {
    * @returns {Promise<object>} The response from da-admin.
    */
   put: async (ydoc, content) => {
-    const backend = getBackend(ydoc.name, ydoc.daadmin);
+    const backend = getBackend(ydoc.name, ydoc);
     const mimeType = getDocType(ydoc.name) === 'json' ? 'application/json' : 'text/html';
     const { body: putBody, size: bodySize, headers: bodyHeaders } = backend
       .putReqData(content, mimeType);
@@ -403,8 +489,18 @@ export const persistence = {
     }
 
     const {
-      ok, status, statusText, body,
+      ok, status, statusText, body, headers: respHeaders,
     } = await backend.fetch(ydoc.name, opts);
+
+    if (ok) {
+      const etag = respHeaders.get('etag');
+      if (etag) {
+        // Keep the current document ETag so the periodic HEAD check can detect
+        // out-of-band changes to da-admin.
+        // eslint-disable-next-line no-param-reassign
+        ydoc.etag = etag;
+      }
+    }
 
     if (body) {
       // tell CloudFlare to consider the request as completed
@@ -416,6 +512,37 @@ export const persistence = {
       status,
       statusText,
     };
+  },
+
+  /**
+   * Issue a HEAD request to the backend and compare the document's current ETag
+   * against the one stored on the ydoc (`ydoc.etag`), logging the result.
+   * @param {WSSharedDoc} ydoc - the ydoc holding the last known ETag.
+   */
+  checkEtag: async (ydoc) => {
+    const opts = { method: 'HEAD' };
+    const auth = Array.from(ydoc.conns.keys())
+      .map((con) => con.auth)
+      .filter(Boolean);
+    if (auth.length > 0) {
+      opts.headers = new Headers({ Authorization: [...new Set(auth)].join(',') });
+    }
+
+    try {
+      const res = await getBackend(ydoc.name, ydoc).fetch(ydoc.name, opts);
+      const currentEtag = res.headers?.get ? res.headers.get('etag') : undefined;
+      if (res.body) {
+        res.body.cancel();
+      }
+      const same = currentEtag === ydoc.etag;
+
+      if (!same) {
+        console.log('[docroom] Etag check', ydoc.name, `stored=${ydoc.etag}`, `current=${currentEtag}`, `same=${same}`);
+        invalidateFromAdmin(ydoc.name);
+      }
+    } catch (err) {
+      logError(err, '[docroom] Etag check failed', ydoc.name, err);
+    }
   },
 
   /**
@@ -517,7 +644,7 @@ export const persistence = {
 
     // Get document from da-admin (throws on error including 404)
     const timingBeforeDaAdminGet = Date.now();
-    current = await persistence.get(docName, conn.auth, ydoc.daadmin);
+    current = await persistence.get(docName, conn.auth, ydoc);
     const timingDaAdminGetDuration = Date.now() - timingBeforeDaAdminGet;
 
     // Read the stored state from internal worker storage (errors are non-fatal)
@@ -685,6 +812,18 @@ export const persistence = {
       debouncedSave.cancel();
     };
 
+    // Periodically (every 5s) verify the document's ETag still matches the one we
+    // last saw on get/put, logging the result. Cleared in WSSharedDoc.destroy.
+    // Only Helix-backed documents carry an ETag, so skip scheduling otherwise.
+    if (!ydoc.etagCheckInterval && isHelixDoc(docName, ydoc)) {
+      // eslint-disable-next-line no-param-reassign
+      ydoc.etagCheckInterval = setInterval(() => {
+        if (ydoc === docs.get(docName)) {
+          persistence.checkEtag(ydoc);
+        }
+      }, 5000);
+    }
+
     const timingMap = new Map();
     timingMap.set('timingReadStateDuration', timingReadStateDuration);
     timingMap.set('timingDaAdminGetDuration', timingDaAdminGetDuration);
@@ -748,6 +887,7 @@ export class WSSharedDoc extends Y.Doc {
   }
 
   destroy() {
+    clearInterval(this.etagCheckInterval);
     super.destroy();
     this.awareness.destroy();
   }
@@ -783,6 +923,10 @@ export const getYDoc = async (docname, conn, env, storage, timingData, ctx, gc =
 
   // Store the service binding to da-admin which we receive through the environment in the doc
   doc.daadmin = env.daadmin;
+  // Carry the IS_HELIX backend override too, so backend resolution can honour it
+  // without holding a reference to the whole environment. Together with daadmin,
+  // this makes the ydoc usable directly as the `env` argument to getBackend.
+  doc.IS_HELIX = env.IS_HELIX;
   if (!doc.promise) {
     // The doc is not yet bound to the persistence layer, do so now. The promise will be resolved
     // when bound.
@@ -888,30 +1032,6 @@ export const messageListener = async (conn, doc, message) => {
       showError(doc, err);
     }
   }
-};
-
-/**
- * Invalidate the worker storage for the document, which will ensure that when accessed
- * the worker will fetch the latest version of the document from the da-admin.
- * Invalidation is implemented by closing all client connections to the doc, which will
- * cause it to be reinitialised when accessed.
- * @param {string} docName - The name of the document
- * @returns true if the document was found and invalidated, false otherwise.
- */
-export const invalidateFromAdmin = async (docName) => {
-  // eslint-disable-next-line no-console
-  console.log('[worker] Invalidate from Admin received', docName);
-  const ydoc = docs.get(docName);
-  if (ydoc) {
-    // As we are closing all connections, the ydoc will be removed from the docs map
-    ydoc.conns.forEach((_, c) => closeConn(ydoc, c));
-
-    return true;
-  } else {
-    // eslint-disable-next-line no-console
-    console.log('[worker] Document not found', docName);
-  }
-  return false;
 };
 
 /**
