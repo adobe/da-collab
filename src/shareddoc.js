@@ -555,15 +555,16 @@ export const persistence = {
    * @param {WSSharedDoc} ydoc - the ydoc holding the last known ETag.
    */
   checkEtag: async (ydoc) => {
-    if (ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0
-      || ydoc.etagCheckInProgress || ydoc.pendingPuts > 0) {
+    if (ydoc.isDestroyed || ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0
+      || ydoc.etagCheckAbortController || ydoc.pendingPuts > 0) {
       return;
     }
     const { etag, saveGeneration } = ydoc;
+    const controller = new AbortController();
     // eslint-disable-next-line no-param-reassign
-    ydoc.etagCheckInProgress = true;
+    ydoc.etagCheckAbortController = controller;
     try {
-      const opts = { method: 'HEAD' };
+      const opts = { method: 'HEAD', signal: controller.signal };
       const auth = Array.from(ydoc.conns.keys())
         .map((con) => con.auth)
         .filter(Boolean);
@@ -575,7 +576,8 @@ export const persistence = {
       if (res.body) {
         res.body.cancel();
       }
-      if (ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0
+      if (ydoc.isDestroyed || controller.signal.aborted
+        || ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0
         || ydoc.etag !== etag || ydoc.saveGeneration !== saveGeneration) {
         return;
       }
@@ -609,10 +611,12 @@ export const persistence = {
         await invalidateFromAdmin(ydoc.name, true);
       }
     } catch (err) {
-      logError(err, '[docroom] Etag check failed', ydoc.name, err);
+      if (!controller.signal.aborted || err !== controller.signal.reason) {
+        logError(err, '[docroom] Etag check failed', ydoc.name, err);
+      }
     } finally {
       // eslint-disable-next-line no-param-reassign
-      ydoc.etagCheckInProgress = false;
+      delete ydoc.etagCheckAbortController;
     }
   },
 
@@ -886,7 +890,8 @@ export const persistence = {
     // Periodically (every 5s) verify the document's ETag still matches the one we
     // last saw on get/put, logging the result. Cleared in WSSharedDoc.destroy.
     // Only Helix-backed documents carry an ETag, so skip scheduling otherwise.
-    if (!ydoc.etagCheckInterval && isHelixDoc(docName, ydoc)) {
+    if (!ydoc.etagCheckInterval && isHelixDoc(docName, ydoc)
+      && !ydoc.isDestroyed && ydoc === docs.get(docName) && ydoc.conns.size > 0) {
       // eslint-disable-next-line no-param-reassign
       ydoc.etagCheckInterval = setInterval(() => {
         if (ydoc === docs.get(docName)) {
@@ -960,6 +965,7 @@ export class WSSharedDoc extends Y.Doc {
   destroy() {
     this.cancelSave?.();
     clearInterval(this.etagCheckInterval);
+    this.etagCheckAbortController?.abort();
     super.destroy();
     this.awareness.destroy();
   }

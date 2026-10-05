@@ -41,8 +41,10 @@ Ordinary connection closure and da-admin invalidation retain their existing save
 
 Failed HEAD requests and successful responses without an ETag are logged and retried on the next
 interval without disconnecting editors. Only one HEAD request is in flight per document, and
-responses overlapping a local save or belonging to an old session are ignored. The polling timer
-is cleared when the document is destroyed; the idle-but-connected session policy is unchanged.
+responses overlapping a local save or belonging to an old session are ignored. Polling starts
+only if initialization finishes for the current, connected document. Destroying the document
+clears its polling timer and aborts any pending HEAD request; late initialization cannot restart
+polling after disconnect. The idle-but-connected session policy is unchanged.
 
 ### Recommendations
 1. We recommend running `npm run lint` for linting.

@@ -3488,10 +3488,12 @@ describe('Collab Test Suite', () => {
 
     function deferred() {
       let resolve;
-      const promise = new Promise((r) => {
+      let reject;
+      const promise = new Promise((r, j) => {
         resolve = r;
+        reject = j;
       });
-      return { promise, resolve };
+      return { promise, resolve, reject };
     }
 
     beforeEach(() => {
@@ -3737,6 +3739,231 @@ describe('Collab Test Suite', () => {
       await persistence.checkEtag(ydoc);
     });
 
+    it('does not poll a destroyed document still present in the cache', async () => {
+      const { ydoc } = makeDoc('destroyed');
+      globalThis.fetch = async () => assert.fail('A destroyed document must not be polled');
+
+      ydoc.destroy();
+      await persistence.checkEtag(ydoc);
+    });
+
+    for (const action of ['close', 'destroy']) {
+      it(`${action} aborts a pending HEAD without logging an expected cancellation`, async () => {
+        const { ydoc, conn } = makeDoc(`abort-${action}`);
+        const head = deferred();
+        const logged = [];
+        const savedError = console.error;
+        console.error = (...args) => logged.push(args);
+        let signal;
+        globalThis.fetch = async (_url, opts) => {
+          signal = opts.signal;
+          signal?.addEventListener('abort', () => head.reject(signal.reason), { once: true });
+          return head.promise;
+        };
+        const checking = persistence.checkEtag(ydoc);
+        try {
+          assert(signal instanceof AbortSignal, 'The backend HEAD must receive an AbortSignal');
+          if (action === 'close') {
+            await closeConn(ydoc, conn);
+          } else {
+            ydoc.destroy();
+          }
+          assert(signal.aborted, 'Destruction must cancel the outstanding backend request');
+          await checking;
+
+          assert.equal(ydoc.etagCheckAbortController, undefined);
+          assert.deepStrictEqual(logged, []);
+        } finally {
+          head.resolve(new Response(null, { headers: { etag: ydoc.etag } }));
+          await checking;
+          console.error = savedError;
+        }
+      });
+    }
+
+    it('keeps a pending HEAD until the last collaborator disconnects', async () => {
+      const { ydoc, conn } = makeDoc('abort-last-collaborator');
+      const secondConn = {
+        readyState: 1,
+        send() {},
+        close() {},
+      };
+      ydoc.conns.set(secondConn, new Set());
+      const head = deferred();
+      let signal;
+      globalThis.fetch = async (_url, opts) => {
+        signal = opts.signal;
+        signal?.addEventListener('abort', () => head.reject(signal.reason), { once: true });
+        return head.promise;
+      };
+      const checking = persistence.checkEtag(ydoc);
+      try {
+        assert(signal instanceof AbortSignal);
+        await closeConn(ydoc, conn);
+        assert.equal(signal.aborted, false);
+        assert.strictEqual(ydoc.etagCheckAbortController.signal, signal);
+
+        await closeConn(ydoc, secondConn);
+        assert(signal.aborted);
+        await checking;
+        assert.equal(ydoc.etagCheckAbortController, undefined);
+      } finally {
+        head.resolve(new Response(null, { headers: { etag: ydoc.etag } }));
+        await checking;
+      }
+    });
+
+    it('releases a completed HEAD controller without aborting it on later destruction', async () => {
+      const { ydoc, conn } = makeDoc('completed-head');
+      let signal;
+      globalThis.fetch = async (_url, opts) => {
+        signal = opts.signal;
+        return new Response(null, { headers: { etag: ydoc.etag } });
+      };
+
+      await persistence.checkEtag(ydoc);
+      assert(signal instanceof AbortSignal);
+      assert.equal(ydoc.etagCheckAbortController, undefined);
+      await closeConn(ydoc, conn);
+      assert.equal(signal.aborted, false);
+    });
+
+    it('still logs an unrelated HEAD error after the session closes', async () => {
+      const { ydoc, conn } = makeDoc('error-after-close');
+      const head = deferred();
+      const logged = [];
+      const savedError = console.error;
+      console.error = (...args) => logged.push(args);
+      const error = new Error('Transport failure');
+      globalThis.fetch = async () => head.promise;
+      const checking = persistence.checkEtag(ydoc);
+      try {
+        await closeConn(ydoc, conn);
+        head.reject(error);
+        await checking;
+
+        assert.equal(logged.length, 1);
+        assert(logged[0].includes(error));
+        assert.equal(ydoc.etagCheckAbortController, undefined);
+      } finally {
+        head.resolve(new Response(null, { headers: { etag: ydoc.etag } }));
+        await checking;
+        console.error = savedError;
+      }
+    });
+
+    describe('initialization lifecycle', () => {
+      let savedSetInterval;
+      let savedClearInterval;
+      const scheduled = [];
+      const cleared = [];
+
+      beforeEach(() => {
+        scheduled.length = 0;
+        cleared.length = 0;
+        savedSetInterval = globalThis.setInterval;
+        savedClearInterval = globalThis.clearInterval;
+        globalThis.setInterval = (callback, delay, ...args) => {
+          const handle = savedSetInterval(callback, delay, ...args);
+          scheduled.push({ handle, delay });
+          return handle;
+        };
+        globalThis.clearInterval = (handle) => {
+          cleared.push(handle);
+          savedClearInterval(handle);
+        };
+      });
+
+      afterEach(() => {
+        scheduled.forEach(({ handle }) => savedClearInterval(handle));
+        globalThis.setInterval = savedSetInterval;
+        globalThis.clearInterval = savedClearInterval;
+      });
+
+      for (const transition of ['disconnected', 'replaced', 'no-connections', 'destroyed']) {
+        it(`does not start polling when initialization finishes for a ${transition} session`, async () => {
+          const { ydoc, conn, docs } = makeDoc(`initializing-${transition}`);
+          const get = deferred();
+          globalThis.fetch = async () => get.promise;
+          const loading = getYDoc(ydoc.name, conn, {}, makeStorage());
+          try {
+            if (transition === 'disconnected') {
+              await closeConn(ydoc, conn);
+            } else if (transition === 'replaced') {
+              makeDoc(`initializing-${transition}`);
+            } else if (transition === 'no-connections') {
+              ydoc.conns.clear();
+            } else {
+              ydoc.destroy();
+            }
+            get.resolve(new Response('<main><div><p>Source content</p></div></main>', {
+              headers: { etag: '"source"' },
+            }));
+            await loading;
+
+            assert.equal(scheduled.filter(({ delay }) => delay === 5000).length, 0);
+            assert.equal(ydoc.etagCheckInterval, undefined);
+            if (transition === 'disconnected') {
+              assert.equal(docs.get(ydoc.name), undefined);
+              assert(scheduled.every(({ handle }) => cleared.includes(handle)));
+            }
+            if (transition === 'replaced') {
+              assert.notStrictEqual(docs.get(ydoc.name), ydoc);
+            }
+          } finally {
+            get.resolve(new Response(null));
+            await loading;
+          }
+        });
+      }
+
+      it('does not start polling after disconnecting during the initial storage read', async () => {
+        const { ydoc, conn } = makeDoc('initializing-storage');
+        const reading = deferred();
+        const stored = deferred();
+        const storage = makeStorage();
+        const get = storage.get.bind(storage);
+        storage.get = async (key) => {
+          if (key === 'doc') {
+            reading.resolve();
+            await stored.promise;
+          }
+          return get(key);
+        };
+        globalThis.fetch = async () => new Response('<main><div><p>Source content</p></div></main>', {
+          headers: { etag: '"source"' },
+        });
+        const loading = getYDoc(ydoc.name, conn, {}, storage);
+        try {
+          await reading.promise;
+          await closeConn(ydoc, conn);
+          stored.resolve();
+          await loading;
+
+          assert.equal(scheduled.filter(({ delay }) => delay === 5000).length, 0);
+          assert.equal(ydoc.etagCheckInterval, undefined);
+        } finally {
+          stored.resolve();
+          await loading;
+        }
+      });
+
+      it('starts a five-second poll for a live session and clears it on last close', async () => {
+        const { ydoc, conn } = makeDoc('live-polling');
+        globalThis.fetch = async () => new Response('<main><div><p>Source content</p></div></main>', {
+          headers: { etag: ydoc.etag },
+        });
+
+        await getYDoc(ydoc.name, conn, {}, makeStorage());
+        const polling = scheduled.filter(({ delay }) => delay === 5000);
+        assert.equal(polling.length, 1);
+        assert.strictEqual(ydoc.etagCheckInterval, polling[0].handle);
+
+        await closeConn(ydoc, conn);
+        assert(cleared.includes(polling[0].handle));
+      });
+    });
+
     it('ignores an old HEAD after the session was replaced', async () => {
       const { ydoc: oldDoc, conn: oldConn } = makeDoc('replacement');
       const head = deferred();
@@ -3843,6 +4070,9 @@ describe('Collab Test Suite', () => {
   it('persistence.bindState reads a Helix doc through the global fetch', async () => {
     const savedFetch = globalThis.fetch;
     const savedUpdate = persistence.update;
+    const docName = 'https://api.aem.live/o/r/bindstate.html';
+    const ydoc = new WSSharedDoc(docName);
+    const docs = setYDoc(docName, ydoc);
     const calls = [];
     globalThis.fetch = async (url, opts) => {
       calls.push({ url, opts });
@@ -3852,14 +4082,12 @@ describe('Collab Test Suite', () => {
     };
     persistence.update = async () => {};
     try {
-      const docName = 'https://api.aem.live/o/r/bindstate.html';
-      const ydoc = new Y.Doc();
       ydoc.daadmin = {
         fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
       };
       const mockConn = { auth: 'Bearer x' };
-      setYDoc(docName, ydoc);
-      const storage = { list: async () => new Map() };
+      ydoc.conns.set(mockConn, new Set());
+      const storage = makeStorage();
 
       await persistence.bindState(docName, ydoc, mockConn, storage);
 
@@ -3869,6 +4097,9 @@ describe('Collab Test Suite', () => {
     } finally {
       globalThis.fetch = savedFetch;
       persistence.update = savedUpdate;
+      ydoc.conns.clear();
+      ydoc.destroy();
+      docs.delete(docName);
     }
   });
 });
