@@ -2707,6 +2707,85 @@ describe('Collab Test Suite', () => {
     assert.equal(small, putCalls[0][1], 'value must equal the input');
   });
 
+  it('safePutLastsync retries a transient DO storage reset once', async () => {
+    let attempts = 0;
+    const storage = {
+      put: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error('Internal error in Durable Object storage write caused object to be reset; reference = test');
+        }
+      },
+    };
+    const warnings = [];
+    const errors = [];
+    const savedWarn = console.warn;
+    const savedError = console.error;
+    console.warn = (...args) => warnings.push(args);
+    console.error = (...args) => errors.push(args);
+
+    try {
+      await safePutLastsync(storage, 'small content', 'small-doc.html', 'unit-test');
+
+      assert.equal(2, attempts, 'a transient storage reset should get one retry');
+      assert.equal(1, warnings.length, 'a recovered write should remain observable as a warning');
+      assert.equal(0, errors.length, 'a recovered write should not be reported as an error');
+    } finally {
+      console.warn = savedWarn;
+      console.error = savedError;
+    }
+  });
+
+  it('safePutLastsync stops after one retry and reports an unrecovered reset', async () => {
+    let attempts = 0;
+    const storage = {
+      put: async () => {
+        attempts += 1;
+        throw new Error(`Internal error in Durable Object storage write caused object to be reset; reference = ${attempts}`);
+      },
+    };
+    const warnings = [];
+    const errors = [];
+    const savedWarn = console.warn;
+    const savedError = console.error;
+    console.warn = (...args) => warnings.push(args);
+    console.error = (...args) => errors.push(args);
+
+    try {
+      await safePutLastsync(storage, 'small content', 'small-doc.html', 'unit-test');
+
+      assert.equal(2, attempts, 'a persistent reset should not loop indefinitely');
+      assert.equal(0, warnings.length, 'an unrecovered write should not be marked recovered');
+      assert.equal(1, errors.length, 'an unrecovered write should remain in the error log');
+      assert(String(errors[0][0]).includes('Failed to write lastsync after retry'));
+    } finally {
+      console.warn = savedWarn;
+      console.error = savedError;
+    }
+  });
+
+  it('safePutLastsync does not retry unrelated storage errors', async () => {
+    let attempts = 0;
+    const storage = {
+      put: async () => {
+        attempts += 1;
+        throw new Error('permission denied');
+      },
+    };
+    const errors = [];
+    const savedError = console.error;
+    console.error = (...args) => errors.push(args);
+
+    try {
+      await safePutLastsync(storage, 'small content', 'small-doc.html', 'unit-test');
+
+      assert.equal(1, attempts, 'unrelated storage errors should not be retried');
+      assert.equal(1, errors.length, 'the original error should remain visible');
+    } finally {
+      console.error = savedError;
+    }
+  });
+
   it('safePutLastsync is a no-op when storage has no .put method', async () => {
     // Should not throw, regardless of value size.
     await safePutLastsync(undefined, 'whatever', 'no-storage.html', 'unit-test');

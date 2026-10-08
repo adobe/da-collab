@@ -110,11 +110,27 @@ export const safePutLastsync = async (storage, value, docName, context) => {
     console.log(`[docroom] Skipping lastsync marker (${context}) - content exceeds DO value cap`, docName, `${value.length}b`);
     return;
   }
+  const writeMarker = () => storage.put('lastsync', value);
   try {
-    await storage.put('lastsync', value);
+    await writeMarker();
   } catch (storageErr) {
-    // non-fatal: worst case the restore falls back to da-admin
-    logError(storageErr, `[docroom] Failed to write lastsync (${context})`, storageErr);
+    if (!storageErr?.message?.includes('Internal error in Durable Object storage write caused object to be reset')) {
+      // non-fatal: worst case the restore falls back to da-admin
+      logError(storageErr, `[docroom] Failed to write lastsync (${context})`, storageErr);
+      return;
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 25);
+    });
+    try {
+      await writeMarker();
+      // eslint-disable-next-line no-console
+      console.warn(`[docroom] Recovered lastsync write after storage reset (${context})`, docName, storageErr);
+    } catch (retryErr) {
+      // non-fatal: worst case the restore falls back to da-admin
+      logError(retryErr, `[docroom] Failed to write lastsync after retry (${context})`, docName, storageErr, retryErr);
+    }
   }
 };
 // Matches da-admin EMPTY_DOC_SIZE — the byte-length of doc2aem(empty ydoc).
