@@ -787,6 +787,7 @@ describe('Worker test suite', () => {
 
   it('retries transient Durable Object failures once for WebSocket upgrades', async () => {
     let attempts = 0;
+    const stubs = [];
     const warnings = [];
     const savedWarn = console.warn;
     console.warn = (...args) => warnings.push(args);
@@ -795,15 +796,19 @@ describe('Worker test suite', () => {
       daadmin: { fetch: async () => new Response(null, { status: 200 }) },
       rooms: {
         idFromName: () => 'room-id',
-        get: () => ({
-          fetch: async () => {
-            attempts += 1;
-            if (attempts === 1) {
-              throw new Error('internal error; reference = transientref');
-            }
-            return new Response(null, { status: 200 });
-          },
-        }),
+        get: () => {
+          const stub = {
+            fetch: async () => {
+              attempts += 1;
+              if (attempts === 1) {
+                throw new Error('internal error; reference = transientref');
+              }
+              return new Response(null, { status: 200 });
+            },
+          };
+          stubs.push(stub);
+          return stub;
+        },
       },
     };
     const req = {
@@ -816,6 +821,8 @@ describe('Worker test suite', () => {
 
       assert.equal(200, response.status);
       assert.equal(2, attempts);
+      assert.equal(2, stubs.length, 'retry must obtain a fresh DO stub');
+      assert.notEqual(stubs[0], stubs[1], 'retry must not reuse the failed stub');
       assert.equal(1, warnings.length);
       assert.match(String(warnings[0][0]), /Recovered.*after transient error/);
     } finally {

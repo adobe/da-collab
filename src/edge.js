@@ -306,7 +306,8 @@ export async function handleApiRequest(request, env) {
       await new Promise((resolve) => {
         setTimeout(resolve, 50);
       });
-      const response = await roomObject.fetch(createRequest());
+      const retryRoomObject = env.rooms.get(id);
+      const response = await retryRoomObject.fetch(createRequest());
       if (response.status >= 500) {
         // eslint-disable-next-line no-console
         console.error(`[worker] Durable Object WebSocket retry returned HTTP ${response.status}`, docName, response.headers.get('x-error'), err);
