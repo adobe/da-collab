@@ -3266,7 +3266,7 @@ describe('Collab Test Suite', () => {
     globalThis.fetch = async (url, opts) => {
       calls.push({ url, opts });
       return {
-        ok: true, text: async () => 'helix content', status: 200, statusText: 'OK', headers: new Headers(),
+        ok: true, text: async () => 'helix content', status: 200, statusText: 'OK', headers: new Headers({ etag: '"initial"' }),
       };
     };
     try {
@@ -3293,7 +3293,7 @@ describe('Collab Test Suite', () => {
     globalThis.fetch = async (url, opts) => {
       calls.push({ url, opts });
       return {
-        ok: true, status: 200, statusText: 'OK', headers: new Headers(),
+        ok: true, status: 200, statusText: 'OK', headers: new Headers({ etag: '"saved"' }),
       };
     };
     try {
@@ -3301,6 +3301,7 @@ describe('Collab Test Suite', () => {
       conns.set({ auth: 'Bearer abc' }, new Set());
       const ydoc = {
         name: 'https://api.aem.live/owner/repo/page.html',
+        etag: 'W/"initial"',
         conns,
         daadmin: {
           fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
@@ -3316,7 +3317,7 @@ describe('Collab Test Suite', () => {
       assert.equal(opts.method, 'POST');
       assert.strictEqual(opts.body, body, 'Helix POST body must be the raw content string, not FormData');
       assert.equal(opts.headers.get('Content-Type'), 'text/html');
-      assert.equal(opts.headers.get('If-Match'), '*');
+      assert.equal(opts.headers.get('If-Match'), '"initial"');
       assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
       assert.equal(opts.headers.get('Authorization'), 'Bearer abc');
     } finally {
@@ -3330,7 +3331,7 @@ describe('Collab Test Suite', () => {
     globalThis.fetch = async (url, opts) => {
       calls.push({ url, opts });
       return {
-        ok: true, status: 200, statusText: 'OK', headers: new Headers(),
+        ok: true, status: 200, statusText: 'OK', headers: new Headers({ etag: '"saved"' }),
       };
     };
     try {
@@ -3339,6 +3340,7 @@ describe('Collab Test Suite', () => {
       conns.set({ auth: 'Bearer xyz' }, new Set());
       const ydoc = {
         name: 'https://api.aem.live/owner/repo/page.html',
+        etag: '"initial"',
         conns,
         daadmin: {
           fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
@@ -3366,7 +3368,7 @@ describe('Collab Test Suite', () => {
     globalThis.fetch = async (url, opts) => {
       captured = opts;
       return {
-        ok: true, status: 200, statusText: 'OK', headers: new Headers(),
+        ok: true, status: 200, statusText: 'OK', headers: new Headers({ etag: '"saved"' }),
       };
     };
     try {
@@ -3374,6 +3376,7 @@ describe('Collab Test Suite', () => {
       conns.set({ auth: 'a' }, new Set());
       const ydoc = {
         name: 'https://api.aem.live/o/r/d.json',
+        etag: '"initial"',
         conns,
         daadmin: {},
       };
@@ -3434,7 +3437,7 @@ describe('Collab Test Suite', () => {
         [{ auth: 'auth-b' }, new Set()],
       ]);
       const ydoc = {
-        name, conns, IS_HELIX: mode, daadmin: { fetch },
+        name, conns, IS_HELIX: mode, daadmin: { fetch }, etag: 'W/"initial"',
       };
       const body = '<main><div><p>content long enough to avoid the empty-stub warning padding padding</p></div></main>';
       try {
@@ -3446,6 +3449,7 @@ describe('Collab Test Suite', () => {
         const origin = mode === 'local' ? 'http://localhost:3000' : 'https://api.aem.live';
         assert.equal(url, isHelix ? `${origin}/o/sites/r/source/p.html` : name);
         assert.equal(opts.method, isHelix ? 'POST' : 'PUT');
+        assert.equal(opts.headers.get('If-Match'), isHelix ? '"initial"' : '*');
         assert.equal(opts.headers.get('Authorization'), isHelix ? 'auth-a' : 'auth-a,auth-b');
         if (isHelix) {
           assert.strictEqual(opts.body, body);
@@ -3502,8 +3506,8 @@ describe('Collab Test Suite', () => {
     let savedFetch;
     const opened = [];
 
-    function makeDoc(slug, etag = '"old"') {
-      const name = `https://api.aem.live/o/sites/r/source/${slug}.html`;
+    function makeDoc(slug, etag = '"old"', type = 'html') {
+      const name = `https://api.aem.live/o/sites/r/source/${slug}.${type}`;
       const ydoc = new WSSharedDoc(name);
       ydoc.etag = etag;
       const conn = {
@@ -3542,6 +3546,317 @@ describe('Collab Test Suite', () => {
           docs.delete(ydoc.name);
         }
       });
+    });
+
+    for (const [stored, current] of [['W/"old"', '"old"'], ['"old"', 'W/"old"']]) {
+      it(`equivalent weak/strong ETags (${stored}, ${current}) do not invalidate`, async () => {
+        const { ydoc, conn } = makeDoc('equivalent-etag', stored);
+        globalThis.fetch = async () => new Response(null, { headers: { etag: current } });
+
+        await persistence.checkEtag(ydoc);
+
+        assert.equal(conn.closed, false);
+      });
+    }
+
+    it('a missing stored ETag adopts a polling baseline without authorizing stale writes', async () => {
+      const { ydoc, conn } = makeDoc('unknown-baseline', null);
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        return new Response(null, { headers: { etag: 'W/"observed"' } });
+      };
+
+      await persistence.checkEtag(ydoc);
+
+      assert.equal(conn.closed, false);
+      assert.equal(ydoc.etag, '"observed"');
+      assert.equal(ydoc.etagUnverified, true);
+      await assert.rejects(
+        persistence.put(ydoc, '<main><div><p>Pending local edit</p></div></main>'),
+        /without a verified ETag/,
+      );
+      assert.equal(calls, 1, 'An unverified baseline must not send a POST');
+    });
+
+    for (const type of ['html', 'json']) {
+      it(`a ${type} GET without ETag establishes a matching fresh content/version baseline`, async () => {
+        const { ydoc, conn } = makeDoc(`missing-get-etag-${type}`, null, type);
+        const stale = type === 'json' ? '{"value":"stale"}' : '<main><div><p>Stale content</p></div></main>';
+        const fresh = type === 'json' ? '{"value":"current"}' : '<main><div><p>Current content</p></div></main>';
+        const responses = [
+          new Response(stale),
+          new Response(null, { headers: { etag: '"current"' } }),
+          new Response(fresh),
+          new Response(null, { headers: { etag: 'W/"current"' } }),
+        ];
+        const requests = [];
+        globalThis.fetch = async (_url, opts) => {
+          requests.push(opts.method ?? 'GET');
+          assert.equal(opts.headers.get('Authorization'), conn.auth);
+          return responses.shift();
+        };
+
+        const content = await persistence.get(ydoc.name, conn.auth, ydoc);
+
+        assert.deepStrictEqual(content, type === 'json' ? { value: 'current' } : fresh);
+        assert.equal(ydoc.etag, '"current"');
+        assert.equal(ydoc.etagUnverified, false);
+        assert.deepStrictEqual(requests, ['GET', 'HEAD', 'GET', 'HEAD']);
+        globalThis.fetch = async () => new Response(null, { headers: { etag: '"current"' } });
+        await persistence.checkEtag(ydoc);
+        assert.equal(conn.closed, false);
+      });
+    }
+
+    it('a refreshed GET with an ETag supplies its own authoritative baseline', async () => {
+      const { ydoc, conn } = makeDoc('refreshed-get-etag', null);
+      const responses = [
+        new Response('stale'),
+        new Response(null, { headers: { etag: '"before"' } }),
+        new Response('fresh', { headers: { etag: 'W/"fresh"' } }),
+      ];
+      globalThis.fetch = async () => responses.shift();
+
+      assert.equal(await persistence.get(ydoc.name, conn.auth, ydoc), 'fresh');
+      assert.equal(ydoc.etag, '"fresh"');
+      assert.equal(ydoc.etagUnverified, false);
+      assert.equal(responses.length, 0);
+    });
+
+    it('retries a missing-GET-tag baseline when the backend changes during the fresh read', async () => {
+      const { ydoc, conn } = makeDoc('baseline-race', null);
+      const responses = [
+        new Response('stale'),
+        new Response(null, { headers: { etag: '"first"' } }),
+        new Response('first'),
+        new Response(null, { headers: { etag: '"second"' } }),
+        new Response(null, { headers: { etag: '"second"' } }),
+        new Response('second'),
+        new Response(null, { headers: { etag: '"second"' } }),
+      ];
+      globalThis.fetch = async () => responses.shift();
+
+      assert.equal(await persistence.get(ydoc.name, conn.auth, ydoc), 'second');
+      assert.equal(ydoc.etag, '"second"');
+      assert.equal(ydoc.etagUnverified, false);
+      assert.equal(responses.length, 0);
+    });
+
+    it('an unstable baseline is bounded, logged, and cannot authorize a save', async () => {
+      const { ydoc, conn } = makeDoc('unstable-baseline', null);
+      const responses = [
+        new Response('stale'),
+        new Response(null, { headers: { etag: '"first"' } }),
+        new Response('first'),
+        new Response(null, { headers: { etag: '"second"' } }),
+        new Response(null, { headers: { etag: '"second"' } }),
+        new Response('second'),
+        new Response(null, { headers: { etag: '"third"' } }),
+      ];
+      const warnings = [];
+      const savedWarn = console.warn;
+      console.warn = (...args) => warnings.push(args);
+      globalThis.fetch = async () => responses.shift();
+      try {
+        assert.equal(await persistence.get(ydoc.name, conn.auth, ydoc), 'second');
+        assert.equal(ydoc.etag, null);
+        assert.equal(ydoc.etagUnverified, true);
+        assert.equal(responses.length, 0);
+        assert.equal(warnings.length, 1);
+        globalThis.fetch = async () => assert.fail('No unconditional POST is allowed');
+        await assert.rejects(
+          persistence.put(ydoc, '<main><div><p>Pending edit</p></div></main>'),
+          /without a verified ETag/,
+        );
+        assert.equal(conn.closed, false);
+      } finally {
+        console.warn = savedWarn;
+      }
+    });
+
+    it('a missing HEAD tag during baseline establishment keeps the read available and blocks saves', async () => {
+      const { ydoc, conn } = makeDoc('no-tags', null);
+      const responses = [new Response('content'), new Response(null)];
+      const savedWarn = console.warn;
+      const warnings = [];
+      console.warn = (...args) => warnings.push(args);
+      globalThis.fetch = async () => responses.shift();
+      try {
+        assert.equal(await persistence.get(ydoc.name, conn.auth, ydoc), 'content');
+        assert.equal(ydoc.etag, null);
+        assert.equal(ydoc.etagUnverified, true);
+        assert.equal(warnings.length, 1);
+        assert.equal(conn.closed, false);
+      } finally {
+        console.warn = savedWarn;
+      }
+    });
+
+    for (const stage of ['before', 'reload', 'after']) {
+      it(`baseline ${stage} failures preserve normal HTTP error reporting`, async () => {
+        const { ydoc, conn } = makeDoc(`baseline-failure-${stage}`, null);
+        const responses = [new Response('stale')];
+        if (stage !== 'before') {
+          responses.push(new Response(null, { headers: { etag: '"initial"' } }));
+        }
+        if (stage === 'after') {
+          responses.push(new Response('reloaded'));
+        }
+        responses.push(new Response(null, { status: 403 }));
+        globalThis.fetch = async () => responses.shift();
+
+        await assert.rejects(
+          persistence.get(ydoc.name, conn.auth, ydoc),
+          (error) => error.status === 403,
+        );
+        assert.equal(responses.length, 0);
+      });
+    }
+
+    it('a baseline fetch error cancels the unread document body and propagates the failure', async () => {
+      const { ydoc, conn } = makeDoc('baseline-network-failure', null);
+      let cancelled = false;
+      let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            ok: true,
+            headers: new Headers(),
+            body: { cancel() { cancelled = true; } },
+          };
+        }
+        throw new Error('Baseline fetch failed');
+      };
+
+      await assert.rejects(persistence.get(ydoc.name, conn.auth, ydoc), /Baseline fetch failed/);
+      assert(cancelled);
+      assert.equal(calls, 2);
+    });
+
+    it('successful Helix saves advance the normalized ETag and do not invalidate on the next poll', async () => {
+      const { ydoc, conn } = makeDoc('successful-versioned-save', 'W/"old"');
+      const requests = [];
+      globalThis.fetch = async (_url, opts) => {
+        requests.push(opts.method);
+        if (opts.method === 'POST') {
+          assert.equal(opts.headers.get('If-Match'), '"old"');
+          return new Response(null, { status: 201, headers: { etag: 'W/"saved"' } });
+        }
+        return new Response(null, { headers: { etag: '"saved"' } });
+      };
+
+      await persistence.put(ydoc, '<main><div><p>Content long enough to avoid the empty document warning when saved</p></div></main>');
+      await persistence.checkEtag(ydoc);
+
+      assert.equal(ydoc.etag, '"saved"');
+      assert.equal(ydoc.etagUnverified, false);
+      assert.equal(conn.closed, false);
+      assert.deepStrictEqual(requests, ['POST', 'HEAD']);
+    });
+
+    it('an unexpected save response without ETag does not retain the old version or disconnect on the next poll', async () => {
+      const { ydoc, conn } = makeDoc('missing-save-etag');
+      let posts = 0;
+      const warnings = [];
+      const savedWarn = console.warn;
+      console.warn = (...args) => warnings.push(args);
+      globalThis.fetch = async (_url, opts) => {
+        if (opts.method === 'POST') {
+          posts += 1;
+          return new Response(null, { status: 201 });
+        }
+        return new Response(null, { headers: { etag: '"saved"' } });
+      };
+      try {
+        const content = '<main><div><p>Content long enough to avoid the empty document warning when saved</p></div></main>';
+        await persistence.put(ydoc, content);
+        assert.equal(ydoc.etag, null);
+        assert.equal(ydoc.etagUnverified, true);
+        await persistence.checkEtag(ydoc);
+
+        assert.equal(ydoc.etag, '"saved"');
+        assert.equal(conn.closed, false);
+        assert.equal(warnings.length, 1);
+        await assert.rejects(persistence.put(ydoc, content), /without a verified ETag/);
+        assert.equal(posts, 1);
+      } finally {
+        console.warn = savedWarn;
+      }
+    });
+
+    for (const etag of [undefined, null, '*']) {
+      it(`a Helix save cannot fall back to unconditional If-Match for ETag ${etag}`, async () => {
+        const { ydoc } = makeDoc('no-write-validator');
+        ydoc.etag = etag;
+        globalThis.fetch = async () => assert.fail('Do not send an unprotected Helix save');
+
+        await assert.rejects(
+          persistence.put(ydoc, '<main><div><p>Pending edit</p></div></main>'),
+          /without a verified ETag/,
+        );
+      });
+    }
+
+    it('read-only Helix sessions still skip saves without requiring a write validator', async () => {
+      const { ydoc, conn } = makeDoc('readonly-no-validator', null);
+      conn.readOnly = true;
+      globalThis.fetch = async () => assert.fail('A read-only session must not POST');
+
+      assert.deepStrictEqual(
+        await persistence.put(ydoc, '<main><div><p>Read-only content</p></div></main>'),
+        { ok: true },
+      );
+    });
+
+    it('a version conflict before the next poll preserves external content and invalidates without another save', async () => {
+      const { ydoc, conn, docs } = makeDoc('version-conflict');
+      aem2doc('<main><div><p>Original source content</p></div></main>', ydoc);
+      const original = doc2aem(ydoc);
+      const storage = makeStorage({
+        doc: ydoc.name,
+        docstore: Y.encodeStateAsUpdate(ydoc),
+        lastsync: original,
+      });
+      let remoteContent = original;
+      let remoteEtag = '"old"';
+      let posts = 0;
+      globalThis.fetch = async (_url, opts) => {
+        if (opts.method === 'POST') {
+          posts += 1;
+          assert.equal(opts.headers.get('If-Match'), '"old"');
+          assert.notEqual(opts.headers.get('If-Match'), remoteEtag);
+          return new Response(null, { status: 412 });
+        }
+        return new Response(remoteContent, { headers: { etag: remoteEtag } });
+      };
+      await persistence.bindState(ydoc.name, ydoc, conn, storage);
+      ydoc.hasClientChanged = true;
+      const fragment = ydoc.getXmlFragment('prosemirror');
+      fragment.delete(0, fragment.length);
+      aem2doc('<main><div><p>Unsaved client changes</p></div></main>', ydoc);
+      remoteContent = '<main><div><p>Externally replaced source</p></div></main>';
+      remoteEtag = '"external"';
+      const warnings = [];
+      const savedWarn = console.warn;
+      console.warn = (...args) => warnings.push(args);
+      try {
+        await ydoc.flushSave();
+        await ydoc.flushSave();
+
+        assert.equal(posts, 1);
+        assert.equal(remoteContent, '<main><div><p>Externally replaced source</p></div></main>');
+        assert(conn.closed);
+        assert.equal(docs.get(ydoc.name), undefined);
+        assert.equal(await storage.get('lastsync'), undefined);
+        assert.equal(ydoc.discardPendingChanges, true);
+        assert(ydoc.getMap('error').get('message').includes('changed externally'));
+        assert.equal(warnings.length, 1);
+        assert(warnings[0][0].includes('version conflict'));
+      } finally {
+        console.warn = savedWarn;
+      }
     });
 
     it('changed ETags cancel saves and finish closing all connections without flushing', async () => {
@@ -4110,7 +4425,7 @@ describe('Collab Test Suite', () => {
     globalThis.fetch = async (url, opts) => {
       calls.push({ url, opts });
       return {
-        ok: true, text: async () => 'helix content', status: 200, statusText: 'OK', headers: new Headers(),
+        ok: true, text: async () => 'helix content', status: 200, statusText: 'OK', headers: new Headers({ etag: '"initial"' }),
       };
     };
     persistence.update = async () => {};

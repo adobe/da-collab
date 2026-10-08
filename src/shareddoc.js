@@ -420,6 +420,61 @@ export const invalidateFromAdmin = async (docName, discardPendingChanges = false
   return false;
 };
 
+const normalizeEtag = (etag) => (etag ? etag.replace(/^W\//, '') : null);
+
+async function getHelixEtagBaseline(backend, docName, opts, initialResponse) {
+  let response = initialResponse;
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const etag = normalizeEtag(response.headers.get('etag'));
+      if (!response.ok || etag) {
+        return { response, etag };
+      }
+
+      // Without a GET validator, bracket a fresh read with matching HEAD tags.
+      // Adopting a HEAD tag for an earlier body could authorize a stale overwrite.
+      // eslint-disable-next-line no-await-in-loop
+      const before = await backend.fetch(docName, { ...opts, method: 'HEAD' });
+      const beforeEtag = normalizeEtag(before.headers.get('etag'));
+      before.body?.cancel();
+      if (!before.ok) {
+        response.body?.cancel();
+        return { response: before, etag: null };
+      }
+      if (!beforeEtag) {
+        break;
+      }
+
+      // eslint-disable-next-line no-await-in-loop
+      const reloaded = await backend.fetch(docName, opts);
+      response.body?.cancel();
+      response = reloaded;
+      const reloadedEtag = normalizeEtag(response.headers.get('etag'));
+      if (!response.ok || reloadedEtag) {
+        return { response, etag: reloadedEtag };
+      }
+
+      // eslint-disable-next-line no-await-in-loop
+      const after = await backend.fetch(docName, { ...opts, method: 'HEAD' });
+      const afterEtag = normalizeEtag(after.headers.get('etag'));
+      after.body?.cancel();
+      if (!after.ok) {
+        response.body?.cancel();
+        return { response: after, etag: null };
+      }
+      if (afterEtag === beforeEtag) {
+        return { response, etag: afterEtag };
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.warn('[docroom] Helix ETag baseline unavailable or unstable; protected saves require a reload', docName);
+    return { response, etag: null };
+  } catch (error) {
+    response.body?.cancel();
+    throw error;
+  }
+}
+
 export const persistence = {
   closeConn,
 
@@ -440,10 +495,19 @@ export const persistence = {
       initalOpts.headers = new Headers({ Authorization: auth });
     }
 
-    const initialReq = await getBackend(docName, ydoc).fetch(docName, initalOpts);
+    const backend = getBackend(docName, ydoc);
+    const isHelix = isHelixDoc(docName, ydoc);
+    let initialReq = await backend.fetch(docName, initalOpts);
+    let etag;
+    if (isHelix && initialReq.ok) {
+      const baseline = await getHelixEtagBaseline(backend, docName, initalOpts, initialReq);
+      ({ response: initialReq, etag } = baseline);
+      // eslint-disable-next-line no-param-reassign
+      ydoc.etagUnverified = !etag;
+    }
     if (initialReq.ok) {
       // eslint-disable-next-line no-param-reassign
-      ydoc.etag = initialReq.headers.get('etag');
+      ydoc.etag = isHelix ? etag : initialReq.headers.get('etag');
       return docType === 'json' ? initialReq.json() : initialReq.text();
     } else {
       const msg = `[docroom] Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`;
@@ -489,8 +553,12 @@ export const persistence = {
       return { ok: true };
     }
 
+    const storedEtag = normalizeEtag(ydoc.etag);
+    if (isHelix && (!storedEtag || storedEtag === '*' || ydoc.etagUnverified)) {
+      throw new Error('Cannot save Helix document without a verified ETag; reload the document');
+    }
     const headers = {
-      'If-Match': '*',
+      'If-Match': isHelix ? storedEtag : '*',
       'X-DA-Initiator': 'collab',
       ...bodyHeaders,
     };
@@ -534,7 +602,16 @@ export const persistence = {
 
     if (ok) {
       const etag = respHeaders.get('etag');
-      if (etag) {
+      if (isHelix) {
+        // eslint-disable-next-line no-param-reassign
+        ydoc.etag = normalizeEtag(etag);
+        // eslint-disable-next-line no-param-reassign
+        ydoc.etagUnverified = !etag;
+        if (!etag) {
+          // eslint-disable-next-line no-console
+          console.warn('[docroom] Helix save response missing ETag; protected saves require a reload', ydoc.name);
+        }
+      } else if (etag) {
         // Keep the current document ETag so the periodic HEAD check can detect
         // out-of-band changes to da-admin.
         // eslint-disable-next-line no-param-reassign
@@ -605,13 +682,23 @@ export const persistence = {
         }
         return;
       }
-      const currentEtag = res.headers.get('etag');
+      const currentEtag = normalizeEtag(res.headers.get('etag'));
       if (!currentEtag) {
         // eslint-disable-next-line no-console
         console.warn('[docroom] Etag HEAD response missing ETag', ydoc.name);
         return;
       }
-      if (currentEtag !== etag) {
+      const storedEtag = normalizeEtag(etag);
+      if (!storedEtag) {
+        // A HEAD-only baseline is useful for polling, but must not authorize
+        // writes to content loaded or saved without a matching validator.
+        // eslint-disable-next-line no-param-reassign
+        ydoc.etag = currentEtag;
+        // eslint-disable-next-line no-param-reassign
+        ydoc.etagUnverified = true;
+        return;
+      }
+      if (currentEtag !== storedEtag) {
         // eslint-disable-next-line no-console
         console.log('[docroom] Etag check', ydoc.name, `stored=${etag}`, `current=${currentEtag}`, 'same=false');
         await invalidateFromAdmin(ydoc.name, true);
@@ -655,6 +742,14 @@ export const persistence = {
         const { ok, status, statusText } = await persistence.put(ydoc, content);
 
         if (!ok) {
+          if (status === 412 && isHelixDoc(docName, ydoc)) {
+            const conflict = new Error('412 - Helix document changed externally; reloading the document');
+            // eslint-disable-next-line no-console
+            console.warn('[docroom] Helix version conflict', docName, conflict.message);
+            showError(ydoc, conflict);
+            await invalidateFromAdmin(docName, true);
+            return current;
+          }
           if (status === 412) {
             // Document doesn't exist - clean up cached state
             if (ydoc.storage) {

@@ -46,6 +46,18 @@ pending local saves, and removes the stored restore anchor. Invalidation therefo
 flush stale edits back to the backend, and reconnecting sessions reload the source document.
 Ordinary connection closure and da-admin invalidation retain their existing save-flushing behavior.
 
+Helix ETags are compared without the weak `W/` prefix. If GET omits its ETag, collab brackets a
+fresh read with HEAD requests to establish a matching content/version baseline. Without a
+verified baseline, reads remain available but saves report an error instead of overwriting
+an unknown version. A successful HEAD can establish a polling-only baseline without disconnecting editors.
+
+Helix saves use the known version in `If-Match` rather than `*`. A 412 is treated as an external
+version conflict: pending saves are cancelled and the session is reloaded, not reported as a
+deletion. The Helix API must return the written ETag on successful POST; if it does not, collab
+logs the missing validator and pauses further protected saves until reload. da-admin retains
+its existing multipart PUT and `If-Match: *` behavior. Complete lost-update protection additionally
+requires the API to enforce the precondition atomically at the storage write.
+
 Failed HEAD requests and successful responses without an ETag are logged and retried on the next
 interval without disconnecting editors. Only one HEAD request is in flight per document, and
 responses overlapping a local save or belonging to an old session are ignored. Polling starts
