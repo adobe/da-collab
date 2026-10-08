@@ -106,7 +106,7 @@ export const isHelixDoc = (docName, env) => getLocalTestBackendOverride(env)?.is
  */
 export function getBackend(docName, env) {
   const localTestOverride = getLocalTestBackendOverride(env);
-  const isHelix = localTestOverride?.isHelix ?? isHelixDoc(docName);
+  const isHelix = isHelixDoc(docName, env);
 
   return {
     // A fetch that already knows where to go.
