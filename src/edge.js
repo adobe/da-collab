@@ -290,11 +290,33 @@ export async function handleApiRequest(request, env) {
     if (auth) {
       headers.push(['Authorization', auth]);
     }
-    const req = new Request(new URL(docName), { headers });
+    const createRequest = () => new Request(new URL(docName), { headers });
     // Send the request to the Durable Object. The `fetch()` method of a Durable Object stub has the
     // same signature as the global `fetch()` function, but the request is always sent to the
     // object, regardless of the hostname in the request's URL.
-    return await roomObject.fetch(req);
+    try {
+      return await roomObject.fetch(createRequest());
+    } catch (err) {
+      const message = err?.message ?? '';
+      const isTransientPlatformError = /^internal error; reference = [a-z0-9]+$/i.test(message);
+      if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket' || !isTransientPlatformError) {
+        throw err;
+      }
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, 50);
+      });
+      const retryRoomObject = env.rooms.get(id);
+      const response = await retryRoomObject.fetch(createRequest());
+      if (response.status >= 500) {
+        // eslint-disable-next-line no-console
+        console.error(`[worker] Durable Object WebSocket retry returned HTTP ${response.status}`, docName, response.headers.get('x-error'), err);
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn('[worker] Recovered Durable Object WebSocket fetch after transient error', docName, err);
+      }
+      return response;
+    }
   } catch (err) {
     logError(err, `[worker] Error fetching the doc from the room ${docName}`, err);
     return new Response('unable to get resource', { status: 500, headers: { 'x-error': err.message } });
