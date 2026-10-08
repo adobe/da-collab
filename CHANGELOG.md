@@ -1,3 +1,10 @@
+## [1.7.11](https://github.com/adobe/da-collab/compare/v1.7.10...v1.7.11) (2026-10-08)
+
+
+### Bug Fixes
+
+* **collab:** retry transient DO errors ([#204](https://github.com/adobe/da-collab/issues/204)) ([92aa796](https://github.com/adobe/da-collab/commit/92aa796d5f9a4f73ee032e8f59ceee20b14e6e19))
+
 ## [1.7.10](https://github.com/adobe/da-collab/compare/v1.7.9...v1.7.10) (2026-09-15)
 
 
