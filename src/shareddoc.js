@@ -23,26 +23,6 @@ const wsReadyStateConnecting = 0;
 const wsReadyStateOpen = 1;
 
 /**
- * True for documents that live in Helix (reached over the public internet)
- * rather than da-admin.
- *
- * The `IS_HELIX` environment variable, when set, overrides the URL heuristic:
- *   'false' - always da-admin, regardless of the document hostname
- *   'true'  - always Helix, rewritten to https://api.aem.live
- *   'local' - always Helix, rewritten to http://localhost:3000
- * When unset, the api.aem.live URL prefix decides.
- * @param {string} docName - the document URL
- * @param {object} [env] - the worker environment (may carry `IS_HELIX`)
- */
-export const isHelixDoc = (docName, env) => {
-  if (env?.IS_HELIX !== undefined) {
-    const mode = String(env.IS_HELIX);
-    return mode === 'true' || mode === 'local';
-  }
-  return docName.startsWith('https://api.aem.live/');
-};
-
-/**
  * Convert a da-admin source path to the Helix path format.
  *
  * da-admin paths look like `/source/{org}/{site}/{rest}`; the equivalent Helix
@@ -66,6 +46,50 @@ export const toHelixPath = (pathname) => {
 };
 
 /**
+ * Manual local-testing override. Normal deployments leave IS_HELIX unset.
+ * 'false' forces da-admin without rewriting URLs; 'true' and 'local' force
+ * Helix at api.aem.live and localhost:3000, respectively.
+ * @param {object} [env] - the worker environment
+ * @returns {{
+ *   isHelix: boolean,
+ *   rewriteUrl: (url: string) => string,
+ * } | undefined}
+ */
+function getLocalTestBackendOverride(env) {
+  if (env?.IS_HELIX === undefined) {
+    return undefined;
+  }
+  const mode = String(env.IS_HELIX);
+  let substituteOrigin;
+  if (mode === 'true') {
+    substituteOrigin = 'https://api.aem.live';
+  } else if (mode === 'local') {
+    substituteOrigin = 'http://localhost:3000';
+  }
+
+  return {
+    isHelix: substituteOrigin !== undefined,
+    rewriteUrl: (url) => {
+      if (!substituteOrigin) {
+        return url;
+      }
+      const u = new URL(url);
+      const t = `${substituteOrigin}${toHelixPath(u.pathname)}${u.search}`;
+      console.log('*** Calling', t);
+      return t;
+    },
+  };
+}
+
+/**
+ * True for Helix documents, using the URL unless a local-testing override is set.
+ * @param {string} docName - the document URL
+ * @param {object} [env] - the worker environment (may carry `IS_HELIX`)
+ */
+export const isHelixDoc = (docName, env) => getLocalTestBackendOverride(env)?.isHelix
+  ?? docName.startsWith('https://api.aem.live/');
+
+/**
  * Resolve the content backend for a document.
  *
  * Documents under https://api.aem.live live in Helix and are reached over the
@@ -74,38 +98,20 @@ export const toHelixPath = (pathname) => {
  *
  * @param {string} docName - the document URL
  * @param {object} env - the worker environment; provides the da-admin service
- *   binding (`env.daadmin`) and the optional `IS_HELIX` backend override.
+ *   binding (`env.daadmin`) and optional local-testing backend configuration.
  * @returns {{
  *   fetch: (url: string, opts?: object) => Promise<Response>,
  *   putReqData: (content: string, mimeType: string) => { body: *, size: number, headers: object },
  * }}
  */
 export function getBackend(docName, env) {
-  const isHelix = isHelixDoc(docName, env);
-  // A forced IS_HELIX mode rewrites every request to a fixed origin (preserving
-  // the path): 'true' -> api.aem.live, 'local' -> localhost:3000. 'false' and the
-  // unset heuristic leave the URL untouched.
-  const mode = env?.IS_HELIX !== undefined ? String(env.IS_HELIX) : undefined;
-  let substituteOrigin;
-  if (mode === 'true') {
-    substituteOrigin = 'https://api.aem.live';
-  } else if (mode === 'local') {
-    substituteOrigin = 'http://localhost:3000';
-  }
-  const target = (url) => {
-    if (!substituteOrigin) {
-      return url;
-    }
-    // Forced Helix modes also normalise the path to the Helix source format.
-    const u = new URL(url);
-    const t = `${substituteOrigin}${toHelixPath(u.pathname)}${u.search}`;
-    console.log('*** Calling', t);
-    return t;
-  };
+  const localTestOverride = getLocalTestBackendOverride(env);
+  const isHelix = localTestOverride?.isHelix ?? isHelixDoc(docName);
 
   return {
     // A fetch that already knows where to go.
-    fetch: (url, opts) => (isHelix ? globalThis : env.daadmin).fetch(target(url), opts),
+    fetch: (url, opts) => (isHelix ? globalThis : env.daadmin)
+      .fetch(localTestOverride?.rewriteUrl(url) ?? url, opts),
 
     // Build the body (and any body-specific headers) for a content PUT.
     // Helix takes the raw content with an explicit Content-Type; da-admin takes

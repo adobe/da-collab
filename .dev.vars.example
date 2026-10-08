@@ -1,4 +1,5 @@
-# IS_HELIX overrides the api.aem.live URL heuristic in isHelixDoc().
+# IS_HELIX is a manual local-testing override for URL-based backend selection.
+# Leave it unset for normal deployments.
 # It accepts three values:
 #   false = always go to da-admin (service binding), regardless of the document hostname
 #   true  = always go to Helix, rewriting every request to https://api.aem.live

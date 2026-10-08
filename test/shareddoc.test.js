@@ -3076,9 +3076,8 @@ describe('Collab Test Suite', () => {
   // ---------------------------------------------------------------------------
   // Backend resolution (api-live-switch branch)
   //
-  // The storage backend is determined entirely by the doc URL: docs under
-  // https://api.aem.live live in Helix (global fetch); everything else goes
-  // through the da-admin service binding. There is no isHelix flag to thread.
+  // Normal routing follows the doc URL. The manual local-testing override can
+  // force backend selection and, for Helix, rewrite the request URL.
   // ---------------------------------------------------------------------------
 
   it('getBackend routes da-admin docs through the daadmin binding', async () => {
@@ -3190,6 +3189,40 @@ describe('Collab Test Suite', () => {
       globalThis.fetch = savedFetch;
     }
   });
+
+  for (const mode of [undefined, 'false', 'true', 'local']) {
+    it(`getBackend emits the local-testing rewrite log only for forced Helix (IS_HELIX=${mode})`, async () => {
+      const savedFetch = globalThis.fetch;
+      const savedLog = console.log;
+      const calls = [];
+      const logged = [];
+      const fetch = async (url, opts) => {
+        calls.push({ url, opts });
+        return new Response(null);
+      };
+      globalThis.fetch = fetch;
+      console.log = (...args) => logged.push(args);
+      const url = 'https://api.aem.live/o/sites/r/source/p.html?x=1';
+      const env = { daadmin: { fetch }, IS_HELIX: mode };
+      const opts = { method: 'HEAD', headers: new Headers({ 'X-test': 'value' }) };
+      const expectedUrl = mode === 'local'
+        ? 'http://localhost:3000/o/sites/r/source/p.html?x=1'
+        : url;
+      try {
+        await getBackend(url, env).fetch(url, opts);
+
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0].url, expectedUrl);
+        assert.strictEqual(calls[0].opts, opts);
+        assert.deepStrictEqual(logged, mode === 'true' || mode === 'local'
+          ? [['*** Calling', expectedUrl]]
+          : []);
+      } finally {
+        globalThis.fetch = savedFetch;
+        console.log = savedLog;
+      }
+    });
+  }
 
   it('getBackend.putReqData builds multipart form-data for da-admin docs', () => {
     const backend = getBackend('https://admin.da.live/x.html', {});

@@ -15,6 +15,13 @@ To run da-admin locally see https://github.com/adobe/da-admin/blob/main/README.m
 1. In a terminal, run `npm run dev` this repo's folder.
 1. The da-collab service API is available via http://localhost:4711
 
+#### Local backend testing override
+
+For manual local testing, `IS_HELIX` in `.dev.vars` can force Helix at `api.aem.live` (`true`),
+Helix at `localhost:3000` (`local`), or da-admin (`false`). Leave it unset for normal URL-based
+backend selection. Forced URL rewriting and the `*** Calling` log are isolated in the
+`getLocalTestBackendOverride()` helper.
+
 #### Access via da-live
 
 To access the locally running da-collab via da-live also running locally, first run da-live on your local machine
