@@ -1,0 +1,13 @@
+# IS_HELIX is a manual local-testing override for URL-based backend selection.
+# Leave it unset for normal deployments.
+# It accepts three values:
+#   false = always go to da-admin (service binding), regardless of the document hostname
+#   true  = always go to Helix, rewriting every request to https://api.aem.live
+#   local = always go to Helix, rewriting every request to http://localhost:3000
+# When unset, the backend is chosen by the document URL: api.aem.live -> Helix,
+# everything else -> da-admin.
+#
+# Copy this file to .dev.vars and uncomment a line to force the backend locally.
+# Note: values set in .dev.vars are masked as "(hidden)" in wrangler's startup log;
+# declare IS_HELIX in wrangler.toml [env.dev.vars] instead if you want it printed.
+# IS_HELIX=local
