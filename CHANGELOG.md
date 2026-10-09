@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/adobe/da-collab/compare/v1.7.11...v1.8.0) (2026-10-09)
+
+
+### Features
+
+* **shareddoc:** bump da-parser to 2.2.0 for link-img support ([#202](https://github.com/adobe/da-collab/issues/202)) ([7f47f88](https://github.com/adobe/da-collab/commit/7f47f884c9c2ab735acb5f3b985e78f1e01b9963))
+
 ## [1.7.11](https://github.com/adobe/da-collab/compare/v1.7.10...v1.7.11) (2026-10-08)
 
 
