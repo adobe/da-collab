@@ -372,7 +372,7 @@ export const persistence = {
     const { body: putBody, size: bodySize, headers: bodyHeaders } = backend
       .putReqData(content, mimeType);
 
-    const opts = { method: 'PUT', body: putBody };
+    const opts = { method: isHelixDoc(ydoc.name) ? 'POST' : 'PUT', body: putBody };
     const keys = Array.from(ydoc.conns.keys());
     const allReadOnly = keys.length > 0 && keys.every((con) => con.readOnly === true);
     if (allReadOnly) {
@@ -392,7 +392,12 @@ export const persistence = {
       .map((con) => con.auth);
 
     if (auth.length > 0) {
-      headers.Authorization = [...new Set(auth)].join(',');
+      if (isHelixDoc(ydoc.name)) {
+        // eslint-disable-next-line prefer-destructuring
+        headers.Authorization = auth[0];
+      } else {
+        headers.Authorization = [...new Set(auth)].join(',');
+      }
     }
 
     opts.headers = new Headers(headers);
@@ -991,6 +996,13 @@ export const handleWebSocketMessage = async (conn, docName, env, storage, messag
     // DO was hibernated; re-establish Yjs state without re-registering event listeners
     await setupWSConnection(conn, docName, env, storage, ctx, true);
     doc = docs.get(docName);
+  } else if (!doc.conns.has(conn)) {
+    // The doc was already cached (another connection got there first), so the setup
+    // path above was skipped. Register conn defensively — without this, a client that
+    // wins the race against ctx.waitUntil(initSession(...)) can have its awareness
+    // update processed before initSession's own doc.conns registration runs, leaving
+    // its clientID attributed to no conn and leaking it forever on close.
+    doc.conns.set(conn, new Set());
   }
   if (doc) {
     await messageListener(conn, doc, new Uint8Array(message));

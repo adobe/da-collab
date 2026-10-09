@@ -1,3 +1,52 @@
+## [1.7.11](https://github.com/adobe/da-collab/compare/v1.7.10...v1.7.11) (2026-10-08)
+
+
+### Bug Fixes
+
+* **collab:** retry transient DO errors ([#204](https://github.com/adobe/da-collab/issues/204)) ([92aa796](https://github.com/adobe/da-collab/commit/92aa796d5f9a4f73ee032e8f59ceee20b14e6e19))
+
+## [1.7.10](https://github.com/adobe/da-collab/compare/v1.7.9...v1.7.10) (2026-09-15)
+
+
+### Bug Fixes
+
+* force redeploy after da-parser bump ([#201](https://github.com/adobe/da-collab/issues/201)) ([c123fac](https://github.com/adobe/da-collab/commit/c123fac1dd817e0fc56dc836cb7ffcd43087b504))
+
+## [1.7.9](https://github.com/adobe/da-collab/compare/v1.7.8...v1.7.9) (2026-09-02)
+
+
+### Bug Fixes
+
+* use single auth token for Helix Authorization header ([#197](https://github.com/adobe/da-collab/issues/197)) ([1a4f2e1](https://github.com/adobe/da-collab/commit/1a4f2e1aa18a570b3a9b03e32e1c15d345e3122e))
+
+## [1.7.8](https://github.com/adobe/da-collab/compare/v1.7.7...v1.7.8) (2026-08-27)
+
+
+### Bug Fixes
+
+* always use POST to write to Helix ([#193](https://github.com/adobe/da-collab/issues/193)) ([7b2f60b](https://github.com/adobe/da-collab/commit/7b2f60b2c04f5d9bcde0df650064a9e7f620a605))
+
+## [1.7.7](https://github.com/adobe/da-collab/compare/v1.7.6...v1.7.7) (2026-08-19)
+
+
+### Bug Fixes
+
+* set x-error response header on 500 paths ([#190](https://github.com/adobe/da-collab/issues/190)) ([503e882](https://github.com/adobe/da-collab/commit/503e88239af4ac95cbaa50ea11af5971ed04a040))
+
+## [1.7.6](https://github.com/adobe/da-collab/compare/v1.7.5...v1.7.6) (2026-08-07)
+
+
+### Bug Fixes
+
+* register conn defensively in handleWebSocketMessage to close awareness race ([#185](https://github.com/adobe/da-collab/issues/185)) ([2c16f77](https://github.com/adobe/da-collab/commit/2c16f77e6758a0848dfc08c898881dd88156dca4))
+
+## [1.7.5](https://github.com/adobe/da-collab/compare/v1.7.4...v1.7.5) (2026-08-05)
+
+
+### Bug Fixes
+
+* **deps:** update external fixes ([#115](https://github.com/adobe/da-collab/issues/115)) ([5515352](https://github.com/adobe/da-collab/commit/55153528cac3f94c085dc7244c3d1bea127ffd97))
+
 ## [1.7.4](https://github.com/adobe/da-collab/compare/v1.7.3...v1.7.4) (2026-06-26)
 
 

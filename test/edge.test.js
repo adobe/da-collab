@@ -534,6 +534,7 @@ describe('Worker test suite', () => {
       const req = { headers, url: 'http://localhost:4711/' };
       const resp = await dr.fetch(req);
       assert.equal(500, resp.status);
+      assert.equal('pair creation failed', resp.headers.get('x-error'));
     } finally {
       DocRoom.newWebSocketPair = savedNWSP;
     }
@@ -600,6 +601,7 @@ describe('Worker test suite', () => {
     const res = await handleErrors(req, env, f);
     assert.strictEqual(res.status, 500);
     assert.strictEqual(await res.text(), 'Internal Server Error');
+    assert.strictEqual(res.headers.get('x-error'), 'testing');
   });
 
   it('Test HandleError error (enable stack trace)', async () => {
@@ -617,6 +619,7 @@ describe('Worker test suite', () => {
     const res = await handleErrors(req, env, f);
     assert.strictEqual(res.status, 500);
     assert.match(await res.text(), /at handleErrors/m);
+    assert.strictEqual(res.headers.get('x-error'), 'testing');
   });
 
   it('Test handleErrors WebSocket error (disable stack trace)', async () => {
@@ -780,6 +783,171 @@ describe('Worker test suite', () => {
     assert.equal('qrtoefi', rfreq.headers.get('Authorization'));
     assert.equal('myval', rfreq.headers.get('myheader'));
     assert.equal('https://admin.da.live/laaa.html', rfreq.headers.get('X-collab-room'));
+  });
+
+  it('retries transient Durable Object failures once for WebSocket upgrades', async () => {
+    let attempts = 0;
+    const stubs = [];
+    const warnings = [];
+    const savedWarn = console.warn;
+    console.warn = (...args) => warnings.push(args);
+
+    const env = {
+      daadmin: { fetch: async () => new Response(null, { status: 200 }) },
+      rooms: {
+        idFromName: () => 'room-id',
+        get: () => {
+          const stub = {
+            fetch: async () => {
+              attempts += 1;
+              if (attempts === 1) {
+                throw new Error('internal error; reference = transientref');
+              }
+              return new Response(null, { status: 200 });
+            },
+          };
+          stubs.push(stub);
+          return stub;
+        },
+      },
+    };
+    const req = {
+      url: 'https://collab.da.live/https://admin.da.live/site/page.html',
+      headers: new Headers({ upgrade: 'websocket' }),
+    };
+
+    try {
+      const response = await handleApiRequest(req, env);
+
+      assert.equal(200, response.status);
+      assert.equal(2, attempts);
+      assert.equal(2, stubs.length, 'retry must obtain a fresh DO stub');
+      assert.notEqual(stubs[0], stubs[1], 'retry must not reuse the failed stub');
+      assert.equal(1, warnings.length);
+      assert.match(String(warnings[0][0]), /Recovered.*after transient error/);
+    } finally {
+      console.warn = savedWarn;
+    }
+  });
+
+  it('does not retry non-transient or non-WebSocket Durable Object failures', async () => {
+    const assertNotRetried = async (message, upgrade) => {
+      let attempts = 0;
+      const errors = [];
+      const savedError = console.error;
+      console.error = (...args) => errors.push(args);
+      const env = {
+        daadmin: { fetch: async () => new Response(null, { status: 200 }) },
+        rooms: {
+          idFromName: () => 'room-id',
+          get: () => ({
+            fetch: async () => {
+              attempts += 1;
+              throw new Error(message);
+            },
+          }),
+        },
+      };
+      const headers = new Headers();
+      if (upgrade) {
+        headers.set('upgrade', upgrade);
+      }
+
+      try {
+        const response = await handleApiRequest({
+          url: 'https://collab.da.live/https://admin.da.live/site/page.html',
+          headers,
+        }, env);
+
+        assert.equal(500, response.status);
+        assert.equal(1, attempts);
+        assert.equal(1, errors.length);
+      } finally {
+        console.error = savedError;
+      }
+    };
+
+    await assertNotRetried('application error', 'websocket');
+    await assertNotRetried('Network connection lost.', 'websocket');
+    await assertNotRetried('internal error; reference = transientref');
+  });
+
+  it('returns a logged 500 when a transient Durable Object failure persists after retry', async () => {
+    let attempts = 0;
+    const errors = [];
+    const savedError = console.error;
+    console.error = (...args) => errors.push(args);
+    const env = {
+      daadmin: { fetch: async () => new Response(null, { status: 200 }) },
+      rooms: {
+        idFromName: () => 'room-id',
+        get: () => ({
+          fetch: async () => {
+            attempts += 1;
+            throw new Error(`internal error; reference = attempt${attempts}`);
+          },
+        }),
+      },
+    };
+
+    try {
+      const response = await handleApiRequest({
+        url: 'https://collab.da.live/https://admin.da.live/site/page.html',
+        headers: new Headers({ upgrade: 'websocket' }),
+      }, env);
+
+      assert.equal(500, response.status);
+      assert.equal('internal error; reference = attempt2', response.headers.get('x-error'));
+      assert.equal(2, attempts);
+      assert.equal(1, errors.length);
+    } finally {
+      console.error = savedError;
+    }
+  });
+
+  it('keeps a retry response with a 500 status visible as an error', async () => {
+    let attempts = 0;
+    const warnings = [];
+    const errors = [];
+    const savedWarn = console.warn;
+    const savedError = console.error;
+    console.warn = (...args) => warnings.push(args);
+    console.error = (...args) => errors.push(args);
+    const env = {
+      daadmin: { fetch: async () => new Response(null, { status: 200 }) },
+      rooms: {
+        idFromName: () => 'room-id',
+        get: () => ({
+          fetch: async () => {
+            attempts += 1;
+            if (attempts === 1) {
+              throw new Error('internal error; reference = transientref');
+            }
+            return new Response('failed', {
+              status: 500,
+              headers: { 'x-error': 'second-attempt-failed' },
+            });
+          },
+        }),
+      },
+    };
+
+    try {
+      const response = await handleApiRequest({
+        url: 'https://collab.da.live/https://admin.da.live/site/page.html',
+        headers: new Headers({ upgrade: 'websocket' }),
+      }, env);
+
+      assert.equal(500, response.status);
+      assert.equal('second-attempt-failed', response.headers.get('x-error'));
+      assert.equal(2, attempts);
+      assert.equal(0, warnings.length);
+      assert.equal(1, errors.length);
+      assert.match(String(errors[0][0]), /retry.*returned HTTP 500/);
+    } finally {
+      console.warn = savedWarn;
+      console.error = savedError;
+    }
   });
 
   it('Test handleApiRequest via Service Binding (param auth)', async () => {
@@ -990,6 +1158,25 @@ describe('Worker test suite', () => {
     const res = await handleApiRequest(req, env);
     assert.equal(500, res.status);
     assert.equal('unable to get resource', await res.text());
+    assert.equal('Network error', res.headers.get('x-error'));
+  });
+
+  it('Test handleApiRequest da-admin 500 passthrough sets x-error', async () => {
+    const req = {
+      url: 'http://do.re.mi/https://admin.da.live/test.html',
+      headers: new Headers(),
+    };
+
+    const mockFetch = async (url, opts) => new Response(null, {
+      status: 500,
+      headers: { 'x-error': 'da-admin internal error' },
+    });
+    const daadmin = { fetch: mockFetch };
+    const env = { daadmin };
+
+    const res = await handleApiRequest(req, env);
+    assert.equal(500, res.status);
+    assert.equal('da-admin internal error', res.headers.get('x-error'));
   });
 
   it('Test handleApiRequest room object fetch exception', async () => {
@@ -1028,6 +1215,7 @@ describe('Worker test suite', () => {
     const res = await handleApiRequest(req, env);
     assert.equal(500, res.status);
     assert.equal('unable to get resource', await res.text());
+    assert.equal('Room fetch error', res.headers.get('x-error'));
   });
 
   it('Test DocRoom newWebSocketPair', () => {

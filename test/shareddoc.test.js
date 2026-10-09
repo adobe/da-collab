@@ -11,6 +11,7 @@
  */
 import * as Y from 'yjs';
 import * as syncProtocol from 'y-protocols/sync.js';
+import * as awarenessProtocol from 'y-protocols/awareness.js';
 import * as encoding from 'lib0/encoding.js';
 import * as decoding from 'lib0/decoding.js';
 import assert from 'node:assert';
@@ -20,7 +21,7 @@ import {
   aem2doc, doc2aem, doc2json, EMPTY_DOC,
 } from '@adobe/da-parser';
 import {
-  closeConn, getBackend, getYDoc, isHelixDoc,
+  closeConn, getBackend, getYDoc, handleWebSocketMessage, isHelixDoc,
   invalidateFromAdmin, isExpectedPlatformEvent, messageFlushRequest,
   messageFlushResponse, messageListener, persistence,
   readState, safePutLastsync, setupWSConnection, setYDoc,
@@ -1742,6 +1743,52 @@ describe('Collab Test Suite', () => {
     }
   });
 
+  it('handleWebSocketMessage registers conn in doc.conns even when doc already exists', async () => {
+    // Reproduces the reload-duplicate-awareness bug: initSession's ctx.waitUntil(...)
+    // registers the conn into doc.conns asynchronously and isn't awaited before the
+    // 101 response returns. If the doc is already cached (another tab connected) and
+    // the client's first awareness message wins that race, handleWebSocketMessage used
+    // to skip registration entirely (it only ran setupWSConnection when `doc` was
+    // missing), so the new clientID got broadcast/stored but never attributed to any
+    // conn — leaving closeConn with an empty controlledIds set and leaking the
+    // awareness entry forever.
+    const docName = 'http://www.acme.org/racedoc.html';
+    const ydoc = new WSSharedDoc(docName);
+    setYDoc(docName, ydoc);
+
+    // Simulate an already-connected peer (the other open tab).
+    const existingConn = { readyState: 1, send: () => {}, close: () => {} }; // wsReadyStateOpen
+    ydoc.conns.set(existingConn, new Set());
+
+    // Build a real awareness update, as a newly-connecting tab would send it.
+    const clientDoc = new Y.Doc();
+    const clientAwareness = new awarenessProtocol.Awareness(clientDoc);
+    clientAwareness.setLocalState({ user: { id: 'u1', name: 'User One' } });
+    const update = awarenessProtocol.encodeAwarenessUpdate(clientAwareness, [clientDoc.clientID]);
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, 1); // messageAwareness
+    encoding.writeVarUint8Array(encoder, update);
+    const message = encoding.toUint8Array(encoder);
+
+    // newConn's own doc.conns registration has NOT happened yet — the race being tested.
+    const newConn = { readyState: 1, send: () => {}, close: () => {} }; // wsReadyStateOpen
+    await handleWebSocketMessage(newConn, docName, {}, {}, message, {});
+
+    assert(ydoc.conns.has(newConn), 'conn should be registered even though doc already existed');
+    assert.deepStrictEqual(Array.from(ydoc.conns.get(newConn)), [clientDoc.clientID]);
+    assert(ydoc.awareness.getStates().has(clientDoc.clientID));
+
+    // The new conn closes (e.g. tab reloads again) — its awareness state must go with it.
+    await closeConn(ydoc, newConn);
+    assert(
+      !ydoc.awareness.getStates().has(clientDoc.clientID),
+      'awareness state must be cleaned up on close, not leaked',
+    );
+
+    clientAwareness.destroy();
+    clientDoc.destroy();
+  });
+
   it('Test WSSharedDoc', () => {
     const doc = new WSSharedDoc('hello');
     assert.equal(doc.name, 'hello');
@@ -3127,12 +3174,46 @@ describe('Collab Test Suite', () => {
       assert.equal(1, calls.length);
       const { url, opts } = calls[0];
       assert.equal(url, 'https://api.aem.live/owner/repo/page.html');
-      assert.equal(opts.method, 'PUT');
-      assert.strictEqual(opts.body, body, 'Helix PUT body must be the raw content string, not FormData');
+      assert.equal(opts.method, 'POST');
+      assert.strictEqual(opts.body, body, 'Helix POST body must be the raw content string, not FormData');
       assert.equal(opts.headers.get('Content-Type'), 'text/html');
       assert.equal(opts.headers.get('If-Match'), '*');
       assert.equal(opts.headers.get('X-DA-Initiator'), 'collab');
       assert.equal(opts.headers.get('Authorization'), 'Bearer abc');
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+  });
+
+  it('persistence.put for a Helix doc with multiple connections uses only the first auth (no comma-join)', async () => {
+    const savedFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+      calls.push({ url, opts });
+      return { ok: true, status: 200, statusText: 'OK' };
+    };
+    try {
+      const conns = new Map();
+      conns.set({ auth: 'Bearer abc' }, new Set());
+      conns.set({ auth: 'Bearer xyz' }, new Set());
+      const ydoc = {
+        name: 'https://api.aem.live/owner/repo/page.html',
+        conns,
+        daadmin: {
+          fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
+        },
+      };
+      const body = '<main><div><p>some helix content that is long enough to avoid the empty-stub warning padding</p></div></main>';
+      const result = await persistence.put(ydoc, body);
+
+      assert(result.ok);
+      assert.equal(1, calls.length);
+      const { opts } = calls[0];
+      assert.equal(opts.headers.get('Authorization'), 'Bearer abc');
+      assert(
+        !opts.headers.get('Authorization').includes(','),
+        'Helix Authorization header must not be a comma-joined multi-auth value',
+      );
     } finally {
       globalThis.fetch = savedFetch;
     }
