@@ -44,10 +44,10 @@
   },
   "dependencies": {
     "@adobe/da-parser": "^2.2.0",
-    "@cloudflare/workers-types": "5.20260804.1",
-    "lib0": "0.2.117",
+    "@cloudflare/workers-types": "5.20260926.1",
+    "lib0": "0.2.118",
     "y-protocols": "1.0.7",
-    "yjs": "13.6.32"
+    "yjs": "13.6.33"
   },
   "lint-staged": {
     "*.js": "eslint",
