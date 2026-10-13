@@ -45,6 +45,8 @@ while the session is connected. A changed ETag or a 404/410 response closes the 
 pending local saves, and removes the stored restore anchor. Invalidation therefore does not
 flush stale edits back to the backend, and reconnecting sessions reload the source document.
 Ordinary connection closure and da-admin invalidation retain their existing save-flushing behavior.
+ETag tracking and polling are Helix-only; da-admin relies on its `syncAdmin`/`deleteAdmin`
+invalidation callbacks rather than periodic HEAD requests.
 
 If a Helix session cannot restore from a matching stored anchor, the backend reload is mandatory
 even when the reconnecting client sends updates during initialization. Saves and flush

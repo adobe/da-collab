@@ -489,12 +489,12 @@ export const persistence = {
   closeConn,
 
   /**
-   * Get the document from da-admin.
+   * Get the document from its backend.
    * @param {string} docName - The document name
    * @param {string} auth - The authorization header
    * @param {WSSharedDoc} ydoc - the ydoc; provides the da-admin service binding
-   *   (`ydoc.daadmin`) and receives the document's ETag (`ydoc.etag`) read from
-   *   the response for later HEAD-based change detection.
+   *   (`ydoc.daadmin`). Helix documents also receive a normalized ETag
+   *   (`ydoc.etag`) for protected saves and HEAD-based change detection.
    * @returns {Promise<string>} - The content of the document
    * @throws {Error} - If the document cannot be retrieved (including 404)
    */
@@ -516,8 +516,10 @@ export const persistence = {
       ydoc.etagUnverified = !etag;
     }
     if (initialReq.ok) {
-      // eslint-disable-next-line no-param-reassign
-      ydoc.etag = isHelix ? etag : initialReq.headers.get('etag');
+      if (isHelix) {
+        // eslint-disable-next-line no-param-reassign
+        ydoc.etag = etag;
+      }
       return docType === 'json' ? initialReq.json() : initialReq.text();
     } else {
       const msg = `[docroom] Unable to get resource from da-admin: ${initialReq.status} - ${initialReq.statusText}`;
@@ -541,11 +543,11 @@ export const persistence = {
   },
 
   /**
-   * Store the content in da-admin.
+   * Store the content in its backend.
    * @param {WSSharedDoc} ydoc - The Yjs document, which among other things contains the service
    * binding to da-admin.
    * @param {string} content - The content to store
-   * @returns {Promise<object>} The response from da-admin.
+   * @returns {Promise<object>} The response from the backend.
    */
   put: async (ydoc, content) => {
     const backend = getBackend(ydoc.name, ydoc);
@@ -563,7 +565,7 @@ export const persistence = {
       return { ok: true };
     }
 
-    const storedEtag = normalizeEtag(ydoc.etag);
+    const storedEtag = isHelix ? normalizeEtag(ydoc.etag) : null;
     if (isHelix && (!storedEtag || storedEtag === '*' || ydoc.etagUnverified)) {
       throw new Error('Cannot save Helix document without a verified ETag; reload the document');
     }
@@ -593,39 +595,36 @@ export const persistence = {
       console.warn('[docroom] Writing back an empty document', ydoc.name, bodySize);
     }
 
-    // Track writes even when the backend omits an ETag or returns the same one.
-    // Any HEAD overlapping a write is too old to invalidate this session.
-    // eslint-disable-next-line no-param-reassign
-    ydoc.saveGeneration = (ydoc.saveGeneration ?? 0) + 1;
-    // eslint-disable-next-line no-param-reassign
-    ydoc.pendingPuts = (ydoc.pendingPuts ?? 0) + 1;
+    if (isHelix) {
+      // Any HEAD overlapping a Helix write is too old to invalidate this session,
+      // even when the backend omits an ETag or returns the same one.
+      // eslint-disable-next-line no-param-reassign
+      ydoc.saveGeneration = (ydoc.saveGeneration ?? 0) + 1;
+      // eslint-disable-next-line no-param-reassign
+      ydoc.pendingPuts = (ydoc.pendingPuts ?? 0) + 1;
+    }
     let response;
     try {
       response = await backend.fetch(ydoc.name, opts);
     } finally {
-      // eslint-disable-next-line no-param-reassign
-      ydoc.pendingPuts -= 1;
+      if (isHelix) {
+        // eslint-disable-next-line no-param-reassign
+        ydoc.pendingPuts -= 1;
+      }
     }
     const {
       ok, status, statusText, body, headers: respHeaders,
     } = response;
 
-    if (ok) {
+    if (ok && isHelix) {
       const etag = respHeaders.get('etag');
-      if (isHelix) {
-        // eslint-disable-next-line no-param-reassign
-        ydoc.etag = normalizeEtag(etag);
-        // eslint-disable-next-line no-param-reassign
-        ydoc.etagUnverified = !etag;
-        if (!etag) {
-          // eslint-disable-next-line no-console
-          console.warn('[docroom] Helix save response missing ETag; protected saves require a reload', ydoc.name);
-        }
-      } else if (etag) {
-        // Keep the current document ETag so the periodic HEAD check can detect
-        // out-of-band changes to da-admin.
-        // eslint-disable-next-line no-param-reassign
-        ydoc.etag = etag;
+      // eslint-disable-next-line no-param-reassign
+      ydoc.etag = normalizeEtag(etag);
+      // eslint-disable-next-line no-param-reassign
+      ydoc.etagUnverified = !etag;
+      if (!etag) {
+        // eslint-disable-next-line no-console
+        console.warn('[docroom] Helix save response missing ETag; protected saves require a reload', ydoc.name);
       }
     }
 
@@ -642,13 +641,14 @@ export const persistence = {
   },
 
   /**
-   * Issue a HEAD request to the backend and compare the document's current ETag
+   * Issue a HEAD request to Helix and compare the document's current ETag
    * against the one stored on the ydoc (`ydoc.etag`). Ignore obsolete responses
    * and retry failed requests on the next polling interval.
    * @param {WSSharedDoc} ydoc - the ydoc holding the last known ETag.
    */
   checkEtag: async (ydoc) => {
-    if (ydoc.isDestroyed || ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0
+    if (!isHelixDoc(ydoc.name, ydoc)
+      || ydoc.isDestroyed || ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0
       || ydoc.etagCheckAbortController || ydoc.pendingPuts > 0) {
       return;
     }
@@ -657,20 +657,17 @@ export const persistence = {
     // eslint-disable-next-line no-param-reassign
     ydoc.etagCheckAbortController = controller;
     try {
-      const isHelix = isHelixDoc(ydoc.name, ydoc);
       const backend = getBackend(ydoc.name, ydoc);
       const auth = Array.from(ydoc.conns.keys())
         .map((con) => con.auth || '');
-      const authorizations = isHelix
-        ? [...new Set(auth)]
-        : [[...new Set(auth.filter(Boolean))].join(',')];
+      const authorizations = [...new Set(auth)];
       let res;
       for (const authorization of authorizations) {
         if (ydoc.isDestroyed || controller.signal.aborted
           || ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0) {
           return;
         }
-        const tokenIsActive = !isHelix || Array.from(ydoc.conns.keys())
+        const tokenIsActive = Array.from(ydoc.conns.keys())
           .some((con) => (con.auth || '') === authorization);
         if (tokenIsActive) {
           const opts = { method: 'HEAD', signal: controller.signal };
@@ -685,7 +682,7 @@ export const persistence = {
             || ydoc.etag !== etag || ydoc.saveGeneration !== saveGeneration) {
             return;
           }
-          if (isHelix && (res.status === 401 || res.status === 403)) {
+          if (res.status === 401 || res.status === 403) {
             const reason = res.status === 401 ? 'unauthorized' : 'forbidden';
             const code = res.status === 401 ? 4401 : 4403;
             // eslint-disable-next-line no-console
@@ -709,17 +706,8 @@ export const persistence = {
         return;
       }
       if (!res.ok) {
-        const msg = `[docroom] Etag HEAD failed: ${res.status} - ${res.statusText}`;
-        if (res.status === 401) {
-          // eslint-disable-next-line no-console
-          console.warn(msg, ydoc.name);
-        } else if (res.status === 403) {
-          // eslint-disable-next-line no-console
-          console.log(msg, ydoc.name);
-        } else {
-          // eslint-disable-next-line no-console
-          console.error(msg, ydoc.name);
-        }
+        // eslint-disable-next-line no-console
+        console.error(`[docroom] Etag HEAD failed: ${res.status} - ${res.statusText}`, ydoc.name);
         return;
       }
       const currentEtag = normalizeEtag(res.headers.get('etag'));

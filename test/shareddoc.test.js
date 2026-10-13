@@ -163,7 +163,8 @@ describe('Collab Test Suite', () => {
     const ydoc = { daadmin };
     const result = await persistence.get('foo', undefined, ydoc);
     assert.equal(result, 'content');
-    assert.equal(ydoc.etag, 'W/"abc"', 'ETag from the GET response must be stored on the ydoc');
+    assert.equal(ydoc.etag, undefined, 'da-admin GET must not track ETags');
+    assert.equal(ydoc.etagUnverified, undefined);
   });
 
   it('Test persistence get auth', async () => {
@@ -3303,12 +3304,15 @@ describe('Collab Test Suite', () => {
       const daadmin = {
         fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
       };
+      const ydoc = { daadmin };
       const result = await persistence.get(
         'https://api.aem.live/owner/repo/page.html',
         'Bearer t',
-        { daadmin },
+        ydoc,
       );
       assert.equal(result, 'helix content');
+      assert.equal(ydoc.etag, '"initial"');
+      assert.equal(ydoc.etagUnverified, false);
       assert.equal(1, calls.length);
       assert.equal(calls[0].url, 'https://api.aem.live/owner/repo/page.html');
       assert.equal(calls[0].opts.headers.get('Authorization'), 'Bearer t');
@@ -3425,12 +3429,16 @@ describe('Collab Test Suite', () => {
       fetch: async (url, opts) => {
         calls.push({ url, opts });
         return {
-          ok: true, status: 200, statusText: 'OK', headers: new Headers(),
+          ok: true, status: 200, statusText: 'OK', headers: new Headers({ etag: '"unused"' }),
         };
       },
     };
-    const conns = new Map();
-    conns.set({ auth: 'a' }, new Set());
+    const conns = new Map([
+      [{ auth: 'auth-a' }, new Set()],
+      [{ auth: 'auth-b' }, new Set()],
+      [{ auth: 'auth-a' }, new Set()],
+      [{ auth: 'read-only', readOnly: true }, new Set()],
+    ]);
     const ydoc = { name: 'https://admin.da.live/source/x.html', conns, daadmin };
     const body = 'plain html content larger than empty stub padding padding padding padding padding padding';
     await persistence.put(ydoc, body);
@@ -3447,6 +3455,13 @@ describe('Collab Test Suite', () => {
       null,
       'da-admin path must not set Content-Type explicitly (FormData boundary handles it)',
     );
+    assert.equal(calls[0].opts.method, 'PUT');
+    assert.equal(calls[0].opts.headers.get('Authorization'), 'auth-a,auth-b');
+    assert.equal(calls[0].opts.headers.get('If-Match'), '*');
+    assert.equal(ydoc.etag, undefined, 'da-admin PUT must not track ETags');
+    assert.equal(ydoc.etagUnverified, undefined);
+    assert.equal(ydoc.saveGeneration, undefined);
+    assert.equal(ydoc.pendingPuts, undefined);
   });
 
   for (const mode of ['true', 'local', 'false']) {
@@ -3489,15 +3504,15 @@ describe('Collab Test Suite', () => {
           assert.equal(await opts.body.get('data').text(), body);
           assert.equal(opts.headers.get('Content-Type'), null);
         }
-        assert.equal(ydoc.etag, '"saved"');
+        assert.equal(ydoc.etag, isHelix ? '"saved"' : 'W/"initial"');
       } finally {
         globalThis.fetch = savedFetch;
       }
     });
   }
 
-  for (const mode of [undefined, 'true', 'local', 'false']) {
-    it(`persistence.checkEtag uses backend-appropriate auth with IS_HELIX=${mode}`, async () => {
+  for (const mode of [undefined, 'true', 'local']) {
+    it(`persistence.checkEtag uses a single Helix token with IS_HELIX=${mode}`, async () => {
       const savedFetch = globalThis.fetch;
       const calls = [];
       const fetch = async (url, opts) => {
@@ -3522,9 +3537,37 @@ describe('Collab Test Suite', () => {
         assert.equal(calls.length, 1);
         const { url, opts } = calls[0];
         const origin = mode === 'local' ? 'http://localhost:3000' : 'https://api.aem.live';
-        assert.equal(url, mode === 'false' ? name : `${origin}/o/sites/r/source/p.html`);
+        assert.equal(url, `${origin}/o/sites/r/source/p.html`);
         assert.equal(opts.method, 'HEAD');
-        assert.equal(opts.headers.get('Authorization'), mode === 'false' ? 'auth-a,auth-b' : 'auth-a');
+        assert.equal(opts.headers.get('Authorization'), 'auth-a');
+      } finally {
+        globalThis.fetch = savedFetch;
+        docs.delete(name);
+      }
+    });
+  }
+
+  for (const [name, mode] of [
+    ['https://admin.da.live/source/o/r/p.html', undefined],
+    ['https://api.aem.live/o/sites/r/source/p.html', 'false'],
+  ]) {
+    it(`persistence.checkEtag ignores da-admin documents with IS_HELIX=${mode}`, async () => {
+      const savedFetch = globalThis.fetch;
+      const fetch = async () => assert.fail('da-admin documents must not issue polling HEAD requests');
+      globalThis.fetch = fetch;
+      const conns = new Map([
+        [{ auth: 'auth-a' }, new Set()],
+        [{ auth: 'auth-b' }, new Set()],
+      ]);
+      const ydoc = {
+        name, conns, IS_HELIX: mode, daadmin: { fetch }, etag: '"unused"',
+      };
+      const docs = setYDoc(name, ydoc);
+      try {
+        await persistence.checkEtag(ydoc);
+
+        assert.equal(conns.size, 2);
+        assert.equal(ydoc.etagCheckAbortController, undefined);
       } finally {
         globalThis.fetch = savedFetch;
         docs.delete(name);
@@ -4455,16 +4498,15 @@ describe('Collab Test Suite', () => {
       assert.equal(conn.closeCode, 4401);
     });
 
-    it('da-admin polling auth failure keeps its existing combined-header and connection behavior', async () => {
+    it('da-admin documents do not poll or close connections on backend auth failure', async () => {
       const { ydoc, conn } = makeDoc('admin-auth');
       ydoc.IS_HELIX = 'false';
       const peer = makeConn('auth-other');
       ydoc.conns.set(peer, new Set());
       let calls = 0;
       ydoc.daadmin = {
-        fetch: async (_url, opts) => {
+        fetch: async () => {
           calls += 1;
-          assert.equal(opts.headers.get('Authorization'), 'auth-a,auth-other');
           return new Response(null, { status: 403 });
         },
       };
@@ -4472,7 +4514,7 @@ describe('Collab Test Suite', () => {
       await persistence.checkEtag(ydoc);
       await persistence.checkEtag(ydoc);
 
-      assert.equal(calls, 2);
+      assert.equal(calls, 0);
       assert.equal(conn.closed, false);
       assert.equal(peer.closed, false);
     });
