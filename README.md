@@ -58,12 +58,19 @@ logs the missing validator and pauses further protected saves until reload. da-a
 its existing multipart PUT and `If-Match: *` behavior. Complete lost-update protection additionally
 requires the API to enforce the precondition atomically at the storage write.
 
-Failed HEAD requests and successful responses without an ETag are logged and retried on the next
+Helix polling retries the distinct tokens of other active collaborators after a 401/403.
+Connections using rejected tokens close with 4401/4403 so the editor can refresh authentication;
+stored pending edits are preserved and no save is attempted with rejected credentials.
+Other failed HEAD requests and successful responses without an ETag are logged and retried on the next
 interval without disconnecting editors. Only one HEAD request is in flight per document, and
 responses overlapping a local save or belonging to an old session are ignored. Polling starts
 only if initialization finishes for the current, connected document. Destroying the document
 clears its polling timer and aborts any pending HEAD request; late initialization cannot restart
 polling after disconnect. The idle-but-connected session policy is unchanged.
+
+Helix flush acknowledgements report failure when the save was refused or failed, including a
+missing verified ETag. Failed saves retain the unsaved-change flag, and a later successful save
+clears the error. Error notifications do not trigger additional background save attempts.
 
 ### Recommendations
 1. We recommend running `npm run lint` for linting.

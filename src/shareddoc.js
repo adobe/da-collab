@@ -154,6 +154,7 @@ const messageSync = 0;
 const messageAwareness = 1;
 export const messageFlushRequest = 2;
 export const messageFlushResponse = 3;
+const ERROR_ORIGIN = Symbol('error-notification');
 const MAX_STORAGE_KEYS = 128;
 const MAX_STORAGE_VALUE_SIZE = 131072;
 
@@ -203,8 +204,9 @@ function getDocType(docName) {
  * @param {ydoc} doc - the ydoc to close the connection for.
  * @param {WebSocket} conn - the websocket connection to close.
  * @param {boolean} skipSave - skip flushing stale or re-entrant saves.
+ * @param {object} [closeOptions] - optional WebSocket close code and reason.
  */
-export const closeConn = async (doc, conn, skipSave = false) => {
+export const closeConn = async (doc, conn, skipSave = false, closeOptions = undefined) => {
   try {
     if (doc.conns.has(conn)) {
       const controlledIds = doc.conns.get(conn);
@@ -224,7 +226,11 @@ export const closeConn = async (doc, conn, skipSave = false) => {
         if (doc.flushSave && !skipSave && !doc.discardPendingChanges) {
           // eslint-disable-next-line no-console
           console.log('[docroom] Flushing pending save on last connection close', doc.name);
-          await doc.flushSave();
+          try {
+            await doc.flushSave();
+          } catch (err) {
+            logError(err, '[docroom] Failed to flush on last connection close', doc.name, err);
+          }
         }
         const duration = conn.connectedAt ? Date.now() - conn.connectedAt : 0;
         // eslint-disable-next-line no-console
@@ -233,7 +239,11 @@ export const closeConn = async (doc, conn, skipSave = false) => {
         docs.delete(doc.name);
       }
     }
-    conn.close();
+    if (closeOptions) {
+      conn.close(closeOptions.code, closeOptions.reason);
+    } else {
+      conn.close();
+    }
   } catch (e) {
     /* c8 ignore start */
     // we can ignore an exception here, connection will be closed anyway
@@ -374,7 +384,7 @@ export const showError = (ydoc, err) => {
       if (ydoc.sendStackTraces) {
         em.set('stack', err.stack);
       }
-    });
+    }, ERROR_ORIGIN);
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[docroom] Error while showing error', e, err);
@@ -647,21 +657,51 @@ export const persistence = {
     // eslint-disable-next-line no-param-reassign
     ydoc.etagCheckAbortController = controller;
     try {
-      const opts = { method: 'HEAD', signal: controller.signal };
+      const isHelix = isHelixDoc(ydoc.name, ydoc);
+      const backend = getBackend(ydoc.name, ydoc);
       const auth = Array.from(ydoc.conns.keys())
-        .map((con) => con.auth)
-        .filter(Boolean);
-      if (auth.length > 0) {
-        const authorization = isHelixDoc(ydoc.name, ydoc) ? auth[0] : [...new Set(auth)].join(',');
-        opts.headers = new Headers({ Authorization: authorization });
+        .map((con) => con.auth || '');
+      const authorizations = isHelix
+        ? [...new Set(auth)]
+        : [[...new Set(auth.filter(Boolean))].join(',')];
+      let res;
+      for (const authorization of authorizations) {
+        if (ydoc.isDestroyed || controller.signal.aborted
+          || ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0) {
+          return;
+        }
+        const tokenIsActive = !isHelix || Array.from(ydoc.conns.keys())
+          .some((con) => (con.auth || '') === authorization);
+        if (tokenIsActive) {
+          const opts = { method: 'HEAD', signal: controller.signal };
+          if (authorization) {
+            opts.headers = new Headers({ Authorization: authorization });
+          }
+          // eslint-disable-next-line no-await-in-loop
+          res = await backend.fetch(ydoc.name, opts);
+          res.body?.cancel();
+          if (ydoc.isDestroyed || controller.signal.aborted
+            || ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0
+            || ydoc.etag !== etag || ydoc.saveGeneration !== saveGeneration) {
+            return;
+          }
+          if (isHelix && (res.status === 401 || res.status === 403)) {
+            const reason = res.status === 401 ? 'unauthorized' : 'forbidden';
+            const code = res.status === 401 ? 4401 : 4403;
+            // eslint-disable-next-line no-console
+            console.warn('[docroom] Etag HEAD authorization failed; reconnecting affected clients', ydoc.name, res.status);
+            const rejected = Array.from(ydoc.conns.keys())
+              .filter((con) => (con.auth || '') === authorization);
+            // Skip flushing with rejected credentials; keep stored pending edits.
+            // eslint-disable-next-line no-await-in-loop
+            await Promise.all(rejected.map((con) => closeConn(ydoc, con, true, { code, reason })));
+            res = undefined;
+          } else {
+            break;
+          }
+        }
       }
-      const res = await getBackend(ydoc.name, ydoc).fetch(ydoc.name, opts);
-      if (res.body) {
-        res.body.cancel();
-      }
-      if (ydoc.isDestroyed || controller.signal.aborted
-        || ydoc !== docs.get(ydoc.name) || ydoc.conns.size === 0
-        || ydoc.etag !== etag || ydoc.saveGeneration !== saveGeneration) {
+      if (!res) {
         return;
       }
       if (res.status === 404 || res.status === 410) {
@@ -723,6 +763,11 @@ export const persistence = {
    */
   update: async (ydoc, current, docName) => {
     const docType = getDocType(docName);
+    const isHelix = isHelixDoc(docName, ydoc);
+    if (isHelix) {
+      // eslint-disable-next-line no-param-reassign
+      ydoc.lastSaveError = null;
+    }
     let closeAll = false;
     try {
       const content = docType === 'json' ? doc2json(ydoc) : doc2aem(ydoc);
@@ -742,8 +787,10 @@ export const persistence = {
         const { ok, status, statusText } = await persistence.put(ydoc, content);
 
         if (!ok) {
-          if (status === 412 && isHelixDoc(docName, ydoc)) {
+          if (status === 412 && isHelix) {
             const conflict = new Error('412 - Helix document changed externally; reloading the document');
+            // eslint-disable-next-line no-param-reassign
+            ydoc.lastSaveError = conflict;
             // eslint-disable-next-line no-console
             console.warn('[docroom] Helix version conflict', docName, conflict.message);
             showError(ydoc, conflict);
@@ -776,6 +823,10 @@ export const persistence = {
         return content;
       }
     } catch (err) {
+      if (isHelix) {
+        // eslint-disable-next-line no-param-reassign
+        ydoc.lastSaveError = err;
+      }
       if (err?.message?.startsWith('401')) {
         // eslint-disable-next-line no-console
         console.warn('[docroom] Failed to update document', docName, err.message);
@@ -961,8 +1012,10 @@ export const persistence = {
       savingPromise = (async () => {
         try {
           current = await persistence.update(ydoc, current, docName);
-          // eslint-disable-next-line no-param-reassign
-          ydoc.hasClientChanged = false;
+          if (!isHelixDoc(docName, ydoc) || !ydoc.lastSaveError) {
+            // eslint-disable-next-line no-param-reassign
+            ydoc.hasClientChanged = false;
+          }
         } finally {
           saving = false;
           savingPromise = null;
@@ -972,7 +1025,11 @@ export const persistence = {
     };
 
     const debouncedSave = debounce(saveToAdmin, 2000, { maxWait: 10000 });
-    ydoc.on('update', debouncedSave);
+    ydoc.on('update', (update, origin) => {
+      if (origin !== ERROR_ORIGIN || !isHelixDoc(docName, ydoc)) {
+        debouncedSave(update, origin);
+      }
+    });
 
     ydoc.flushSave = async () => {
       debouncedSave.cancel();
@@ -980,8 +1037,14 @@ export const persistence = {
       // starting a new one — ensures the ack is not sent before the PUT finishes.
       if (savingPromise) {
         await savingPromise;
+        if (isHelixDoc(docName, ydoc) && ydoc.lastSaveError) {
+          throw ydoc.lastSaveError;
+        }
       }
       await saveToAdmin();
+      if (isHelixDoc(docName, ydoc) && ydoc.lastSaveError) {
+        throw ydoc.lastSaveError;
+      }
     };
 
     ydoc.cancelSave = () => {

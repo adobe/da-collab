@@ -1011,6 +1011,36 @@ describe('Collab Test Suite', () => {
     assert(!docs.has(mockDoc.name), 'Doc must be removed from global map');
   });
 
+  it('A failed last-connection flush still destroys the document and closes the socket', async () => {
+    const name = 'https://api.aem.live/o/sites/r/source/failed-close-flush.html';
+    const ydoc = new WSSharedDoc(name);
+    const docs = setYDoc(name, ydoc);
+    let closed = false;
+    const conn = {
+      close() { closed = true; },
+    };
+    ydoc.conns.set(conn, new Set());
+    ydoc.flushSave = async () => {
+      throw new Error('Cannot save without a verified ETag');
+    };
+    const errors = [];
+    const savedError = console.error;
+    console.error = (...args) => errors.push(args);
+    try {
+      await closeConn(ydoc, conn);
+
+      assert(closed);
+      assert(ydoc.isDestroyed);
+      assert.equal(docs.get(name), undefined);
+      assert.equal(errors.length, 1);
+      assert(errors[0][0].includes('Failed to flush'));
+    } finally {
+      console.error = savedError;
+      docs.delete(name);
+      ydoc.destroy();
+    }
+  });
+
   it('Flush is a no-op when nothing is pending', async () => {
     const unchangedContent = '<main><div><p>unchanged</p></div></main>';
     const mockdebounce = (f) => {
@@ -3506,17 +3536,25 @@ describe('Collab Test Suite', () => {
     let savedFetch;
     const opened = [];
 
+    function makeConn(auth = 'auth-a') {
+      return {
+        auth,
+        readyState: 1,
+        closed: false,
+        send() {},
+        close(code, reason) {
+          this.closed = true;
+          this.closeCode = code;
+          this.closeReason = reason;
+        },
+      };
+    }
+
     function makeDoc(slug, etag = '"old"', type = 'html') {
       const name = `https://api.aem.live/o/sites/r/source/${slug}.${type}`;
       const ydoc = new WSSharedDoc(name);
       ydoc.etag = etag;
-      const conn = {
-        auth: 'auth-a',
-        readyState: 1,
-        closed: false,
-        send() {},
-        close() { this.closed = true; },
-      };
+      const conn = makeConn();
       ydoc.conns.set(conn, new Set());
       const docs = setYDoc(name, ydoc);
       opened.push({ ydoc, docs });
@@ -3842,8 +3880,8 @@ describe('Collab Test Suite', () => {
       const savedWarn = console.warn;
       console.warn = (...args) => warnings.push(args);
       try {
-        await ydoc.flushSave();
-        await ydoc.flushSave();
+        await assert.rejects(ydoc.flushSave(), /changed externally/);
+        await assert.rejects(ydoc.flushSave(), /changed externally/);
 
         assert.equal(posts, 1);
         assert.equal(remoteContent, '<main><div><p>Externally replaced source</p></div></main>');
@@ -3987,7 +4025,143 @@ describe('Collab Test Suite', () => {
       });
     }
 
-    for (const [status, level] of [[401, 'warn'], [403, 'log'], [429, 'error'], [500, 'error'], [503, 'error']]) {
+    for (const status of [401, 403]) {
+      it(`HEAD ${status} refreshes rejected clients and falls back to a valid peer`, async () => {
+        const { ydoc, conn, docs } = makeDoc(`auth-fallback-${status}`);
+        const peer = makeConn('auth-valid');
+        ydoc.conns.set(peer, new Set());
+        const tokens = [];
+        globalThis.fetch = async (_url, opts) => {
+          const token = opts.headers.get('Authorization');
+          tokens.push(token);
+          return token === conn.auth
+            ? new Response(null, { status })
+            : new Response(null, { headers: { etag: '"old"' } });
+        };
+
+        await persistence.checkEtag(ydoc);
+        await persistence.checkEtag(ydoc);
+
+        assert.deepStrictEqual(tokens, ['auth-a', 'auth-valid', 'auth-valid']);
+        assert(conn.closed);
+        assert.equal(conn.closeCode, status === 401 ? 4401 : 4403);
+        assert.equal(conn.closeReason, status === 401 ? 'unauthorized' : 'forbidden');
+        assert.equal(peer.closed, false);
+        assert.strictEqual(docs.get(ydoc.name), ydoc);
+      });
+    }
+
+    it('auth fallback still detects an external change using another connection token', async () => {
+      const { ydoc, conn, docs } = makeDoc('auth-fallback-change');
+      const peer = makeConn('auth-valid');
+      ydoc.conns.set(peer, new Set());
+      globalThis.fetch = async (_url, opts) => (opts.headers.get('Authorization') === conn.auth
+        ? new Response(null, { status: 401 })
+        : new Response(null, { headers: { etag: '"external"' } }));
+
+      await persistence.checkEtag(ydoc);
+
+      assert.equal(conn.closeCode, 4401);
+      assert(peer.closed);
+      assert.equal(ydoc.discardPendingChanges, true);
+      assert.equal(docs.get(ydoc.name), undefined);
+    });
+
+    it('all rejected tokens close the session without flushing or discarding stored drafts', async () => {
+      const { ydoc, conn, docs } = makeDoc('all-auth-rejected');
+      const peer = makeConn('auth-denied');
+      ydoc.conns.set(peer, new Set());
+      const draft = new Uint8Array([1, 2, 3]);
+      ydoc.storage = makeStorage({ docstore: draft, lastsync: 'original' });
+      ydoc.hasClientChanged = true;
+      ydoc.flushSave = async () => assert.fail('Do not flush with rejected credentials');
+      let heads = 0;
+      globalThis.fetch = async (_url, opts) => {
+        assert.equal(opts.method, 'HEAD');
+        heads += 1;
+        return new Response(null, {
+          status: opts.headers.get('Authorization') === conn.auth ? 401 : 403,
+        });
+      };
+
+      await persistence.checkEtag(ydoc);
+      await persistence.checkEtag(ydoc);
+
+      assert.equal(heads, 2);
+      assert.equal(conn.closeCode, 4401);
+      assert.equal(peer.closeCode, 4403);
+      assert.equal(docs.get(ydoc.name), undefined);
+      assert.equal(ydoc.discardPendingChanges, undefined);
+      assert.equal(await ydoc.storage.get('lastsync'), 'original');
+      assert.deepStrictEqual(await ydoc.storage.get('docstore'), draft);
+      assert.equal(ydoc.etagCheckAbortController, undefined);
+    });
+
+    it('one rejected shared token closes all its connections and is tried only once', async () => {
+      const { ydoc, conn } = makeDoc('duplicate-auth');
+      const duplicate = makeConn(conn.auth);
+      const peer = makeConn('auth-valid');
+      peer.readOnly = true;
+      ydoc.conns.set(duplicate, new Set());
+      ydoc.conns.set(peer, new Set());
+      const tokens = [];
+      globalThis.fetch = async (_url, opts) => {
+        const token = opts.headers.get('Authorization');
+        tokens.push(token);
+        return token === conn.auth
+          ? new Response(null, { status: 401 })
+          : new Response(null, { headers: { etag: ydoc.etag } });
+      };
+
+      await persistence.checkEtag(ydoc);
+
+      assert.deepStrictEqual(tokens, ['auth-a', 'auth-valid']);
+      assert.equal(conn.closeCode, 4401);
+      assert.equal(duplicate.closeCode, 4401);
+      assert.equal(peer.closed, false);
+      assert.equal(ydoc.conns.size, 1);
+    });
+
+    it('anonymous HEAD authorization failure requests authentication without repeated polling', async () => {
+      const { ydoc, conn } = makeDoc('anonymous-auth');
+      conn.auth = undefined;
+      let calls = 0;
+      globalThis.fetch = async (_url, opts) => {
+        calls += 1;
+        assert.equal(opts.headers, undefined);
+        return new Response(null, { status: 401 });
+      };
+
+      await persistence.checkEtag(ydoc);
+      await persistence.checkEtag(ydoc);
+
+      assert.equal(calls, 1);
+      assert.equal(conn.closeCode, 4401);
+    });
+
+    it('da-admin polling auth failure keeps its existing combined-header and connection behavior', async () => {
+      const { ydoc, conn } = makeDoc('admin-auth');
+      ydoc.IS_HELIX = 'false';
+      const peer = makeConn('auth-other');
+      ydoc.conns.set(peer, new Set());
+      let calls = 0;
+      ydoc.daadmin = {
+        fetch: async (_url, opts) => {
+          calls += 1;
+          assert.equal(opts.headers.get('Authorization'), 'auth-a,auth-other');
+          return new Response(null, { status: 403 });
+        },
+      };
+
+      await persistence.checkEtag(ydoc);
+      await persistence.checkEtag(ydoc);
+
+      assert.equal(calls, 2);
+      assert.equal(conn.closed, false);
+      assert.equal(peer.closed, false);
+    });
+
+    for (const [status, level] of [[429, 'error'], [500, 'error'], [503, 'error']]) {
       it(`HEAD ${status} is logged without invalidating and permits the next poll`, async () => {
         const { ydoc, conn, docs } = makeDoc(`failed-${status}`);
         const logged = [];
@@ -4014,6 +4188,188 @@ describe('Collab Test Suite', () => {
         }
       });
     }
+
+    describe('Helix flush acknowledgements', () => {
+      let ydoc;
+      let conn;
+      let docs;
+      let storage;
+      let original;
+      let sent;
+      let posts;
+      let saveResponse;
+
+      function acknowledgements() {
+        return sent.flatMap((message) => {
+          const decoder = decoding.createDecoder(message);
+          if (decoding.readVarUint(decoder) !== messageFlushResponse) {
+            return [];
+          }
+          const ok = decoding.readVarUint(decoder);
+          return [{ ok, error: ok ? undefined : decoding.readVarString(decoder) }];
+        });
+      }
+
+      beforeEach(async () => {
+        ({ ydoc, conn, docs } = makeDoc('flush-ack'));
+        aem2doc('<main><div><p>Original source content for flush acknowledgement tests</p></div></main>', ydoc);
+        original = doc2aem(ydoc);
+        storage = makeStorage({
+          doc: ydoc.name,
+          docstore: Y.encodeStateAsUpdate(ydoc),
+          lastsync: original,
+        });
+        posts = 0;
+        saveResponse = async () => new Response(null, {
+          status: 201, headers: { etag: '"saved"' },
+        });
+        globalThis.fetch = async (_url, opts) => {
+          if (opts.method === 'POST') {
+            posts += 1;
+            return saveResponse(opts);
+          }
+          return new Response(original, { headers: { etag: '"old"' } });
+        };
+        await persistence.bindState(ydoc.name, ydoc, conn, storage);
+        ydoc.hasClientChanged = true;
+        const fragment = ydoc.getXmlFragment('prosemirror');
+        fragment.delete(0, fragment.length);
+        aem2doc('<main><div><p>Changed source content waiting to be saved by the client</p></div></main>', ydoc);
+        sent = [];
+        conn.send = (message) => sent.push(message);
+      });
+
+      it('refused saves return failure acknowledgements and retain unsaved changes', async () => {
+        ydoc.etag = null;
+        ydoc.etagUnverified = true;
+
+        await messageListener(conn, ydoc, new Uint8Array([messageFlushRequest]));
+        await messageListener(conn, ydoc, new Uint8Array([messageFlushRequest]));
+
+        const replies = acknowledgements();
+        assert.equal(replies.length, 2);
+        assert(replies.every(({ ok, error }) => ok === 0 && error.includes('verified ETag')));
+        assert.equal(posts, 0);
+        assert.equal(ydoc.hasClientChanged, true);
+        assert(ydoc.lastSaveError instanceof Error);
+        assert.equal(await storage.get('lastsync'), original);
+        assert.equal(conn.closed, false);
+      });
+
+      it('a successful retry clears the save error and returns a successful acknowledgement', async () => {
+        saveResponse = async () => new Response(null, { status: 503 });
+        await messageListener(conn, ydoc, new Uint8Array([messageFlushRequest]));
+        assert.equal(acknowledgements()[0].ok, 0);
+        assert.equal(ydoc.hasClientChanged, true);
+        assert(ydoc.lastSaveError);
+
+        saveResponse = async () => new Response(null, {
+          status: 201, headers: { etag: '"saved"' },
+        });
+        await messageListener(conn, ydoc, new Uint8Array([messageFlushRequest]));
+
+        assert.deepStrictEqual(acknowledgements().map(({ ok }) => ok), [0, 1]);
+        assert.equal(posts, 2);
+        assert.equal(ydoc.lastSaveError, null);
+        assert.equal(ydoc.hasClientChanged, false);
+        assert.notEqual(await storage.get('lastsync'), original);
+      });
+
+      it('a flush waiting for an in-flight failed save is not acknowledged or retried as success', async () => {
+        const started = deferred();
+        const response = deferred();
+        saveResponse = async () => {
+          started.resolve();
+          return response.promise;
+        };
+        const firstFlush = assert.rejects(ydoc.flushSave(), /503/);
+        await started.promise;
+        const requesting = messageListener(conn, ydoc, new Uint8Array([messageFlushRequest]));
+        await Promise.resolve();
+        assert.equal(acknowledgements().length, 0);
+
+        response.resolve(new Response(null, { status: 503 }));
+        await Promise.all([firstFlush, requesting]);
+
+        assert.equal(posts, 1);
+        assert.equal(acknowledgements().length, 1);
+        assert.equal(acknowledgements()[0].ok, 0);
+        assert(acknowledgements()[0].error.includes('503'));
+        assert.equal(ydoc.hasClientChanged, true);
+      });
+
+      it('a 412 flush rejects after invalidation without a second write', async () => {
+        saveResponse = async () => new Response(null, { status: 412 });
+
+        await assert.rejects(ydoc.flushSave(), /changed externally/);
+        await assert.rejects(ydoc.flushSave(), /changed externally/);
+
+        assert.equal(posts, 1);
+        assert(conn.closed);
+        assert.equal(docs.get(ydoc.name), undefined);
+        assert.equal(ydoc.hasClientChanged, true);
+        assert(ydoc.lastSaveError.message.includes('changed externally'));
+      });
+    });
+
+    it('background save refusal resolves safely and error notifications do not reschedule saves', async () => {
+      let pending;
+      let scheduled = 0;
+      const mockDebounce = (fn) => {
+        const debounced = (...args) => {
+          scheduled += 1;
+          pending = () => fn(...args);
+        };
+        debounced.cancel = () => {
+          pending = undefined;
+        };
+        return debounced;
+      };
+      const pss = await esmock('../src/shareddoc.js', {
+        '../src/debounce.js': { default: mockDebounce },
+      });
+      const name = 'https://api.aem.live/o/sites/r/source/background-save-refusal.html';
+      const doc = new pss.WSSharedDoc(name);
+      const docs = pss.setYDoc(name, doc);
+      const connection = makeConn();
+      doc.conns.set(connection, new Set());
+      aem2doc('<main><div><p>Original content for background refusal</p></div></main>', doc);
+      const original = doc2aem(doc);
+      const storage = makeStorage({
+        doc: name, docstore: Y.encodeStateAsUpdate(doc), lastsync: original,
+      });
+      globalThis.fetch = async (_url, opts) => {
+        assert.notEqual(opts.method, 'POST', 'No unverified write is allowed');
+        return new Response(original, { headers: { etag: '"initial"' } });
+      };
+      try {
+        await pss.persistence.bindState(name, doc, connection, storage);
+        doc.etag = null;
+        doc.etagUnverified = true;
+        doc.hasClientChanged = true;
+        const fragment = doc.getXmlFragment('prosemirror');
+        fragment.delete(0, fragment.length);
+        aem2doc('<main><div><p>Changed content for background refusal</p></div></main>', doc);
+        const backgroundSave = pending;
+        scheduled = 0;
+        pending = undefined;
+
+        await backgroundSave();
+
+        assert(doc.lastSaveError.message.includes('verified ETag'));
+        assert.equal(doc.hasClientChanged, true);
+        assert.equal(scheduled, 0, 'Server error-map updates must not schedule another save');
+        assert.equal(pending, undefined);
+        assert.equal(await storage.get('lastsync'), original);
+
+        doc.getMap('clientmetadata').set('changed', true);
+        assert(scheduled > 0, 'A real subsequent client update can schedule a retry');
+      } finally {
+        doc.conns.clear();
+        doc.destroy();
+        docs.delete(name);
+      }
+    });
 
     it('a successful HEAD without an ETag warns without invalidating', async () => {
       const { ydoc, conn, docs } = makeDoc('missing-etag');
