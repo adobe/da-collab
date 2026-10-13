@@ -46,6 +46,12 @@ pending local saves, and removes the stored restore anchor. Invalidation therefo
 flush stale edits back to the backend, and reconnecting sessions reload the source document.
 Ordinary connection closure and da-admin invalidation retain their existing save-flushing behavior.
 
+If a Helix session cannot restore from a matching stored anchor, the backend reload is mandatory
+even when the reconnecting client sends updates during initialization. Saves and flush
+acknowledgements wait for that reload; obsolete client state is replaced rather than saved with
+the freshly fetched ETag. A failed reload does not establish a new anchor and blocks saves.
+Matching anchors still preserve pending drafts, and da-admin retains its client-first restore behavior.
+
 Helix ETags are compared without the weak `W/` prefix. If GET omits its ETag, collab brackets a
 fresh read with HEAD requests to establish a matching content/version baseline. Without a
 verified baseline, reads remain available but saves report an error instead of overwriting

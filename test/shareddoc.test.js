@@ -18,7 +18,7 @@ import assert from 'node:assert';
 import esmock from 'esmock';
 
 import {
-  aem2doc, doc2aem, doc2json, EMPTY_DOC,
+  aem2doc, doc2aem, doc2json, EMPTY_DOC, json2doc,
 } from '@adobe/da-parser';
 import {
   closeConn, getBackend, getYDoc, handleWebSocketMessage, isHelixDoc,
@@ -4012,6 +4012,322 @@ describe('Collab Test Suite', () => {
         }
       });
     }
+
+    for (const [sameContent, flushEarly] of [[false, false], [true, false], [false, true]]) {
+      it(`Helix reconnect restores external content despite unseen client updates${sameContent ? ' with identical source' : ''}${flushEarly ? ' and an early flush' : ''}`, async () => {
+        const slug = `reconnect-client-update-${sameContent}-${flushEarly}`;
+        const { ydoc, conn } = makeDoc(slug);
+        aem2doc('<main><div><p>Original document before the external replacement</p></div></main>', ydoc);
+        const original = doc2aem(ydoc);
+        const client = new Y.Doc();
+        Y.applyUpdate(client, Y.encodeStateAsUpdate(ydoc));
+        const external = new Y.Doc();
+        aem2doc('<main><div><p>External replacement must survive the reconnect</p></div></main>', external);
+        const source = sameContent ? original : doc2aem(external);
+        const storage = makeStorage({
+          doc: ydoc.name,
+          docstore: Y.encodeStateAsUpdate(ydoc),
+          lastsync: original,
+        });
+        const persisting = deferred();
+        const persisted = deferred();
+        const { put } = storage;
+        let holdStateWrite = flushEarly;
+        storage.put = async (key, value) => {
+          if (holdStateWrite && key.docstore) {
+            holdStateWrite = false;
+            persisting.resolve();
+            await persisted.promise;
+          }
+          await put(key, value);
+        };
+        let backendContent = original;
+        let backendEtag = '"old"';
+        const writes = [];
+        globalThis.fetch = async (_url, opts) => {
+          if (opts.method === 'POST') {
+            assert.equal(opts.headers.get('If-Match'), backendEtag);
+            writes.push(opts.body);
+            backendContent = opts.body;
+            backendEtag = '"saved"';
+            return new Response(null, { status: 201, headers: { etag: backendEtag } });
+          }
+          return new Response(opts.method === 'HEAD' ? null : backendContent, {
+            headers: { etag: backendEtag },
+          });
+        };
+        const savedSetTimeout = globalThis.setTimeout;
+        let restore;
+        globalThis.setTimeout = (fn, delay, ...args) => {
+          if (delay === 1000) {
+            restore = fn;
+            return undefined;
+          }
+          return savedSetTimeout(fn, delay, ...args);
+        };
+        try {
+          await persistence.bindState(ydoc.name, ydoc, conn, storage);
+          backendContent = source;
+          backendEtag = '"external"';
+          await persistence.checkEtag(ydoc);
+          assert(conn.closed);
+
+          const fragment = client.getXmlFragment('prosemirror');
+          fragment.delete(0, fragment.length);
+          aem2doc('<main><div><p>Unseen client edits based on the obsolete document</p></div></main>', client);
+
+          const { ydoc: reconnected, conn: newConn } = makeDoc(slug, backendEtag);
+          const acknowledgements = [];
+          newConn.send = (message) => {
+            const decoder = decoding.createDecoder(message);
+            const type = decoding.readVarUint(decoder);
+            if (type === 0) {
+              syncProtocol.readSyncMessage(decoder, encoding.createEncoder(), client, null);
+            } else if (type === messageFlushResponse) {
+              acknowledgements.push(decoding.readVarUint(decoder));
+            }
+          };
+          const restoring = [];
+          await persistence.bindState(reconnected.name, reconnected, newConn, storage, {
+            waitUntil: (promise) => restoring.push(promise),
+          });
+          const sendClientState = async () => {
+            const encoder = encoding.createEncoder();
+            encoding.writeVarUint(encoder, 0);
+            syncProtocol.writeSyncStep2(encoder, client, Y.encodeStateVector(reconnected));
+            await messageListener(newConn, reconnected, encoding.toUint8Array(encoder));
+          };
+          await sendClientState();
+          const staleState = Y.encodeStateAsUpdate(client);
+          assert(doc2aem(reconnected).includes('Unseen client edits'));
+          assert.equal(await storage.get('lastsync'), undefined);
+          assert.equal(await storage.get('docstore'), undefined, 'Obsolete state must not be persisted during reload');
+
+          const flushing = flushEarly
+            ? messageListener(newConn, reconnected, new Uint8Array([messageFlushRequest]))
+            : undefined;
+          await Promise.resolve();
+          assert.deepStrictEqual(writes, [], 'A flush must not POST before the authoritative restore');
+          assert.deepStrictEqual(acknowledgements, [], 'A flush must wait for the restore before acknowledging');
+
+          restore();
+          if (flushEarly) {
+            await persisting.promise;
+            assert.deepStrictEqual(writes, []);
+            assert.deepStrictEqual(acknowledgements, [], 'Flush must also wait for durable state persistence');
+            assert.equal(await storage.get('lastsync'), undefined, 'An anchor must not precede the restored state');
+            persisted.resolve();
+          }
+          await Promise.all([...restoring, flushing]);
+          await reconnected.flushSave();
+          assert.equal(doc2aem(reconnected), source);
+          assert.equal(doc2aem(client), source, 'The existing browser Y.Doc must receive the replacement');
+          assert.equal(await storage.get('lastsync'), source);
+          const persistedDoc = new Y.Doc();
+          Y.applyUpdate(persistedDoc, await storage.get('docstore'));
+          assert.equal(doc2aem(persistedDoc), source, 'The new anchor must describe the durably restored document');
+          persistedDoc.destroy();
+          assert.equal(backendContent, source);
+          assert.deepStrictEqual(writes, [], 'Obsolete client edits must not be saved with the fresh ETag');
+          assert.deepStrictEqual(acknowledgements, flushEarly ? [1] : []);
+
+          const replay = encoding.createEncoder();
+          encoding.writeVarUint(replay, 0);
+          syncProtocol.writeUpdate(replay, staleState);
+          await messageListener(newConn, reconnected, encoding.toUint8Array(replay));
+          await reconnected.flushSave();
+          assert.equal(doc2aem(reconnected), source, 'Replaying a pre-reload update must remain harmless');
+          assert.deepStrictEqual(writes, []);
+
+          fragment.delete(0, fragment.length);
+          aem2doc('<main><div><p>A legitimate edit after receiving the external replacement</p></div></main>', client);
+          await sendClientState();
+          await reconnected.flushSave();
+          assert.deepStrictEqual(writes, [doc2aem(client)], 'New edits must remain saveable');
+        } finally {
+          persisted.resolve();
+          globalThis.setTimeout = savedSetTimeout;
+          client.destroy();
+          external.destroy();
+        }
+      });
+    }
+
+    for (const failure of ['parser', 'storage']) {
+      it(`a failed Helix reconnect ${failure} restore cannot authorize saves or re-anchor stale state`, async () => {
+        const error = new Error(`Helix restore ${failure} failed`);
+        const pss = await esmock('../src/shareddoc.js', {
+          '@adobe/da-parser': {
+            aem2doc: (content, doc) => {
+              if (failure === 'parser') {
+                throw error;
+              }
+              return aem2doc(content, doc);
+            },
+          },
+        });
+        const name = `https://api.aem.live/o/sites/r/source/failed-reconnect-${failure}.html`;
+        const doc = new pss.WSSharedDoc(name);
+        const docs = pss.setYDoc(name, doc);
+        const connection = makeConn();
+        const sent = [];
+        connection.send = (message) => sent.push(message);
+        doc.conns.set(connection, new Set());
+        aem2doc('<main><div><p>Obsolete client content before a failed reload</p></div></main>', doc);
+        const storage = makeStorage({
+          doc: name,
+          docstore: Y.encodeStateAsUpdate(doc),
+        });
+        const { put } = storage;
+        storage.put = async (key, value) => {
+          if (failure === 'storage' && key.docstore) {
+            throw error;
+          }
+          await put(key, value);
+        };
+        globalThis.fetch = async (_url, opts) => {
+          assert.notEqual(opts.method, 'POST', 'A failed restore must not authorize a write');
+          return new Response('<main><div><p>The external version with the fresh ETag</p></div></main>', {
+            headers: { etag: '"external"' },
+          });
+        };
+        const restoring = [];
+        const savedSetTimeout = globalThis.setTimeout;
+        const savedError = console.error;
+        const logged = [];
+        let restore;
+        globalThis.setTimeout = (fn, delay, ...args) => {
+          if (delay === 1000) {
+            restore = fn;
+            return undefined;
+          }
+          return savedSetTimeout(fn, delay, ...args);
+        };
+        console.error = (...args) => logged.push(args);
+        try {
+          await pss.persistence.bindState(name, doc, connection, storage, {
+            waitUntil: (promise) => restoring.push(promise),
+          });
+          restore();
+          await Promise.all(restoring);
+          await assert.rejects(doc.flushSave(), { message: error.message });
+          await pss.messageListener(connection, doc, new Uint8Array([messageFlushRequest]));
+
+          assert.equal(await storage.get('lastsync'), undefined);
+          assert(logged.some((args) => args[0] === '[docroom] Problem restoring state from da-admin'));
+          const decoder = decoding.createDecoder(sent.at(-1));
+          assert.equal(decoding.readVarUint(decoder), messageFlushResponse);
+          assert.equal(decoding.readVarUint(decoder), 0);
+          assert.equal(decoding.readVarString(decoder), error.message);
+        } finally {
+          globalThis.setTimeout = savedSetTimeout;
+          console.error = savedError;
+          doc.conns.clear();
+          doc.destroy();
+          docs.delete(name);
+        }
+      });
+    }
+
+    it('Helix reconnect preserves pending drafts when their stored anchor still matches', async () => {
+      const { ydoc, conn } = makeDoc('reconnect-valid-anchor');
+      aem2doc('<main><div><p>The unchanged backend version behind a pending draft</p></div></main>', ydoc);
+      const original = doc2aem(ydoc);
+      const fragment = ydoc.getXmlFragment('prosemirror');
+      fragment.delete(0, fragment.length);
+      aem2doc('<main><div><p>A valid pending draft from the unchanged backend version</p></div></main>', ydoc);
+      const draft = doc2aem(ydoc);
+      const storage = makeStorage({
+        doc: ydoc.name,
+        docstore: Y.encodeStateAsUpdate(ydoc),
+        lastsync: original,
+      });
+      const writes = [];
+      globalThis.fetch = async (_url, opts) => {
+        if (opts.method === 'POST') {
+          assert.equal(opts.headers.get('If-Match'), '"old"');
+          writes.push(opts.body);
+          return new Response(null, { status: 201, headers: { etag: '"saved"' } });
+        }
+        return new Response(original, { headers: { etag: '"old"' } });
+      };
+      const restoring = [];
+      await persistence.bindState(ydoc.name, ydoc, conn, storage, {
+        waitUntil: (promise) => restoring.push(promise),
+      });
+      assert.deepStrictEqual(restoring, [], 'A matching anchor must not force a backend reload');
+      assert.equal(doc2aem(ydoc), draft);
+
+      ydoc.hasClientChanged = true;
+      await ydoc.flushSave();
+      assert.deepStrictEqual(writes, [draft]);
+    });
+
+    it('Helix JSON reconnect replaces obsolete client sheets before allowing a save', async () => {
+      const { ydoc, conn } = makeDoc('reconnect-json', '"old"', 'json');
+      json2doc({ ':type': 'sheet', data: [{ message: 'Original sheet' }] }, ydoc);
+      const client = new Y.Doc();
+      Y.applyUpdate(client, Y.encodeStateAsUpdate(ydoc));
+      const source = { ':type': 'sheet', data: [{ message: 'External sheet replacement' }] };
+      const external = new Y.Doc();
+      json2doc(source, external);
+      const expected = doc2json(external);
+      const storage = makeStorage({
+        doc: ydoc.name,
+        docstore: Y.encodeStateAsUpdate(ydoc),
+        lastsync: doc2json(ydoc),
+      });
+      ydoc.storage = storage;
+      const writes = [];
+      globalThis.fetch = async (_url, opts) => {
+        if (opts.method === 'POST') {
+          assert.equal(opts.headers.get('If-Match'), '"external"');
+          assert.equal(opts.headers.get('Content-Type'), 'application/json');
+          writes.push(opts.body);
+          return new Response(null, { status: 201, headers: { etag: '"saved"' } });
+        }
+        return new Response(opts.method === 'HEAD' ? null : JSON.stringify(source), {
+          headers: { etag: '"external"' },
+        });
+      };
+      const savedSetTimeout = globalThis.setTimeout;
+      let restore;
+      globalThis.setTimeout = (fn, delay, ...args) => {
+        if (delay === 1000) {
+          restore = fn;
+          return undefined;
+        }
+        return savedSetTimeout(fn, delay, ...args);
+      };
+      try {
+        await persistence.checkEtag(ydoc);
+        assert(conn.closed);
+        const sheets = client.getArray('sheets');
+        sheets.delete(0, sheets.length);
+        json2doc({ ':type': 'sheet', data: [{ message: 'Obsolete client sheet' }] }, client);
+
+        const { ydoc: reconnected, conn: newConn } = makeDoc('reconnect-json', '"external"', 'json');
+        const restoring = [];
+        await persistence.bindState(reconnected.name, reconnected, newConn, storage, {
+          waitUntil: (promise) => restoring.push(promise),
+        });
+        const encoder = encoding.createEncoder();
+        encoding.writeVarUint(encoder, 0);
+        syncProtocol.writeSyncStep2(encoder, client, Y.encodeStateVector(reconnected));
+        await messageListener(newConn, reconnected, encoding.toUint8Array(encoder));
+        assert(doc2json(reconnected).includes('Obsolete client sheet'));
+
+        restore();
+        await Promise.all(restoring);
+        assert.equal(doc2json(reconnected), expected);
+        await reconnected.flushSave();
+        assert(writes.every((content) => content === expected), 'No save may contain the obsolete client sheets');
+      } finally {
+        globalThis.setTimeout = savedSetTimeout;
+        client.destroy();
+        external.destroy();
+      }
+    });
 
     for (const status of [404, 410]) {
       it(`HEAD ${status} invalidates even without a stored ETag`, async () => {

@@ -860,6 +860,7 @@ export const persistence = {
    */
   bindState: async (docName, ydoc, conn, storage, ctx) => {
     const docType = getDocType(docName);
+    const isHelix = isHelixDoc(docName, ydoc);
     let timingReadStateDuration;
 
     // Store storage reference for later use in persistence.update
@@ -868,6 +869,9 @@ export const persistence = {
 
     let current;
     let restored = false; // True if restored from worker storage
+    let restoreAfterDelay;
+    let restoreError;
+    let backendRestored = false;
 
     // Get document from da-admin (throws on error including 404)
     const timingBeforeDaAdminGet = Date.now();
@@ -919,13 +923,12 @@ export const persistence = {
       // eslint-disable-next-line no-console
       console.log('[docroom] Could not be restored, trying to restore from da-admin', docName);
 
-      // Snapshot the state vector before yielding. If the client sends any Y.js update
-      // before the timeout fires (e.g. an image whose FPO was replaced just before a
-      // 412-triggered reconnect cleared worker storage), the state vector will advance
-      // and we must NOT overwrite with the stale da-admin snapshot.
+      // da-admin preserves client-first restores (e.g. a replaced image FPO).
+      // Helix must reload when the anchor is missing or mismatched: a reconnect
+      // can replay obsolete client state, which must not inherit the fresh ETag.
       const svBefore = Y.encodeStateVector(ydoc);
 
-      const restoreAfterDelay = new Promise((resolve) => {
+      restoreAfterDelay = new Promise((resolve) => {
         setTimeout(resolve, 1000);
       })
         .then(async () => {
@@ -933,7 +936,7 @@ export const persistence = {
             const svAfter = Y.encodeStateVector(ydoc);
             const clientHasUpdated = svBefore.length !== svAfter.length
               || svBefore.some((v, i) => v !== svAfter[i]);
-            if (clientHasUpdated) {
+            if (clientHasUpdated && !isHelix) {
               // eslint-disable-next-line no-console
               console.log('[docroom] Skipping da-admin reload: client state received', docName);
             } else {
@@ -961,6 +964,13 @@ export const persistence = {
                     aem2doc(current, ydoc);
                   }
                 });
+                if (isHelix) {
+                  backendRestored = true;
+                  await storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
+                }
+                if (ydoc !== docs.get(docName) || ydoc.discardPendingChanges) {
+                  return;
+                }
 
                 // eslint-disable-next-line no-console
                 console.log('[docroom] Restored from da-admin', docName, docType);
@@ -969,13 +979,19 @@ export const persistence = {
                 if (!isExpectedPlatformEvent(error)) {
                   showError(ydoc, error);
                 }
+                if (isHelix) {
+                  restoreError = error;
+                  // eslint-disable-next-line no-param-reassign
+                  ydoc.lastSaveError = error;
+                  // eslint-disable-next-line no-param-reassign
+                  ydoc.etagUnverified = true;
+                }
+                return;
               }
             }
 
-            // Write lastsync anchor regardless of whether we restored or the client
-            // had already sent updates. CF storage is now anchored to `current`, so
-            // on DO restart we can detect it as a valid continuation even if no PUT
-            // to da-admin has happened yet.
+            // Helix is anchored only after restoring the fetched content.
+            // da-admin also anchors its intentional client-first continuation.
             await safePutLastsync(storage, current, docName, 'after da-admin fetch');
           }
         });
@@ -989,7 +1005,8 @@ export const persistence = {
 
     ydoc.on('update', async () => {
       // Whenever we receive an update on the document store it in the local storage
-      if (ydoc === docs.get(docName)) { // make sure this ydoc is still active
+      if (ydoc === docs.get(docName)
+        && !(isHelix && restoreAfterDelay && !backendRestored)) {
         try {
           await storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
         } catch (err) {
@@ -1011,6 +1028,12 @@ export const persistence = {
       saving = true;
       savingPromise = (async () => {
         try {
+          if (isHelix && restoreAfterDelay) {
+            await restoreAfterDelay;
+            if (restoreError || ydoc.discardPendingChanges || ydoc !== docs.get(docName)) {
+              return;
+            }
+          }
           current = await persistence.update(ydoc, current, docName);
           if (!isHelixDoc(docName, ydoc) || !ydoc.lastSaveError) {
             // eslint-disable-next-line no-param-reassign
