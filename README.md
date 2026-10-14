@@ -19,8 +19,7 @@ To run da-admin locally see https://github.com/adobe/da-admin/blob/main/README.m
 
 For manual local testing, `IS_HELIX` in `.dev.vars` can force Helix at `api.aem.live` (`true`),
 Helix at `localhost:3000` (`local`), or da-admin (`false`). Leave it unset for normal URL-based
-backend selection. Forced URL rewriting and the `*** Calling` log are isolated in the
-`getLocalTestBackendOverride()` helper.
+backend selection. Forced URL rewriting is isolated in the `getLocalTestBackendOverride()` helper.
 
 #### Access via da-live
 

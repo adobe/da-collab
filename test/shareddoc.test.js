@@ -3222,7 +3222,7 @@ describe('Collab Test Suite', () => {
   });
 
   for (const mode of [undefined, 'false', 'true', 'local']) {
-    it(`getBackend emits the local-testing rewrite log only for forced Helix (IS_HELIX=${mode})`, async () => {
+    it(`getBackend routes requests without diagnostic logging (IS_HELIX=${mode})`, async () => {
       const savedFetch = globalThis.fetch;
       const savedLog = console.log;
       const calls = [];
@@ -3245,9 +3245,7 @@ describe('Collab Test Suite', () => {
         assert.equal(calls.length, 1);
         assert.equal(calls[0].url, expectedUrl);
         assert.strictEqual(calls[0].opts, opts);
-        assert.deepStrictEqual(logged, mode === 'true' || mode === 'local'
-          ? [['*** Calling', expectedUrl]]
-          : []);
+        assert.deepStrictEqual(logged, [], 'Backend routing must not emit diagnostic logs');
       } finally {
         globalThis.fetch = savedFetch;
         console.log = savedLog;
