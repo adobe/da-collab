@@ -857,6 +857,7 @@ export const persistence = {
 
     let current;
     let restored = false; // True if restored from worker storage
+    let freshRoom = false;
     let restoreAfterDelay;
     let restoreError;
     let backendRestored = false;
@@ -871,6 +872,12 @@ export const persistence = {
       const timingBeforeReadState = Date.now();
       const stored = await readState(docName, storage);
       timingReadStateDuration = Date.now() - timingBeforeReadState;
+      if (isHelix && !stored?.length) {
+        const [storedDoc, lastSynced] = await Promise.all([
+          storage.get('doc'), storage.get('lastsync'),
+        ]);
+        freshRoom = storedDoc === undefined && lastSynced === undefined;
+      }
 
       if (stored && stored.length > 0) {
         Y.applyUpdate(ydoc, stored);
@@ -903,91 +910,95 @@ export const persistence = {
 
     if (!restored && current) {
       // The doc was not restored from worker persistence, so read it from da-admin.
-      // Clear stale CF storage so the next save writes clean state instead of
-      // accumulating diverged CRDT updates that can cause future bindState hangs.
-      if (storage.deleteAll) {
+      // Keep untrusted Helix state until its replacement is durable: a restart
+      // during the delay must not mistake a reconnect for a fresh room.
+      if (!isHelix && storage.deleteAll) {
         await storage.deleteAll();
       }
       // eslint-disable-next-line no-console
       console.log('[docroom] Could not be restored, trying to restore from da-admin', docName);
 
       // da-admin preserves client-first restores (e.g. a replaced image FPO).
-      // Helix must reload when the anchor is missing or mismatched: a reconnect
+      // Cached Helix state without a matching anchor must reload: a reconnect
       // can replay obsolete client state, which must not inherit the fresh ETag.
       const svBefore = Y.encodeStateVector(ydoc);
 
-      restoreAfterDelay = new Promise((resolve) => {
-        setTimeout(resolve, 1000);
-      })
-        .then(async () => {
-          if (ydoc === docs.get(docName)) {
-            const svAfter = Y.encodeStateVector(ydoc);
-            const clientHasUpdated = svBefore.length !== svAfter.length
-              || svBefore.some((v, i) => v !== svAfter[i]);
-            if (clientHasUpdated && !isHelix) {
-              // eslint-disable-next-line no-console
-              console.log('[docroom] Skipping da-admin reload: client state received', docName);
-            } else {
-              try {
-                ydoc.transact(() => {
-                  if (docType === 'json') {
-                    // Clear JSON structure
-                    const ysheets = ydoc.getArray('sheets');
-                    if (ysheets.length > 0) {
-                      ysheets.delete(0, ysheets.length);
-                    }
-                    // restore from da-admin
-                    json2doc(current, ydoc);
-                  } else {
-                    // Clear HTML structure
-                    const rootType = ydoc.getXmlFragment('prosemirror');
-                    rootType.delete(0, rootType.length);
-                    // clear all maps
-                    ydoc.share.forEach((type) => {
-                      if (type instanceof Y.Map) {
-                        type.clear();
-                      }
-                    });
-                    // Restore from da-admin
-                    aem2doc(current, ydoc);
+      const restoreFromBackend = async () => {
+        if (ydoc === docs.get(docName) && !ydoc.isDestroyed && !ydoc.discardPendingChanges) {
+          const svAfter = Y.encodeStateVector(ydoc);
+          const clientHasUpdated = svBefore.length !== svAfter.length
+            || svBefore.some((v, i) => v !== svAfter[i]);
+          if (clientHasUpdated && !isHelix) {
+            // eslint-disable-next-line no-console
+            console.log('[docroom] Skipping da-admin reload: client state received', docName);
+          } else {
+            try {
+              ydoc.transact(() => {
+                if (docType === 'json') {
+                  // Clear JSON structure
+                  const ysheets = ydoc.getArray('sheets');
+                  if (ysheets.length > 0) {
+                    ysheets.delete(0, ysheets.length);
                   }
-                });
-                if (isHelix) {
-                  backendRestored = true;
-                  await storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
+                  // restore from da-admin
+                  json2doc(current, ydoc);
+                } else {
+                  // Clear HTML structure
+                  const rootType = ydoc.getXmlFragment('prosemirror');
+                  rootType.delete(0, rootType.length);
+                  // clear all maps
+                  ydoc.share.forEach((type) => {
+                    if (type instanceof Y.Map) {
+                      type.clear();
+                    }
+                  });
+                  // Restore from da-admin
+                  aem2doc(current, ydoc);
                 }
-                if (ydoc !== docs.get(docName) || ydoc.discardPendingChanges) {
-                  return;
-                }
-
-                // eslint-disable-next-line no-console
-                console.log('[docroom] Restored from da-admin', docName, docType);
-              } catch (error) {
-                logError(error, '[docroom] Problem restoring state from da-admin', docName, error, current);
-                if (!isExpectedPlatformEvent(error)) {
-                  showError(ydoc, error);
-                }
-                if (isHelix) {
-                  restoreError = error;
-                  // eslint-disable-next-line no-param-reassign
-                  ydoc.lastSaveError = error;
-                  // eslint-disable-next-line no-param-reassign
-                  ydoc.etagUnverified = true;
-                }
+              });
+              if (isHelix) {
+                backendRestored = true;
+                await storeState(docName, Y.encodeStateAsUpdate(ydoc), storage);
+              }
+              if (ydoc !== docs.get(docName) || ydoc.discardPendingChanges) {
                 return;
               }
+
+              // eslint-disable-next-line no-console
+              console.log('[docroom] Restored from da-admin', docName, docType);
+            } catch (error) {
+              logError(error, '[docroom] Problem restoring state from da-admin', docName, error, current);
+              if (!isExpectedPlatformEvent(error)) {
+                showError(ydoc, error);
+              }
+              if (isHelix) {
+                restoreError = error;
+                // eslint-disable-next-line no-param-reassign
+                ydoc.lastSaveError = error;
+                // eslint-disable-next-line no-param-reassign
+                ydoc.etagUnverified = true;
+              }
+              return;
             }
-
-            // Helix is anchored only after restoring the fetched content.
-            // da-admin also anchors its intentional client-first continuation.
-            await safePutLastsync(storage, current, docName, 'after da-admin fetch');
           }
-        });
 
-      if (ctx?.waitUntil) {
-        ctx.waitUntil(restoreAfterDelay);
+          // Helix is anchored only after restoring the fetched content.
+          // da-admin also anchors its intentional client-first continuation.
+          await safePutLastsync(storage, current, docName, 'after da-admin fetch');
+        }
+      };
+
+      if (isHelix && freshRoom) {
+        await restoreFromBackend();
       } else {
-        restoreAfterDelay.catch(() => {});
+        restoreAfterDelay = new Promise((resolve) => {
+          setTimeout(resolve, 1000);
+        }).then(restoreFromBackend);
+        if (ctx?.waitUntil) {
+          ctx.waitUntil(restoreAfterDelay);
+        } else {
+          restoreAfterDelay.catch(() => {});
+        }
       }
     }
 
@@ -1016,8 +1027,10 @@ export const persistence = {
       saving = true;
       savingPromise = (async () => {
         try {
-          if (isHelix && restoreAfterDelay) {
-            await restoreAfterDelay;
+          if (isHelix) {
+            if (restoreAfterDelay) {
+              await restoreAfterDelay;
+            }
             if (restoreError || ydoc.discardPendingChanges || ydoc !== docs.get(docName)) {
               return;
             }
@@ -1370,7 +1383,10 @@ export const handleWebSocketMessage = async (conn, docName, env, storage, messag
     // its clientID attributed to no conn and leaking it forever on close.
     doc.conns.set(conn, new Set());
   }
-  if (doc) {
+  if (doc?.promise) {
+    await doc.promise;
+  }
+  if (doc && doc === docs.get(docName) && !doc.isDestroyed) {
     await messageListener(conn, doc, new Uint8Array(message));
   }
 };

@@ -4056,6 +4056,72 @@ describe('Collab Test Suite', () => {
       });
     }
 
+    for (const type of ['html', 'json']) {
+      it(`a fresh Helix ${type} room preserves client edits made before the restore timeout`, async () => {
+        const { ydoc, conn } = makeDoc(`fresh-client-edits-${type}`, null, type);
+        const storage = makeStorage();
+        const source = type === 'html'
+          ? '<main><div><p>Initial source before the first client edit</p></div></main>'
+          : { ':type': 'sheet', data: [{ message: 'Initial source' }] };
+        const client = new Y.Doc();
+        const writes = [];
+        globalThis.fetch = async (_url, opts) => {
+          if (opts.method === 'POST') {
+            assert.equal(opts.headers.get('If-Match'), '"initial"');
+            writes.push(opts.body);
+            return new Response(null, { status: 201, headers: { etag: '"saved"' } });
+          }
+          return new Response(type === 'html' ? source : JSON.stringify(source), {
+            headers: { etag: '"initial"' },
+          });
+        };
+        const savedSetTimeout = globalThis.setTimeout;
+        const restoreTimers = [];
+        globalThis.setTimeout = (fn, delay, ...args) => {
+          if (delay === 1000) {
+            restoreTimers.push(fn);
+            return undefined;
+          }
+          return savedSetTimeout(fn, delay, ...args);
+        };
+        try {
+          const restoring = [];
+          await persistence.bindState(ydoc.name, ydoc, conn, storage, {
+            waitUntil: (promise) => restoring.push(promise),
+          });
+          Y.applyUpdate(client, Y.encodeStateAsUpdate(ydoc));
+          if (type === 'html') {
+            const fragment = client.getXmlFragment('prosemirror');
+            fragment.delete(0, fragment.length);
+            aem2doc('<main><div><p>Initial source with a legitimate first client edit</p></div></main>', client);
+          } else {
+            const sheets = client.getArray('sheets');
+            sheets.delete(0, sheets.length);
+            json2doc({ ':type': 'sheet', data: [{ message: 'A legitimate first client edit' }] }, client);
+          }
+          const serialize = type === 'html' ? doc2aem : doc2json;
+          const edited = serialize(client);
+          const encoder = encoding.createEncoder();
+          encoding.writeVarUint(encoder, 0);
+          syncProtocol.writeSyncStep2(encoder, client, Y.encodeStateVector(ydoc));
+          await messageListener(conn, ydoc, encoding.toUint8Array(encoder));
+          assert.equal(serialize(ydoc), edited);
+
+          restoreTimers.forEach((fn) => fn());
+          await Promise.all(restoring);
+          assert.equal(serialize(ydoc), edited, 'The first client edit must survive initialization');
+          await ydoc.flushSave();
+
+          assert.deepStrictEqual(writes, [edited]);
+          assert.equal(await storage.get('lastsync'), edited);
+          assert.deepStrictEqual(restoreTimers, [], 'A fresh room must be initialized before its first client sync');
+        } finally {
+          globalThis.setTimeout = savedSetTimeout;
+          client.destroy();
+        }
+      });
+    }
+
     for (const [sameContent, flushEarly] of [[false, false], [true, false], [false, true]]) {
       it(`Helix reconnect restores external content despite unseen client updates${sameContent ? ' with identical source' : ''}${flushEarly ? ' and an early flush' : ''}`, async () => {
         const slug = `reconnect-client-update-${sameContent}-${flushEarly}`;
@@ -4144,7 +4210,11 @@ describe('Collab Test Suite', () => {
           const staleState = Y.encodeStateAsUpdate(client);
           assert(doc2aem(reconnected).includes('Unseen client edits'));
           assert.equal(await storage.get('lastsync'), undefined);
-          assert.equal(await storage.get('docstore'), undefined, 'Obsolete state must not be persisted during reload');
+          assert.deepStrictEqual(
+            await storage.get('docstore'),
+            Y.encodeStateAsUpdate(ydoc),
+            'Keep the old snapshot until reload succeeds without persisting client replay',
+          );
 
           const flushing = flushEarly
             ? messageListener(newConn, reconnected, new Uint8Array([messageFlushRequest]))
@@ -4196,8 +4266,196 @@ describe('Collab Test Suite', () => {
       });
     }
 
-    for (const failure of ['parser', 'storage']) {
-      it(`a failed Helix reconnect ${failure} restore cannot authorize saves or re-anchor stale state`, async () => {
+    for (const marker of ['doc', 'lastsync']) {
+      it(`a Helix room with only a ${marker} marker is not treated as fresh`, async () => {
+        const { ydoc, conn } = makeDoc(`partial-cache-${marker}`);
+        const storage = makeStorage({
+          [marker]: marker === 'doc' ? ydoc.name : 'Previous source snapshot',
+        });
+        const source = new Y.Doc();
+        aem2doc('<main><div><p>The current backend source for a partial cache</p></div></main>', source);
+        const content = doc2aem(source);
+        globalThis.fetch = async (_url, opts) => {
+          assert.notEqual(opts.method, 'POST', 'Partial cache metadata must not authorize stale writes');
+          return new Response(content, { headers: { etag: '"external"' } });
+        };
+        const savedSetTimeout = globalThis.setTimeout;
+        let restore;
+        globalThis.setTimeout = (fn, delay, ...args) => {
+          if (delay === 1000) {
+            restore = fn;
+            return undefined;
+          }
+          return savedSetTimeout(fn, delay, ...args);
+        };
+        try {
+          const restoring = [];
+          await persistence.bindState(ydoc.name, ydoc, conn, storage, {
+            waitUntil: (promise) => restoring.push(promise),
+          });
+          assert.equal(typeof restore, 'function', 'Partial metadata requires the guarded reconnect restore');
+          const client = new Y.Doc();
+          aem2doc('<main><div><p>Obsolete client content from the partial cache</p></div></main>', client);
+          const encoder = encoding.createEncoder();
+          encoding.writeVarUint(encoder, 0);
+          syncProtocol.writeSyncStep2(encoder, client, Y.encodeStateVector(ydoc));
+          client.destroy();
+          await messageListener(conn, ydoc, encoding.toUint8Array(encoder));
+
+          restore();
+          await Promise.all(restoring);
+          await ydoc.flushSave();
+          assert.equal(doc2aem(ydoc), content);
+        } finally {
+          globalThis.setTimeout = savedSetTimeout;
+          source.destroy();
+        }
+      });
+    }
+
+    it('a fresh Helix room waits for initialization before answering its first sync request', async () => {
+      const { ydoc, conn } = makeDoc('fresh-initial-sync');
+      const client = new Y.Doc();
+      const get = deferred();
+      globalThis.fetch = async () => get.promise;
+      let syncReplies = 0;
+      conn.send = (message) => {
+        const decoder = decoding.createDecoder(message);
+        if (decoding.readVarUint(decoder) === 0) {
+          const syncType = decoding.readVarUint(decoder);
+          if (syncType === syncProtocol.messageYjsSyncStep2) {
+            syncReplies += 1;
+            syncProtocol.readSyncStep2(decoder, client);
+          } else {
+            assert.equal(syncType, syncProtocol.messageYjsUpdate);
+            syncProtocol.readUpdate(decoder, client);
+          }
+        }
+      };
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, 0);
+      syncProtocol.writeSyncStep1(encoder, client);
+      const loading = getYDoc(ydoc.name, conn, {}, makeStorage());
+      const receiving = handleWebSocketMessage(
+        conn,
+        ydoc.name,
+        {},
+        ydoc.storage,
+        encoding.toUint8Array(encoder),
+      );
+      try {
+        await Promise.resolve();
+        assert.equal(syncReplies, 0, 'A fresh room must not synchronize its temporary empty state');
+        get.resolve(new Response('<main><div><p>Source content for the first sync</p></div></main>', {
+          headers: { etag: '"initial"' },
+        }));
+        await Promise.all([loading, receiving]);
+
+        assert.equal(syncReplies, 1);
+        assert.equal(doc2aem(client), doc2aem(ydoc));
+        assert(doc2aem(client).includes('Source content for the first sync'));
+      } finally {
+        get.resolve(new Response(null));
+        await Promise.all([loading, receiving]);
+        client.destroy();
+      }
+    });
+
+    it('a queued sync is discarded if the initializing Helix room closes', async () => {
+      const { ydoc, conn } = makeDoc('closing-before-initial-sync');
+      const client = new Y.Doc();
+      const initializing = deferred();
+      ydoc.promise = initializing.promise;
+      const sent = [];
+      conn.send = (message) => sent.push(message);
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, 0);
+      syncProtocol.writeSyncStep1(encoder, client);
+      const receiving = handleWebSocketMessage(
+        conn,
+        ydoc.name,
+        {},
+        makeStorage(),
+        encoding.toUint8Array(encoder),
+      );
+      try {
+        await Promise.resolve();
+        assert.deepStrictEqual(sent, []);
+        await closeConn(ydoc, conn, true);
+        initializing.resolve();
+        await receiving;
+
+        assert.deepStrictEqual(sent, [], 'An obsolete room must not answer the queued sync');
+      } finally {
+        initializing.resolve();
+        await receiving;
+        client.destroy();
+      }
+    });
+
+    it('an interrupted untrusted Helix reload cannot become a fresh room on reconnect', async () => {
+      const slug = 'interrupted-helix-reload';
+      const { ydoc, conn } = makeDoc(slug);
+      const snapshot = new Y.Doc();
+      aem2doc('<main><div><p>Old source before an interrupted reload</p></div></main>', snapshot);
+      const original = doc2aem(snapshot);
+      const state = Y.encodeStateAsUpdate(snapshot);
+      const client = new Y.Doc();
+      Y.applyUpdate(client, state);
+      const external = new Y.Doc();
+      aem2doc('<main><div><p>External source must win after interrupted reload</p></div></main>', external);
+      const source = doc2aem(external);
+      const storage = makeStorage({
+        doc: ydoc.name, docstore: state, lastsync: original,
+      });
+      globalThis.fetch = async (_url, opts) => {
+        assert.notEqual(opts.method, 'POST', 'An interrupted reload must not authorize stale writes');
+        return new Response(source, { headers: { etag: '"external"' } });
+      };
+      const savedSetTimeout = globalThis.setTimeout;
+      const restoreTimers = [];
+      globalThis.setTimeout = (fn, delay, ...args) => {
+        if (delay === 1000) {
+          restoreTimers.push(fn);
+          return undefined;
+        }
+        return savedSetTimeout(fn, delay, ...args);
+      };
+      try {
+        const restoring = [];
+        const ctx = { waitUntil: (promise) => restoring.push(promise) };
+        await persistence.bindState(ydoc.name, ydoc, conn, storage, ctx);
+        await closeConn(ydoc, conn, true);
+        assert.deepStrictEqual(await storage.get('docstore'), state);
+
+        const { ydoc: reconnected, conn: newConn } = makeDoc(slug);
+        await persistence.bindState(reconnected.name, reconnected, newConn, storage, ctx);
+        assert.equal(restoreTimers.length, 2, 'Both attempts must treat the cached state as untrusted');
+        const fragment = client.getXmlFragment('prosemirror');
+        fragment.delete(0, fragment.length);
+        aem2doc('<main><div><p>Stale replay during the second reload attempt</p></div></main>', client);
+        const encoder = encoding.createEncoder();
+        encoding.writeVarUint(encoder, 0);
+        syncProtocol.writeSyncStep2(encoder, client, Y.encodeStateVector(reconnected));
+        await messageListener(newConn, reconnected, encoding.toUint8Array(encoder));
+
+        restoreTimers.forEach((fn) => fn());
+        await Promise.all(restoring);
+        await reconnected.flushSave();
+        assert.equal(doc2aem(reconnected), source);
+        assert.equal(await storage.get('lastsync'), source);
+      } finally {
+        globalThis.setTimeout = savedSetTimeout;
+        snapshot.destroy();
+        client.destroy();
+        external.destroy();
+      }
+    });
+
+    for (const [failure, fresh] of [
+      ['parser', false], ['storage', false], ['parser', true], ['storage', true],
+    ]) {
+      it(`a failed Helix ${fresh ? 'fresh room' : 'reconnect'} ${failure} restore cannot authorize saves or re-anchor stale state`, async () => {
         const error = new Error(`Helix restore ${failure} failed`);
         const pss = await esmock('../src/shareddoc.js', {
           '@adobe/da-parser': {
@@ -4216,8 +4474,10 @@ describe('Collab Test Suite', () => {
         const sent = [];
         connection.send = (message) => sent.push(message);
         doc.conns.set(connection, new Set());
-        aem2doc('<main><div><p>Obsolete client content before a failed reload</p></div></main>', doc);
-        const storage = makeStorage({
+        if (!fresh) {
+          aem2doc('<main><div><p>Obsolete client content before a failed reload</p></div></main>', doc);
+        }
+        const storage = makeStorage(fresh ? {} : {
           doc: name,
           docstore: Y.encodeStateAsUpdate(doc),
         });
@@ -4251,7 +4511,7 @@ describe('Collab Test Suite', () => {
           await pss.persistence.bindState(name, doc, connection, storage, {
             waitUntil: (promise) => restoring.push(promise),
           });
-          restore();
+          restore?.();
           await Promise.all(restoring);
           await assert.rejects(doc.flushSave(), { message: error.message });
           await pss.messageListener(connection, doc, new Uint8Array([messageFlushRequest]));
@@ -5148,12 +5408,18 @@ describe('Collab Test Suite', () => {
         fetch: async () => { assert.fail('daadmin.fetch must not be called for Helix docs'); },
       };
       const mockConn = { auth: 'Bearer x' };
+      Object.assign(mockConn, {
+        readyState: 1,
+        send() {},
+        close() {},
+      });
       ydoc.conns.set(mockConn, new Set());
       const storage = makeStorage();
 
       await persistence.bindState(docName, ydoc, mockConn, storage);
 
       assert.equal(1, calls.length, 'bindState must read the doc via the Helix backend');
+      assert.equal(ydoc.isDestroyed, false);
       assert.equal(docName, calls[0].url);
       assert.equal('Bearer x', calls[0].opts.headers.get('Authorization'));
     } finally {

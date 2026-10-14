@@ -48,10 +48,15 @@ Ordinary connection closure and da-admin invalidation retain their existing save
 ETag tracking and polling are Helix-only; da-admin relies on its `syncAdmin`/`deleteAdmin`
 invalidation callbacks rather than periodic HEAD requests.
 
-If a Helix session cannot restore from a matching stored anchor, the backend reload is mandatory
+Helix rooms with no stored state or restore metadata load and persist the backend source before
+completing their first Yjs sync, so edits made immediately after connecting are not overwritten
+by a delayed reload. Incoming sync messages wait for initialization to finish.
+Cached state or restore metadata without a matching anchor still requires a backend reload,
 even when the reconnecting client sends updates during initialization. Saves and flush
 acknowledgements wait for that reload; obsolete client state is replaced rather than saved with
-the freshly fetched ETag. A failed reload does not establish a new anchor and blocks saves.
+the freshly fetched ETag. Untrusted cached state is kept until its replacement is durable so an
+interrupted reload cannot be mistaken for a fresh room. A failed reload does not establish a new
+anchor and blocks saves.
 Matching anchors still preserve pending drafts, and da-admin retains its client-first restore behavior.
 
 Helix ETags are compared without the weak `W/` prefix. If GET omits its ETag, collab brackets a
