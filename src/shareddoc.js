@@ -75,7 +75,6 @@ function getLocalTestBackendOverride(env) {
       }
       const u = new URL(url);
       const t = `${substituteOrigin}${toHelixPath(u.pathname)}${u.search}`;
-      console.log('*** Calling', t);
       return t;
     },
   };
