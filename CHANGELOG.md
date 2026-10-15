@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/adobe/da-collab/compare/v1.8.0...v1.8.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **hlx6:** Poll api.aem.live for changes ([#205](https://github.com/adobe/da-collab/issues/205)) ([f85785a](https://github.com/adobe/da-collab/commit/f85785ae98bba145863bbcc1b14dcecc58df0cd4))
+
 # [1.8.0](https://github.com/adobe/da-collab/compare/v1.7.11...v1.8.0) (2026-10-09)
 
 
