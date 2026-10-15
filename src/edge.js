@@ -228,7 +228,7 @@ export async function handleApiRequest(request, env) {
     }
 
     const timingBeforeDaAdminHead = Date.now();
-    const initialReq = await getBackend(docName, env.daadmin).fetch(docName, opts);
+    const initialReq = await getBackend(docName, env).fetch(docName, opts);
 
     timingDaAdminHeadDuration = Date.now() - timingBeforeDaAdminHead;
 
@@ -429,7 +429,7 @@ export class DocRoom extends DurableObject {
       // Helix does not yet report auth actions, so grant collaborators
       // read,write; otherwise honour what da-admin reported.
       // TODO: remove the isHelixDoc branch once Helix reports auth actions.
-      const authActions = isHelixDoc(docName)
+      const authActions = isHelixDoc(docName, this.env)
         ? 'read,write'
         : request.headers.get('X-auth-actions') ?? '';
 

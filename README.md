@@ -15,6 +15,12 @@ To run da-admin locally see https://github.com/adobe/da-admin/blob/main/README.m
 1. In a terminal, run `npm run dev` this repo's folder.
 1. The da-collab service API is available via http://localhost:4711
 
+#### Local backend testing override
+
+For manual local testing, `IS_HELIX` in `.dev.vars` can force Helix at `api.aem.live` (`true`),
+Helix at `localhost:3000` (`local`), or da-admin (`false`). Leave it unset for normal URL-based
+backend selection. Forced URL rewriting is isolated in the `getLocalTestBackendOverride()` helper.
+
 #### Access via da-live
 
 To access the locally running da-collab via da-live also running locally, first run da-live on your local machine
@@ -32,6 +38,52 @@ To access da-collab and da-admin running on stage, open this URL in a browser: h
 1. When passing in `?da-collab=local&da-admin=local` each service will set a localStorage value and will not clear until you use `?name-of-service=reset`. It is recommended to use an incognito browser window to ensure you don't forget about this setting.
 
 ## Additional details
+### Helix backend polling
+For Helix-backed documents, collab checks the backend ETag with a HEAD request every five seconds
+while the session is connected. A changed ETag or a 404/410 response closes the session, cancels
+pending local saves, and removes the stored restore anchor. Invalidation therefore does not
+flush stale edits back to the backend, and reconnecting sessions reload the source document.
+Ordinary connection closure and da-admin invalidation retain their existing save-flushing behavior.
+ETag tracking and polling are Helix-only; da-admin relies on its `syncAdmin`/`deleteAdmin`
+invalidation callbacks rather than periodic HEAD requests.
+
+Helix rooms with no stored state or restore metadata load and persist the backend source before
+completing their first Yjs sync, so edits made immediately after connecting are not overwritten
+by a delayed reload. Incoming sync messages wait for initialization to finish.
+Cached state or restore metadata without a matching anchor still requires a backend reload,
+even when the reconnecting client sends updates during initialization. Saves and flush
+acknowledgements wait for that reload; obsolete client state is replaced rather than saved with
+the freshly fetched ETag. Untrusted cached state is kept until its replacement is durable so an
+interrupted reload cannot be mistaken for a fresh room. A failed reload does not establish a new
+anchor and blocks saves.
+Matching anchors still preserve pending drafts, and da-admin retains its client-first restore behavior.
+
+Helix ETags are compared without the weak `W/` prefix. If GET omits its ETag, collab brackets a
+fresh read with HEAD requests to establish a matching content/version baseline. Without a
+verified baseline, reads remain available but saves report an error instead of overwriting
+an unknown version. A successful HEAD can establish a polling-only baseline without disconnecting editors.
+
+Helix saves use the known version in `If-Match` rather than `*`. A 412 is treated as an external
+version conflict: pending saves are cancelled and the session is reloaded, not reported as a
+deletion. The Helix API must return the written ETag on successful POST; if it does not, collab
+logs the missing validator and pauses further protected saves until reload. da-admin retains
+its existing multipart PUT and `If-Match: *` behavior. Complete lost-update protection additionally
+requires the API to enforce the precondition atomically at the storage write.
+
+Helix polling retries the distinct tokens of other active collaborators after a 401/403.
+Connections using rejected tokens close with 4401/4403 so the editor can refresh authentication;
+stored pending edits are preserved and no save is attempted with rejected credentials.
+Other failed HEAD requests and successful responses without an ETag are logged and retried on the next
+interval without disconnecting editors. Only one HEAD request is in flight per document, and
+responses overlapping a local save or belonging to an old session are ignored. Polling starts
+only if initialization finishes for the current, connected document. Destroying the document
+clears its polling timer and aborts any pending HEAD request; late initialization cannot restart
+polling after disconnect. The idle-but-connected session policy is unchanged.
+
+Helix flush acknowledgements report failure when the save was refused or failed, including a
+missing verified ETag. Failed saves retain the unsaved-change flag, and a later successful save
+clears the error. Error notifications do not trigger additional background save attempts.
+
 ### Recommendations
 1. We recommend running `npm run lint` for linting.
 
