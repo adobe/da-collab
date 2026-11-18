@@ -1,3 +1,10 @@
+## [1.8.2](https://github.com/adobe/da-collab/compare/v1.8.1...v1.8.2) (2026-11-18)
+
+
+### Bug Fixes
+
+* **shareddoc:** bump da-parser to 2.2.1 to keep image focal points ([#208](https://github.com/adobe/da-collab/issues/208)) ([8f517bb](https://github.com/adobe/da-collab/commit/8f517bbd9ea208a5f3611b0173a11f4a6d1ff7bd))
+
 ## [1.8.1](https://github.com/adobe/da-collab/compare/v1.8.0...v1.8.1) (2026-10-15)
 
 
