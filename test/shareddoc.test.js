@@ -150,6 +150,21 @@ describe('Collab Test Suite', () => {
     assert.deepStrictEqual(deleted, [conn1, conn2]);
   });
 
+  it('Image focal point data attributes survive aem2doc and doc2aem', () => {
+    const ydoc = new Y.Doc();
+    aem2doc('<main><div><p><img src="https://example.com/a.png" data-focal-x="25.5" data-focal-y="75"></p></div></main>', ydoc);
+    const html = doc2aem(ydoc);
+    assert(html.includes('data-focal-x="25.5"'), html);
+    assert(html.includes('data-focal-y="75"'), html);
+  });
+
+  it('Image data-edit-as attribute survives aem2doc and doc2aem', () => {
+    const ydoc = new Y.Doc();
+    aem2doc('<main><div><p><img src="https://example.com/a.png" data-edit-as="image"></p></div></main>', ydoc);
+    const html = doc2aem(ydoc);
+    assert(html.includes('data-edit-as="image"'), html);
+  });
+
   it('Test persistence get ok', async () => {
     const daadmin = {};
     daadmin.fetch = async (url, opts) => {
