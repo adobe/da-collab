@@ -82,9 +82,6 @@ async function adminAPI(api, url, request, env) {
 
   const id = env.rooms.idFromName(doc);
 
-  // eslint-disable-next-line no-console
-  console.log('[worker] - Admin API', doc);
-
   const roomObject = env.rooms.get(id);
   // TODO: check for roomObject === null ?
   // note, that we cannot call DocRoom.handleApiCall directly w/o enabling
@@ -233,8 +230,12 @@ export async function handleApiRequest(request, env) {
     timingDaAdminHeadDuration = Date.now() - timingBeforeDaAdminHead;
 
     if (!initialReq.ok) {
-      // eslint-disable-next-line no-console
-      console.log(`[worker] Unable to get resource ${docName}: ${initialReq.status} - ${initialReq.statusText}`);
+      // 401/403/404 are expected auth/ACL/missing-document outcomes, already visible
+      // in the CDN and da-admin logs.
+      if (![401, 403, 404].includes(initialReq.status)) {
+        // eslint-disable-next-line no-console
+        console.log(`[worker] Unable to get resource ${docName}: ${initialReq.status} - ${initialReq.statusText}`);
+      }
       // For WebSocket upgrades, signal auth failures via a CloseEvent code so the
       // client can refresh its token and reconnect (4401) or stop trying (4403).
       // Otherwise the browser sees only a generic 1006.
@@ -275,9 +276,6 @@ export async function handleApiRequest(request, env) {
     // an object will be available somewhere to receive our requests.
     const roomObject = env.rooms.get(id);
     const timingDocRoomGetDuration = Date.now() - timingBeforeDocRoomGet;
-
-    // eslint-disable-next-line no-console
-    console.log('[worker] Fecthing', docName);
 
     const headers = [...request.headers,
       ['X-collab-room', docName],
@@ -450,10 +448,6 @@ export class DocRoom extends DurableObject {
         // eslint-disable-next-line no-param-reassign
         server.readOnly = true;
       }
-
-      // eslint-disable-next-line no-console
-      console.log(`[docroom] Setting up WSConnection for ${docName} with auth(${
-        auth ? auth.substring(0, auth.indexOf(' ')) : 'none'})`);
 
       // Kick off async document initialization; response is returned immediately.
       this.ctx.waitUntil(this.initSession(server, docName));

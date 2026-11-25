@@ -223,8 +223,6 @@ export const closeConn = async (doc, conn, skipSave = false, closeOptions = unde
         // External changes must discard pending edits. Re-entrant closes from
         // persistence.update must also skip flushing to avoid awaiting their own save.
         if (doc.flushSave && !skipSave && !doc.discardPendingChanges) {
-          // eslint-disable-next-line no-console
-          console.log('[docroom] Flushing pending save on last connection close', doc.name);
           try {
             await doc.flushSave();
           } catch (err) {
@@ -274,8 +272,6 @@ const send = (doc, conn, m) => {
 export const readState = async (docName, storage) => {
   const storedDoc = await storage.get('doc');
   if (storedDoc === undefined) {
-    // eslint-disable-next-line no-console
-    console.log('[docroom] No stored doc in persistence');
     return undefined;
   }
 
@@ -288,8 +284,6 @@ export const readState = async (docName, storage) => {
 
   const docstore = await storage.get('docstore');
   if (docstore !== undefined) {
-    // eslint-disable-next-line no-console
-    console.log('[docroom] Document found in persistence');
     return docstore;
   }
 
@@ -311,8 +305,6 @@ export const readState = async (docName, storage) => {
       data.push(chunk[j]);
     }
   }
-  // eslint-disable-next-line no-console
-  console.log('[docroom] Document data read');
   return new Uint8Array(data);
 };
 
@@ -400,8 +392,6 @@ export const showError = (ydoc, err) => {
  * @returns true if the document was found and invalidated, false otherwise.
  */
 export const invalidateFromAdmin = async (docName, discardPendingChanges = false) => {
-  // eslint-disable-next-line no-console
-  console.log('[worker] Invalidate document cache', docName);
   const ydoc = docs.get(docName);
   if (ydoc) {
     if (discardPendingChanges) {
@@ -422,9 +412,6 @@ export const invalidateFromAdmin = async (docName, discardPendingChanges = false
       ...Array.from(ydoc.conns.keys()).map((c) => closeConn(ydoc, c, discardPendingChanges)),
     ]);
     return true;
-  } else {
-    // eslint-disable-next-line no-console
-    console.log('[worker] Document not found', docName);
   }
   return false;
 };
@@ -896,8 +883,6 @@ export const persistence = {
         const lastSynced = storage.get ? await storage.get('lastsync') : undefined;
         if (lastSynced === current) {
           restored = true;
-          // eslint-disable-next-line no-console
-          console.log('[docroom] Restored from worker persistence', docName, '(lastsync matches da-admin)');
         }
       }
     } catch (error) {
@@ -1181,10 +1166,6 @@ export const getYDoc = async (docname, conn, env, storage, timingData, ctx, gc =
   if (!doc.conns.get(conn)) {
     doc.conns.set(conn, new Set());
   }
-
-  const uniqueConnections = new Set(doc.conns.keys().toArray().map((c) => c.auth || 'none'));
-  // eslint-disable-next-line no-console
-  console.log(`[docroom] Getting ydoc ${docname}`, `Connections (unique / total): ${uniqueConnections.size} / ${doc.conns.size}`);
 
   // Store the service binding to da-admin which we receive through the environment in the doc
   doc.daadmin = env.daadmin;
