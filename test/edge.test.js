@@ -1038,9 +1038,18 @@ describe('Worker test suite', () => {
     const daadmin = { fetch: mockFetch };
     const env = { daadmin };
 
-    const res = await handleApiRequest(req, env);
+    const logged = [];
+    const savedLog = console.log;
+    console.log = (...args) => logged.push(args);
+    let res;
+    try {
+      res = await handleApiRequest(req, env);
+    } finally {
+      console.log = savedLog;
+    }
     assert.equal(404, res.status);
     assert.equal('unable to get resource', await res.text());
+    assert(!logged.some(([msg]) => String(msg).includes('Unable to get resource')), 'expected 404 must not be logged');
   });
 
   it('Test handleApiRequest not authorized (non-WS)', async () => {
@@ -1174,9 +1183,18 @@ describe('Worker test suite', () => {
     const daadmin = { fetch: mockFetch };
     const env = { daadmin };
 
-    const res = await handleApiRequest(req, env);
+    const logged = [];
+    const savedLog = console.log;
+    console.log = (...args) => logged.push(args);
+    let res;
+    try {
+      res = await handleApiRequest(req, env);
+    } finally {
+      console.log = savedLog;
+    }
     assert.equal(500, res.status);
     assert.equal('da-admin internal error', res.headers.get('x-error'));
+    assert(logged.some(([msg]) => String(msg).includes('Unable to get resource') && String(msg).includes(': 500')), 'unexpected status must be logged');
   });
 
   it('Test handleApiRequest room object fetch exception', async () => {
