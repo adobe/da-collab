@@ -393,6 +393,8 @@ export const showError = (ydoc, err) => {
  */
 export const invalidateFromAdmin = async (docName, discardPendingChanges = false) => {
   const ydoc = docs.get(docName);
+  // eslint-disable-next-line no-console
+  console.log('[worker] Invalidate document', docName, `open: ${!!ydoc}`, `connections: ${ydoc?.conns.size ?? 0}`, `discardPending: ${discardPendingChanges}`);
   if (ydoc) {
     if (discardPendingChanges) {
       ydoc.discardPendingChanges = true;
@@ -883,6 +885,8 @@ export const persistence = {
         const lastSynced = storage.get ? await storage.get('lastsync') : undefined;
         if (lastSynced === current) {
           restored = true;
+          // eslint-disable-next-line no-console
+          console.log('[docroom] Restored from worker persistence', docName, '(lastsync matches da-admin)');
         }
       }
     } catch (error) {
@@ -1165,6 +1169,9 @@ export const getYDoc = async (docname, conn, env, storage, timingData, ctx, gc =
 
   if (!doc.conns.get(conn)) {
     doc.conns.set(conn, new Set());
+    const users = new Set([...doc.conns.keys()].map((c) => c.auth || 'none')).size;
+    // eslint-disable-next-line no-console
+    console.log('[docroom] Session start', docname, `connections: ${doc.conns.size}`, `users: ${users}`, `readOnly: ${!!conn.readOnly}`);
   }
 
   // Store the service binding to da-admin which we receive through the environment in the doc

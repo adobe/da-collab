@@ -932,6 +932,27 @@ describe('Collab Test Suite', () => {
       || res2.toString() === closeCalled.toString());
   });
 
+  it('logs one invalidation line with open state and connection count', async () => {
+    const logged = [];
+    const savedLog = console.log;
+    console.log = (...args) => logged.push(args);
+    try {
+      const docName = 'http://blah.di.blah/a/logged.html';
+      const ydoc = new WSSharedDoc(docName);
+      ydoc.conns = new Map([[{ close() {} }, new Set()]]);
+      setYDoc(docName, ydoc);
+      await invalidateFromAdmin(docName, true);
+      await invalidateFromAdmin('http://blah.di.blah/a/missing.html');
+    } finally {
+      console.log = savedLog;
+    }
+    const lines = logged.filter(([msg]) => msg === '[worker] Invalidate document');
+    assert.deepStrictEqual(lines, [
+      ['[worker] Invalidate document', 'http://blah.di.blah/a/logged.html', 'open: true', 'connections: 1', 'discardPending: true'],
+      ['[worker] Invalidate document', 'http://blah.di.blah/a/missing.html', 'open: false', 'connections: 0', 'discardPending: false'],
+    ]);
+  });
+
   it('Test close connection', async () => {
     const awarenessEmitted = [];
     const mockDoc = {
@@ -1784,7 +1805,20 @@ describe('Collab Test Suite', () => {
       const mockConn = {};
 
       assert.equal(0, bsCalls.length, 'Precondition');
-      const doc = await getYDoc(docName, mockConn, {}, {});
+      const logged = [];
+      const savedLog = console.log;
+      console.log = (...args) => logged.push(args);
+      let doc;
+      try {
+        doc = await getYDoc(docName, mockConn, {}, {});
+        await getYDoc(docName, { auth: 'Bearer other', readOnly: true }, {}, {});
+      } finally {
+        console.log = savedLog;
+      }
+      assert.deepStrictEqual(logged.filter(([msg]) => msg === '[docroom] Session start'), [
+        ['[docroom] Session start', docName, 'connections: 1', 'users: 1', 'readOnly: false'],
+        ['[docroom] Session start', docName, 'connections: 2', 'users: 2', 'readOnly: true'],
+      ]);
       assert.equal(1, bsCalls.length);
       assert.equal(bsCalls[0].dn, docName);
       assert.equal(bsCalls[0].d, doc);
